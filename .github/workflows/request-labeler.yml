@@ -12,7 +12,7 @@ permissions:
 jobs:
   labeler:
     runs-on: ubuntu-latest
-    if: contains(github.event.pull_request.labels.*.name, 'instance:requested')
+    #if: contains(github.event.pull_request.labels.*.name, 'instance:requested')
     steps:
       - name: Issue Forms Body Parser
         id: parse
