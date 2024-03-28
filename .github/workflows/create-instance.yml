@@ -11,7 +11,7 @@ concurrency:
 jobs:
   create:
     runs-on: self-hosted
-    if: github.event.label.name == 'instance:requested'
+    if: github.event.label.name == 'instance:approved'
     steps:
       - run: |
           echo Creating instance associated with issue $NUMBER
