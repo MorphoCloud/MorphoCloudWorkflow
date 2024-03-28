@@ -21,8 +21,8 @@ jobs:
       - name: Extract issue fields
         id: extract
         run: |
-          instance_flavor = ${{ toJSON(steps.parse.outputs.data) }} | \
-            jq .instance-flavor.text
+          instance_flavor=$(echo ${{ toJSON(steps.parse.outputs.data) }} | \
+            jq -r '."instance-flavor".text' | sed 's/ -.*$//')
           echo "instance_flavor [$instance_flavor]"
           echo "instance_flavor=$instance_flavor" >> $GITHUB_OUTPUT
 
