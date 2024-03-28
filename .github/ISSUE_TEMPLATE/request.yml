@@ -1,0 +1,30 @@
+name: Request Instance
+description: Issue template to request a cloud instance creation.
+title: "Instance: "
+labels: ["instance:requested"]
+assignees:
+  - jcfr
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        _Please enter a short description in the title bar above this text. Format: "Instance: Short description"._
+
+  - type: dropdown
+    attributes:
+      label: Instance Flavor
+      description: Select the type of instance to create.
+      options:
+        - m3.xl - General-purpose instance (32 CPUs, 125 GB RAM and 60 GB root
+          disk)
+        - g3.xl - GPU instance (32 CPUs, 125 GB RAM and 60 GB root disk)
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Description
+      description: Briefly describe how you will be using the instance.
+    validations:
+      required: false
