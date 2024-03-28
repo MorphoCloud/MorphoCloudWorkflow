@@ -1,0 +1,32 @@
+name: Control Instance
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  start:
+    runs-on: self-hosted
+    if:
+      ${{ !github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/start') }}
+    steps:
+      - run: |
+          echo Starting instance associated with issue $NUMBER
+        env:
+          NUMBER: ${{ github.event.issue.number }}
+
+  stop:
+    runs-on: self-hosted
+    if:
+      ${{ !github.event.issue.pull_request &&
+      contains(github.event.comment.body, '/stop') }}
+    steps:
+      - run: |
+          echo Stopping instance associated with issue $NUMBER
+        env:
+          NUMBER: ${{ github.event.issue.number }}

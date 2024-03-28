@@ -1,0 +1,19 @@
+name: Create Instance
+
+on:
+  issues:
+    types: [labeled]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  create:
+    runs-on: self-hosted
+    if: github.event.label.name == 'instance:requested'
+    steps:
+      - run: |
+          echo Creating instance associated with issue $NUMBER
+        env:
+          NUMBER: ${{ github.event.issue.number }}
