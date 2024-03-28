@@ -18,7 +18,12 @@ body:
       options:
         - m3.xl - General-purpose instance (32 CPUs, 125 GB RAM and 60 GB root
           disk)
+        - m3.small - General-purpose instance (2 CPUs, 6 GB RAM and 20 GB root
+          disk)
+        - m3.tiny - General-purpose instance (1 CPUs, 3 GB RAM and 20 GB root
+          disk)
         - g3.xl - GPU instance (32 CPUs, 125 GB RAM and 60 GB root disk)
+        - g3.small - GPU instance (4 CPUs, 15 GB RAM and 20 GB root disk)
     validations:
       required: true
 
