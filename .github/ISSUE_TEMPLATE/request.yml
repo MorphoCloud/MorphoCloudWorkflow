@@ -33,3 +33,10 @@ body:
       description: Briefly describe how you will be using the instance.
     validations:
       required: false
+
+  - type: input
+    attributes:
+      label: Email
+      description: Email to use for notifications.
+    validations:
+      required: true
