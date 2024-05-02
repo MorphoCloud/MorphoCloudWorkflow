@@ -23,7 +23,6 @@ jobs:
             --flavor g3.large \
             --image "Featured-Ubuntu22" \
             --wait
-          openstack console log show "morpho-cloud-portal_instance-$NUMBER"
         env:
           NUMBER: ${{ github.event.issue.number }}
 
