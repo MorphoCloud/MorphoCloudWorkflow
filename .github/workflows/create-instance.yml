@@ -13,6 +13,18 @@ jobs:
     runs-on: self-hosted
     if: github.event.label.name == 'instance:approved'
     steps:
+      - name: Remove "instance:approved" label
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.removeLabel({
+              issue_number: context.payload.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: ["instance:approved"]
+            })
+
       - name: Issue Forms Body Parser
         id: parse
         uses: zentered/issue-forms-body-parser@v2.0.0
@@ -102,3 +114,15 @@ jobs:
             "[MorphoCloudPortal] Instance ${{ github.event.issue.number }}
             created"
           body: Instance ${{ github.event.issue.number }} created
+
+      - name: Add "instance:created" label
+        if: ${{ success() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.payload.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ["instance:created"]
+            })
