@@ -13,6 +13,29 @@ jobs:
     runs-on: self-hosted
     if: github.event.label.name == 'instance:approved'
     steps:
+      - name: Issue Forms Body Parser
+        id: parse
+        uses: zentered/issue-forms-body-parser@v2.0.0
+
+      - name: Display parsed data
+        run: |
+          echo ${{ toJSON(steps.parse.outputs.data) }} | jq .
+
+      - name: Extract fields
+        id: extract
+        run: |
+          email=$(
+            echo ${{ toJSON(steps.parse.outputs.data) }} |
+            jq -r ".email.text"
+          )
+          echo "email=$email" >> $GITHUB_OUTPUT
+
+          instance_flavor=$(
+            echo ${{ toJSON(steps.parse.outputs.data) }} |
+            jq -r '."instance-flavor".text | split(" - ")[0]'
+          )
+          echo "instance_flavor=$instance_flavor" >> $GITHUB_OUTPUT
+
       - name: Create instance
         id: instance_create
         run: |
@@ -25,7 +48,7 @@ jobs:
             --nic net-id="auto_allocated_network" \
             --security-group "default" \
             --security-group "exosphere" \
-            --flavor g3.large \
+            --flavor $INSTANCE_FLAVOR \
             --image "antsthings-vgl-gpu-image" \
             --wait \
             --column created \
@@ -37,6 +60,7 @@ jobs:
           echo "instance_name=$instance_name" >> $GITHUB_OUTPUT
         env:
           NUMBER: ${{ github.event.issue.number }}
+          INSTANCE_FLAVOR: ${{ steps.extract.outputs.instance_flavor }}
 
       - name: Create floating IP
         id: ip_create
@@ -63,23 +87,6 @@ jobs:
         env:
           IP_ADDRESS: ${{ steps.ip_create.outputs.floating_ip_address }}
           INSTANCE_NAME: ${{ steps.instance_create.outputs.instance_name }}
-
-      - name: Issue Forms Body Parser
-        id: parse
-        uses: zentered/issue-forms-body-parser@v2.0.0
-
-      - name: Display parsed data
-        run: |
-          echo ${{ toJSON(steps.parse.outputs.data) }} | jq .
-
-      - name: Extract fields
-        id: extract
-        run: |
-          email=$(
-            echo ${{ toJSON(steps.parse.outputs.data) }} |
-            jq -r ".email.text"
-          )
-          echo "email=$email" >> $GITHUB_OUTPUT
 
       - name: Send mail
         uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
