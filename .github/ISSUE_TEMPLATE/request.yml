@@ -1,7 +1,6 @@
 name: Request Instance
 description: Issue template to request a cloud instance creation.
 title: "Instance: "
-labels: ["instance:requested"]
 assignees:
   - jcfr
 
