@@ -51,11 +51,12 @@ jobs:
       - name: Create instance
         id: instance_create
         run: |
-          echo Creating instance associated with issue $NUMBER
           source ~/app-cred-morpho-cloud-portal_github-runner-openrc.sh > /dev/null 2>&1
           source ~/venv/bin/activate
 
           instance_name="morpho-cloud-portal_instance-$NUMBER"
+          echo Creating instance "$instance_name"
+
           openstack server create "$instance_name" \
             --nic net-id="auto_allocated_network" \
             --security-group "default" \
@@ -111,9 +112,10 @@ jobs:
           from: MorphoCloudPortal
           to: ${{ steps.extract.outputs.email }}
           subject:
-            "[MorphoCloudPortal] Instance ${{ github.event.issue.number }}
-            created"
-          body: Instance ${{ github.event.issue.number }} created
+            "[MorphoCloudPortal] Instance ${{
+            steps.instance_create.outputs.instance_name }} created"
+          body:
+            Instance ${{ steps.instance_create.outputs.instance_name }} created
 
       - name: Add "instance:created" label
         if: ${{ success() }}
