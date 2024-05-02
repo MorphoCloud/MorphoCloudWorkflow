@@ -15,6 +15,15 @@ jobs:
     steps:
       - run: |
           echo Creating instance associated with issue $NUMBER
+          source ~/app-cred-morpho-cloud-portal_github-runner-openrc.sh > /dev/null 2>&1
+          source ~/venv/bin/activate
+          openstack server create "morpho-cloud-portal_instance-$NUMBER" \
+            --nic net-id="auto_allocated_network" \
+            --security-group "default" \
+            --flavor g3.large \
+            --image "Featured-Ubuntu22" \
+            --wait
+          openstack console log show "morpho-cloud-portal_instance-$NUMBER"
         env:
           NUMBER: ${{ github.event.issue.number }}
 
