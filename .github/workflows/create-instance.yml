@@ -22,7 +22,7 @@ jobs:
             --security-group "default" \
             --security-group "exosphere" \
             --flavor g3.large \
-            --image "Featured-Ubuntu22" \
+            --image "antsthings-vgl-gpu-image" \
             --wait
         env:
           NUMBER: ${{ github.event.issue.number }}
