@@ -27,7 +27,12 @@ jobs:
             --security-group "exosphere" \
             --flavor g3.large \
             --image "antsthings-vgl-gpu-image" \
-            --wait
+            --wait \
+            --column created \
+            --column flavor \
+            --column image \
+            --column name \
+            --column status
 
           echo "instance_name=$instance_name" >> $GITHUB_OUTPUT
         env:
