@@ -20,6 +20,7 @@ jobs:
           openstack server create "morpho-cloud-portal_instance-$NUMBER" \
             --nic net-id="auto_allocated_network" \
             --security-group "default" \
+            --security-group "exosphere" \
             --flavor g3.large \
             --image "Featured-Ubuntu22" \
             --wait
