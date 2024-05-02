@@ -13,17 +13,23 @@ jobs:
     runs-on: self-hosted
     if: github.event.label.name == 'instance:approved'
     steps:
-      - run: |
+      - name: Create instance
+        id: instance_create
+        run: |
           echo Creating instance associated with issue $NUMBER
           source ~/app-cred-morpho-cloud-portal_github-runner-openrc.sh > /dev/null 2>&1
           source ~/venv/bin/activate
-          openstack server create "morpho-cloud-portal_instance-$NUMBER" \
+
+          instance_name="morpho-cloud-portal_instance-$NUMBER"
+          openstack server create "$instance_name" \
             --nic net-id="auto_allocated_network" \
             --security-group "default" \
             --security-group "exosphere" \
             --flavor g3.large \
             --image "antsthings-vgl-gpu-image" \
             --wait
+
+          echo "instance_name=$instance_name" >> $GITHUB_OUTPUT
         env:
           NUMBER: ${{ github.event.issue.number }}
 
