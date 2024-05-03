@@ -64,7 +64,7 @@ jobs:
             --security-group "default" \
             --security-group "exosphere" \
             --flavor $INSTANCE_FLAVOR \
-            --image "antsthings-vgl-gpu-image" \
+            --image "Featured-Ubuntu22" \
             --user-data ./cloud-config \
             --wait \
             --column created \
