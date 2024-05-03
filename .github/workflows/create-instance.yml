@@ -48,6 +48,8 @@ jobs:
           )
           echo "instance_flavor=$instance_flavor" >> $GITHUB_OUTPUT
 
+      - uses: actions/checkout@v4
+
       - name: Create instance
         id: instance_create
         run: |
@@ -63,6 +65,7 @@ jobs:
             --security-group "exosphere" \
             --flavor $INSTANCE_FLAVOR \
             --image "antsthings-vgl-gpu-image" \
+            --user-data ./cloud-config \
             --wait \
             --column created \
             --column flavor \
