@@ -79,9 +79,6 @@ jobs:
             --column name \
             --column status
 
-          openstack server set "$instance_name" \
-            --property "exoSetup={\"status\":\"complete\",\"epoch\":$EPOCHSECONDS}"
-
           echo "instance_name=$instance_name" >> $GITHUB_OUTPUT
         env:
           NUMBER: ${{ github.event.issue.number }}
