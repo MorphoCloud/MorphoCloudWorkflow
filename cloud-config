@@ -32,8 +32,8 @@ runcmd:
     # --checkout "{instance-config-mgt-repo-checkout}"
     # -e "{ansible-extra-vars}"
     ansible-pull \
-      --url "https://gitlab.com/exosphere/exosphere.git" \
-      --checkout "master" \
+      --url "https://github.com/jcfr/exosphere.git" \
+      --checkout "morpho-cloud-portal-2024.05.02-5bbfab3db" \
       --directory /opt/instance-config-mgt \
       -i /opt/instance-config-mgt/ansible/hosts \
       -e "{\"guac_enabled\":true,\"gui_enabled\":true}" \
