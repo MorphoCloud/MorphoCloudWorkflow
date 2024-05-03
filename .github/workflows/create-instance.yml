@@ -65,6 +65,7 @@ jobs:
             --security-group "exosphere" \
             --flavor $INSTANCE_FLAVOR \
             --image "Featured-Ubuntu22" \
+            --key-name "jcfr" \
             --user-data ./cloud-config \
             --wait \
             --column created \
