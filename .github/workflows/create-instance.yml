@@ -59,6 +59,12 @@ jobs:
           instance_name="morpho-cloud-portal_instance-$NUMBER"
           echo Creating instance "$instance_name"
 
+          # See https://jetstream2.exosphere.app/exosphere/helpabout
+          exoClientUuid=67296a2e-069b-49ca-9ca4-5dd296869ada
+
+          # See "currentExoServerVersion" in exosphere/src/Types/Server.elm
+          exoServerVersion=5
+
           openstack server create "$instance_name" \
             --nic net-id="auto_allocated_network" \
             --security-group "default" \
@@ -67,8 +73,8 @@ jobs:
             --image "Featured-Ubuntu22" \
             --key-name "jcfr" \
             --property "exoGuac={\"v\":1,\"ssh\":true,\"vnc\":true}" \
-            --property "exoClientUuid=67296a2e-069b-49ca-9ca4-5dd296869ada" \
-            --property "exoServerVersion=5" \
+            --property "exoClientUuid=$exoClientUuid" \
+            --property "exoServerVersion=$exoServerVersion" \
             --property "exoCreatorUsername=jfillionrobin@access-ci.org" \
             --property "exoFloatingIpOption=automatic" \
             --user-data ./cloud-config \
