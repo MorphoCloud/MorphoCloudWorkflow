@@ -87,32 +87,6 @@ jobs:
           NUMBER: ${{ github.event.issue.number }}
           INSTANCE_FLAVOR: ${{ steps.extract.outputs.instance_flavor }}
 
-      - name: Create floating IP
-        id: ip_create
-        run: |
-          source ~/app-cred-morpho-cloud-portal_github-runner-openrc.sh > /dev/null 2>&1
-          source ~/venv/bin/activate
-
-          json_output=$(openstack floating ip create public -f json)
-          echo $json_output
-
-          floating_ip_address=$(
-            echo $json_output |
-            jq -r ".floating_ip_address"
-          )
-          echo "floating_ip_address [$floating_ip_address]"
-          echo "floating_ip_address=$floating_ip_address" >> $GITHUB_OUTPUT
-
-      - name: Associate floating IP with created instance
-        run: |
-          source ~/app-cred-morpho-cloud-portal_github-runner-openrc.sh > /dev/null 2>&1
-          source ~/venv/bin/activate
-
-          openstack server add floating ip "$INSTANCE_NAME" $IP_ADDRESS
-        env:
-          IP_ADDRESS: ${{ steps.ip_create.outputs.floating_ip_address }}
-          INSTANCE_NAME: ${{ steps.instance_create.outputs.instance_name }}
-
       - name: Send mail
         uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
         with:
