@@ -66,6 +66,11 @@ jobs:
             --flavor $INSTANCE_FLAVOR \
             --image "Featured-Ubuntu22" \
             --key-name "jcfr" \
+            --property "exoGuac={\"v\":1,\"ssh\":true,\"vnc\":true}" \
+            --property "exoClientUuid=67296a2e-069b-49ca-9ca4-5dd296869ada" \
+            --property "exoServerVersion=5" \
+            --property "exoCreatorUsername=jfillionrobin@access-ci.org" \
+            --property "exoFloatingIpOption=automatic" \
             --user-data ./cloud-config \
             --wait \
             --column created \
@@ -73,6 +78,9 @@ jobs:
             --column image \
             --column name \
             --column status
+
+          openstack server set "$instance_name" \
+            --property "exoSetup={\"status\":\"complete\",\"epoch\":$EPOCHSECONDS}"
 
           echo "instance_name=$instance_name" >> $GITHUB_OUTPUT
         env:
