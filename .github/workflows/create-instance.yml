@@ -69,7 +69,7 @@ jobs:
 
       - name: Create instance
         run: |
-          OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in "clouds.yaml"
+          export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in "clouds.yaml"
 
           source ~/venv/bin/activate
 
@@ -109,7 +109,7 @@ jobs:
       - name: Poll instance status
         id: instance_poll
         run: |
-          OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in "clouds.yaml"
+          export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in "clouds.yaml"
 
           source ~/venv/bin/activate
 
@@ -166,7 +166,7 @@ jobs:
         id: instance_metadata
         if: ${{ steps.instance_poll.outputs.status == 'complete' }}
         run: |
-          OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in "clouds.yaml"
+          export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in "clouds.yaml"
 
           source ~/venv/bin/activate
 
