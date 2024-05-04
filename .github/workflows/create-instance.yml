@@ -91,7 +91,65 @@ jobs:
           NUMBER: ${{ github.event.issue.number }}
           INSTANCE_FLAVOR: ${{ steps.extract.outputs.instance_flavor }}
 
-      - name: Send mail
+      - name: Poll instance status
+        id: instance_poll
+        run: |
+          source ~/app-cred-morpho-cloud-portal_github-runner-openrc.sh > /dev/null 2>&1
+          source ~/venv/bin/activate
+
+          instance_name="morpho-cloud-portal_instance-$NUMBER"
+          echo Polling instance "$instance_name"
+
+          max_wait_time=300  # Maximum wait time in seconds (300s -> 5mins)
+          wait_interval=5    # Interval between status checks in seconds
+          total_wait_time=0
+
+          while [ $total_wait_time -lt $max_wait_time ]; do
+
+              status=$(openstack server show "$instance_name" -f json -c properties | \
+                jq -r .properties | \
+                jq -r .exoSetup | \
+                jq -r .status)
+
+              if [ "$status" = "complete" ]; then
+                  echo "Status is complete. Exiting loop."
+                  break
+              else
+                  echo "Status is $status. Waiting for completion..."
+                  sleep $wait_interval
+                  total_wait_time=$((total_wait_time + wait_interval))
+              fi
+          done
+
+          if [ $total_wait_time -ge $max_wait_time ]; then
+              echo "Maximum wait time ($max_wait_time seconds) exceeded. Exiting."
+              status="polling_timeout"
+          fi
+
+          echo "status=$status" >> $GITHUB_OUTPUT
+        env:
+          NUMBER: ${{ github.event.issue.number }}
+
+      - name: Send mail (not completed)
+        if: ${{ steps.instance_poll.outputs.status != 'complete' }}
+        uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{secrets.MAIL_USERNAME}}
+          password: ${{secrets.MAIL_PASSWORD}}
+          from: MorphoCloudPortal
+          to: ${{ steps.extract.outputs.email }}
+          subject:
+            "[MorphoCloudPortal] Instance ${{
+            steps.instance_create.outputs.instance_name }} creation failed"
+          body:
+            Failed to create instance ${{
+            steps.instance_create.outputs.instance_name }}
+
+      - name: Send mail (completed)
+        if: ${{ steps.instance_poll.outputs.status == 'complete' }}
         uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
         with:
           server_address: smtp.gmail.com
