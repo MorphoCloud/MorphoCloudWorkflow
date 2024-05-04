@@ -42,11 +42,20 @@ jobs:
           )
           echo "email=$email" >> $GITHUB_OUTPUT
 
+      - name: Extract labels
+        id: labels
+        run: |
+          # If there are multiple "flavor:" labels, select the first one
           instance_flavor=$(
-            echo ${{ toJSON(steps.parse.outputs.data) }} |
-            jq -r '."cloud-computing-instance-flavor".text | split(" - ")[0]'
+            gh issue view $ISSUE_NUMBER \
+              --json labels \
+              --jq '[.labels[].name | select(. | startswith("flavor:")) | split(":")[1]][0]'
           )
           echo "instance_flavor=$instance_flavor" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
 
       - name: Define instance name
         id: define
@@ -95,7 +104,7 @@ jobs:
 
         env:
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
-          INSTANCE_FLAVOR: ${{ steps.extract.outputs.instance_flavor }}
+          INSTANCE_FLAVOR: ${{ steps.labels.outputs.instance_flavor }}
 
       - name: Poll instance status
         id: instance_poll
