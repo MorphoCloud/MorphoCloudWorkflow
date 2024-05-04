@@ -60,7 +60,8 @@ jobs:
 
       - name: Create instance
         run: |
-          source ~/app-cred-morpho-cloud-portal_github-runner-openrc.sh > /dev/null 2>&1
+          OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in "clouds.yaml"
+
           source ~/venv/bin/activate
 
           echo Creating instance "$INSTANCE_NAME"
@@ -99,7 +100,8 @@ jobs:
       - name: Poll instance status
         id: instance_poll
         run: |
-          source ~/app-cred-morpho-cloud-portal_github-runner-openrc.sh > /dev/null 2>&1
+          OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in "clouds.yaml"
+
           source ~/venv/bin/activate
 
           echo Polling instance "$INSTANCE_NAME"
@@ -155,7 +157,8 @@ jobs:
         id: instance_metadata
         if: ${{ steps.instance_poll.outputs.status == 'complete' }}
         run: |
-          source ~/app-cred-morpho-cloud-portal_github-runner-openrc.sh > /dev/null 2>&1
+          OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in "clouds.yaml"
+
           source ~/venv/bin/activate
 
           echo Retrieving metadata from instance "$INSTANCE_NAME"
