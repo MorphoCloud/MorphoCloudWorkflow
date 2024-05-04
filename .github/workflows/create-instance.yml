@@ -166,7 +166,7 @@ jobs:
             Instance ${{ steps.instance_create.outputs.instance_name }} created
 
       - name: Add "instance:created" label
-        if: ${{ success() }}
+        if: ${{ success() && steps.instance_poll.outputs.status == 'complete' }}
         uses: actions/github-script@v7
         with:
           script: |
