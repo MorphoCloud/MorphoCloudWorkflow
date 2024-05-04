@@ -27,7 +27,8 @@ jobs:
           echo "instance_flavor=$instance_flavor" >> $GITHUB_OUTPUT
 
       - name: Add flavor label
-        run: gh issue edit "$NUMBER" --add-label "$LABELS"
+        # Since instance flavor is already reported in the issue description, labels have been removed
+        run: true || gh issue edit "$NUMBER" --add-label "$LABELS"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
