@@ -22,13 +22,12 @@ jobs:
         id: extract
         run: |
           instance_flavor=$(echo ${{ toJSON(steps.parse.outputs.data) }} | \
-            jq -r '."instance-flavor".text' | sed 's/ -.*$//')
+            jq -r '."cloud-computing-instance-flavor".text | split(" - ")[0]')
           echo "instance_flavor [$instance_flavor]"
           echo "instance_flavor=$instance_flavor" >> $GITHUB_OUTPUT
 
       - name: Add flavor label
-        # Since instance flavor is already reported in the issue description, labels have been removed
-        run: true || gh issue edit "$NUMBER" --add-label "$LABELS"
+        run: gh issue edit "$NUMBER" --add-label "$LABELS"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
