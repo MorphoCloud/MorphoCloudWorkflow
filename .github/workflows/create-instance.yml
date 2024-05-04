@@ -44,7 +44,7 @@ jobs:
 
           instance_flavor=$(
             echo ${{ toJSON(steps.parse.outputs.data) }} |
-            jq -r '."instance-flavor".text | split(" - ")[0]'
+            jq -r '."cloud-computing-instance-flavor".text | split(" - ")[0]'
           )
           echo "instance_flavor=$instance_flavor" >> $GITHUB_OUTPUT
 
