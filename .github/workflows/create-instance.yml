@@ -88,6 +88,31 @@ jobs:
         env:
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
+      - name: Create floating IP
+        id: ip_create
+        if: ${{ !fromJSON(steps.check_instance.outputs.exists) }}
+        run: |
+          export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
+
+          source ~/venv/bin/activate
+
+          json_output=$(openstack floating ip create public -f json)
+          echo $json_output
+
+          floating_ip_uuid=$(
+            echo $json_output |
+            jq -r ".id"
+          )
+          echo "floating_ip_uuid [$floating_ip_uuid]"
+          echo "floating_ip_uuid=$floating_ip_uuid" >> $GITHUB_OUTPUT
+
+          floating_ip_address=$(
+            echo $json_output |
+            jq -r ".floating_ip_address"
+          )
+          echo "floating_ip_address [$floating_ip_address]"
+          echo "floating_ip_address=$floating_ip_address" >> $GITHUB_OUTPUT
+
       - name: Create instance
         if: ${{ !fromJSON(steps.check_instance.outputs.exists) }}
         run: |
@@ -114,7 +139,8 @@ jobs:
             --property "exoClientUuid=$exoClientUuid" \
             --property "exoServerVersion=$exoServerVersion" \
             --property "exoCreatorUsername=jfillionrobin@access-ci.org" \
-            --property "exoFloatingIpOption=automatic" \
+            --property "exoFloatingIpOption=useFloatingIp" \
+            --property "exoFloatingIpReuseOption=$FLOATING_IP_UUID" \
             --property "exoSetup={\"status\":\"waiting\",\"epoch\":null}" \
             --user-data ./cloud-config \
             --wait \
@@ -127,6 +153,7 @@ jobs:
         env:
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
           INSTANCE_FLAVOR: ${{ steps.labels.outputs.instance_flavor }}
+          FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
 
       - name: Poll instance status
         id: instance_poll
@@ -152,14 +179,9 @@ jobs:
                 openstack server show $INSTANCE_NAME -c tags -f json | \
                 jq -r '.tags[] | startswith("exoPw")')
 
-              has_ip=$(
-                openstack server show $INSTANCE_NAME -c addresses -f json | \
-                jq -r '.addresses.auto_allocated_network[1] != null'
-              )
+              echo -n "status [$status], has_pwd [$has_pwd]. "
 
-              echo -n "status [$status], has_pwd [$has_pwd], has_ip [$has_ip]. "
-
-              if [[ "$status" = "complete" && $has_pwd && $has_ip ]]; then
+              if [[ "$status" = "complete" && $has_pwd ]]; then
                   echo "Exiting loop."
                   break
               else
@@ -203,14 +225,10 @@ jobs:
 
           source ~/venv/bin/activate
 
-          echo Retrieving metadata from instance "$INSTANCE_NAME"
+          echo Retrieving instance "$INSTANCE_NAME" metadata
 
           # Get instance IP
-          instance_ip=$(
-            openstack server show $INSTANCE_NAME -c addresses -f json | \
-            jq -r .addresses.auto_allocated_network[1]
-          )
-          echo "instance_ip=$instance_ip" >> $GITHUB_OUTPUT
+          echo "instance_ip=$FLOATING_IP_ADDRESS" >> $GITHUB_OUTPUT
 
           # Get instance password
           instance_pwd=$(
@@ -221,6 +239,8 @@ jobs:
           echo "instance_pwd=$instance_pwd" >> $GITHUB_OUTPUT
         env:
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+          FLOATING_IP_ADDRESS:
+            ${{ steps.ip_create.outputs.floating_ip_address }}
 
       - name: Generate Guacamole Connection URL
         if: ${{ steps.instance_poll.outputs.status == 'complete' }}
