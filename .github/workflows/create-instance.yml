@@ -148,11 +148,22 @@ jobs:
                 jq -r .exoSetup | \
                 jq -r .status)
 
-              if [ "$status" = "complete" ]; then
-                  echo "Status is complete. Exiting loop."
+              has_pwd=$(
+                openstack server show $INSTANCE_NAME -c tags -f json | \
+                jq -r '.tags[] | startswith("exoPw")')
+
+              has_ip=$(
+                openstack server show $INSTANCE_NAME -c addresses -f json | \
+                jq -r '.addresses.auto_allocated_network[1] != null'
+              )
+
+              echo -n "status [$status], has_pwd [$has_pwd], has_ip [$has_ip]. "
+
+              if [[ "$status" = "complete" && $has_pwd && $has_ip ]]; then
+                  echo "Exiting loop."
                   break
               else
-                  echo "Status is $status. Waiting for completion..."
+                  echo "Waiting for completion..."
                   sleep $wait_interval
                   total_wait_time=$((total_wait_time + wait_interval))
               fi
