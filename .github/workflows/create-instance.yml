@@ -155,6 +155,26 @@ jobs:
           INSTANCE_FLAVOR: ${{ steps.labels.outputs.instance_flavor }}
           FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
 
+      - name: Associate floating IP with created instance
+        run: |
+          export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
+
+          source ~/venv/bin/activate
+
+          has_ip=$(
+            openstack server show $INSTANCE_NAME -c addresses -f json | \
+            jq -r '.addresses.auto_allocated_network[1] != null'
+          )
+          echo "has_ip [$has_ip]"
+
+          if [[ ! $has_ip ]]; then
+            openstack server add floating ip "$INSTANCE_NAME" $FLOATING_IP_ADDRESS
+          fi
+        env:
+          FLOATING_IP_ADDRESS:
+            ${{ steps.ip_create.outputs.floating_ip_address }}
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
       - name: Poll instance status
         id: instance_poll
         run: |
