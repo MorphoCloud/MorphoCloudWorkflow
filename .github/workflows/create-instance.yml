@@ -167,7 +167,7 @@ jobs:
           )
           echo "has_ip [$has_ip]"
 
-          if [[ ! $has_ip ]]; then
+          if [[ $has_ip != "true" ]]; then
             openstack server add floating ip "$INSTANCE_NAME" $FLOATING_IP_ADDRESS
           fi
         env:
