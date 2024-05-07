@@ -190,9 +190,9 @@ jobs:
 
           while [ $total_wait_time -lt $max_wait_time ]; do
 
-              status=$(openstack server show "$INSTANCE_NAME" -f json -c properties | \
-                jq -r .properties | \
-                jq -r .exoSetup | \
+              status=$(openstack console log show $INSTANCE_NAME | \
+                grep "^\{\"status\":\"" | \
+                tail -1 | \
                 jq -r .status)
 
               has_pwd=$(
