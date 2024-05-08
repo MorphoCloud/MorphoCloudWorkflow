@@ -133,7 +133,7 @@ jobs:
             --security-group "default" \
             --security-group "exosphere" \
             --flavor $INSTANCE_FLAVOR \
-            --image "Featured-Ubuntu22" \
+            --image "antsthings-vgl-gpu-image" \
             --key-name "jcfr" \
             --property "exoGuac={\"v\":1,\"ssh\":true,\"vnc\":true}" \
             --property "exoClientUuid=$exoClientUuid" \
