@@ -254,10 +254,11 @@ jobs:
           if [[ -z "$instance_pwd" ]]; then
             # Since 'exoPw' tag is not yet set, attempt to directly retrieve the password using
             # the openstack endpoint local to the instance.
-            if ! grep "$(ssh-keyscan $FLOATING_IP_ADDRESS 2>/dev/null)" ~/.ssh/known_hosts > /dev/null; then
-              ssh-keyscan -t ed25519 $FLOATING_IP_ADDRESS >> ~/.ssh/known_hosts
-            fi
-            instance_pwd=$(ssh exouser@$FLOATING_IP_ADDRESS \
+            instance_pwd=$(ssh \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o LogLevel=ERROR \
+              exouser@$FLOATING_IP_ADDRESS \
               'curl --silent http://169.254.169.254/openstack/latest/password')
           fi
           echo "::add-mask::$instance_pwd"
