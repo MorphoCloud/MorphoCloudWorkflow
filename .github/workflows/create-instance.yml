@@ -175,14 +175,14 @@ jobs:
             ${{ steps.ip_create.outputs.floating_ip_address }}
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
-      - name: Poll instance status
+      - name: Poll instance setup status
         id: instance_poll
         run: |
           export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
 
           source ~/venv/bin/activate
 
-          echo Polling instance "$INSTANCE_NAME"
+          echo Polling "$INSTANCE_NAME" setup status
 
           max_wait_time=300  # Maximum wait time in seconds (300s -> 5mins)
           wait_interval=5    # Interval between status checks in seconds
@@ -193,9 +193,9 @@ jobs:
               status=$(openstack console log show $INSTANCE_NAME | \
                 grep "^\{\"status\":\"" | \
                 tail -1 | \
-                jq -r .status)
+                jq -r '.status // "pending"')
 
-              echo -n "status [$status]. "
+              echo -n "setup status [$status]. "
 
               if [[ "$status" = "complete" ]]; then
                   echo "Exiting loop."
