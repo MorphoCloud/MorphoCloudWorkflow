@@ -8,77 +8,115 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Permissions needed for reacting to IssueOps commands on issues
+permissions:
+  issues: write
+  checks: read
+
 jobs:
-  start:
+  control:
     runs-on: self-hosted
     if:
-      ${{ !github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/start') }}
+      ${{ !github.event.issue.pull_request && (
+      contains(github.event.comment.body, '/start') ||
+      contains(github.event.comment.body, '/stop') ) }}
     steps:
-      - run: |
-          echo Starting instance associated with issue $NUMBER
-        env:
-          NUMBER: ${{ github.event.issue.number }}
-
-      - name: Extract email
-        id: extract
-        run: |
-          email=$(
-            echo ${{ toJSON(steps.parse.outputs.data) }} |
-            jq -r ".email.text"
-          )
-          echo "email=$email" >> $GITHUB_OUTPUT
-
-      - name: Send mail
-        uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
+      - name: start command
+        id: start_command
+        uses: github/command@v1.1.1
         with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{secrets.MAIL_USERNAME}}
-          password: ${{secrets.MAIL_PASSWORD}}
-          from: MorphoCloudPortal
-          to: ${{ steps.extract.outputs.email }}
-          subject:
-            "[MorphoCloudPortal] Instance ${{ github.event.issue.number }}
-            started"
-          body: Instance ${{ github.event.issue.number }} started
+          command: "/start"
+          reaction: "rocket"
+          allowed_contexts: "issue"
+          permissions: "read,triage,write,maintain,admin"
 
-  stop:
-    runs-on: self-hosted
-    if:
-      ${{ !github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/stop') }}
-    steps:
-      - run: |
-          echo Stopping instance associated with issue $NUMBER
-        env:
-          NUMBER: ${{ github.event.issue.number }}
-
-      - name: Issue Forms Body Parser
-        id: parse
-        uses: zentered/issue-forms-body-parser@v2.0.0
-
-      - name: Extract email
-        id: extract
-        run: |
-          email=$(
-            echo ${{ toJSON(steps.parse.outputs.data) }} |
-            jq -r ".email.text"
-          )
-          echo "email=$email" >> $GITHUB_OUTPUT
-
-      - name: Send mail
-        uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
+      - name: stop command
+        id: stop_command
+        uses: github/command@v1.1.1
         with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{secrets.MAIL_USERNAME}}
-          password: ${{secrets.MAIL_PASSWORD}}
-          from: MorphoCloudPortal
-          to: ${{ steps.extract.outputs.email }}
-          subject:
-            "[MorphoCloudPortal] Instance ${{ github.event.issue.number }}
-            stopped"
-          body: Instance ${{ github.event.issue.number }} stopped
+          command: "/stop"
+          reaction: "rocket"
+          allowed_contexts: "issue"
+          permissions: "read,triage,write,maintain,admin"
+
+      - name: Define instance name
+        id: define
+        run: |
+          instance_name="morpho-cloud-portal_instance-$ISSUE_NUMBER"
+          echo "instance_name=$instance_name" >> $GITHUB_OUTPUT
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+      - name: Check instance exists
+        id: check_instance
+        run: |
+          export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
+
+          source ~/venv/bin/activate
+
+          instance=$(openstack server list -f json | \
+            jq \
+              --arg instance_name "$INSTANCE_NAME" \
+              -c '.[] | select(.Name | contains($instance_name))' | \
+            jq -r '.Name')
+
+          [[ $instance == "$INSTANCE_NAME" ]] && exists="true" || exists="false"
+
+          echo "exists [$exists]"
+          echo "exists=$exists" >> $GITHUB_OUTPUT
+        env:
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+      - name: start
+        if:
+          ${{ steps.start_command.outputs.continue == 'true' &&
+          steps.check_instance.outputs.exists == 'true' }}
+        run: |
+          export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
+
+          source ~/venv/bin/activate
+
+          OS_CLOUD=BIO180006_IU openstack server start "$INSTANCE_NAME"
+        env:
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+      - name: stop
+        if:
+          ${{ steps.stop_command.outputs.continue == 'true' &&
+          steps.check_instance.outputs.exists == 'true' }}
+        run: |
+          export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
+
+          source ~/venv/bin/activate
+
+          OS_CLOUD=BIO180006_IU openstack server stop "$INSTANCE_NAME"
+        env:
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+      # - name: Issue Forms Body Parser
+      #   id: parse
+      #   uses: zentered/issue-forms-body-parser@v2.0.0
+
+      # - name: Extract email
+      #   id: extract
+      #   run: |
+      #     email=$(
+      #       echo ${{ toJSON(steps.parse.outputs.data) }} |
+      #       jq -r ".email.text"
+      #     )
+      #     echo "email=$email" >> $GITHUB_OUTPUT
+
+      # - name: Send mail
+      #   uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
+      #   with:
+      #     server_address: smtp.gmail.com
+      #     server_port: 465
+      #     secure: true
+      #     username: ${{secrets.MAIL_USERNAME}}
+      #     password: ${{secrets.MAIL_PASSWORD}}
+      #     from: MorphoCloudPortal
+      #     to: ${{ steps.extract.outputs.email }}
+      #     subject:
+      #       "[MorphoCloudPortal] Instance ${{ github.event.issue.number }}
+      #       started"
+      #     body: Instance ${{ github.event.issue.number }} started
