@@ -4,10 +4,6 @@ on:
   issues:
     types: [labeled]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   create:
     runs-on: self-hosted
