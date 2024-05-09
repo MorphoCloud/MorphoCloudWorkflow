@@ -37,6 +37,32 @@ jobs:
           permissions: "read,triage,write,maintain,admin"
           allowlist: "jcfr,muratmaga,${{ github.event.issue.user.login }}"
 
+      - name: Set command metadata
+        id: command
+        if:
+          ${{ steps.start_command.outputs.continue == 'true' ||
+          steps.stop_command.outputs.continue == 'true' }}
+        run: |
+          if [[ "$START_COMMAND_CONTINUE" == "true" ]]; then
+            continue="$START_COMMAND_CONTINUE"
+            command_name="start"
+            comment_id="${{ steps.start_command.outputs.comment_id }}"
+          elif [[ "$STOP_COMMAND_CONTINUE" == "true"  ]]; then
+            continue="$STOP_COMMAND_CONTINUE"
+            command_name="stop"
+            comment_id="${{ steps.stop_command.outputs.comment_id }}"
+          else
+            continue="false"
+            command_name=""
+            comment_id=""
+          fi
+          echo "continue=$continue" >> $GITHUB_OUTPUT
+          echo "command_name=$command_name" >> $GITHUB_OUTPUT
+          echo "comment_id=$comment_id$" >> $GITHUB_OUTPUT
+        env:
+          START_COMMAND_CONTINUE: ${{ steps.start_command.outputs.continue }}
+          STOP_COMMAND_CONTINUE: ${{ steps.stop_command.outputs.continue }}
+
       - name: Define instance name
         id: define
         run: |
@@ -47,6 +73,7 @@ jobs:
 
       - name: Check instance exists
         id: check_instance
+        if: ${{ steps.command.outputs.continue == 'true' }}
         run: |
           export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
 
@@ -65,31 +92,19 @@ jobs:
         env:
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
-      - name: start
+      - name: Execute command
         if:
-          ${{ steps.start_command.outputs.continue == 'true' &&
+          ${{ steps.command.outputs.continue == 'true' &&
           steps.check_instance.outputs.exists == 'true' }}
         run: |
           export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
 
           source ~/venv/bin/activate
 
-          OS_CLOUD=BIO180006_IU openstack server start "$INSTANCE_NAME"
+          OS_CLOUD=BIO180006_IU openstack server $COMMAND_NAME "$INSTANCE_NAME"
         env:
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
-
-      - name: stop
-        if:
-          ${{ steps.stop_command.outputs.continue == 'true' &&
-          steps.check_instance.outputs.exists == 'true' }}
-        run: |
-          export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
-
-          source ~/venv/bin/activate
-
-          OS_CLOUD=BIO180006_IU openstack server stop "$INSTANCE_NAME"
-        env:
-          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+          COMMAND_NAME: ${{ steps.command.outputs.command_name }}
 
       # - name: Issue Forms Body Parser
       #   id: parse
