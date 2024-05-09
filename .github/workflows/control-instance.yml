@@ -118,6 +118,31 @@ jobs:
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
           COMMAND_NAME: ${{ steps.command.outputs.command_name }}
 
+      - name: command results comment (success)
+        if:
+          ${{ steps.command.outputs.continue == 'true' &&
+          steps.check_instance.outputs.exists == 'true' && success() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Command Results ✅
+
+            `${{ steps.command.outputs.command_name }}` command successfully applied to **${{ steps.define.outputs.instance_name }}** instance.
+
+      - name: command results comment (failure)
+        if:
+          ${{ steps.command.outputs.continue == 'true' &&
+          steps.check_instance.outputs.exists == 'true' && failure() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Command Results ❌
+
+            `${{ steps.command.outputs.command_name }}` command failed to applied to **${{ steps.define.outputs.instance_name }}** instance.
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
       # - name: Issue Forms Body Parser
       #   id: parse
       #   uses: zentered/issue-forms-body-parser@v2.0.0
