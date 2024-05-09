@@ -23,7 +23,7 @@ jobs:
     steps:
       - name: start command
         id: start_command
-        uses: github/command@v1.1.1
+        uses: github/command@v1.2.0
         with:
           command: "/start"
           reaction: "rocket"
@@ -33,7 +33,7 @@ jobs:
 
       - name: stop command
         id: stop_command
-        uses: github/command@v1.1.1
+        uses: github/command@v1.2.0
         with:
           command: "/stop"
           reaction: "rocket"
