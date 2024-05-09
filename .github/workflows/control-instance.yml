@@ -92,6 +92,18 @@ jobs:
         env:
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
+      - name: command results comment (Instance does not exist)
+        if:
+          ${{ steps.command.outputs.continue == 'true' &&
+          steps.check_instance.outputs.exists == 'false' }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Command Results ❌
+
+            `${{ steps.command.outputs.command_name }}` command failed because **${{ steps.define.outputs.instance_name }}** instance does not exist.
+
       - name: Execute command
         if:
           ${{ steps.command.outputs.continue == 'true' &&
