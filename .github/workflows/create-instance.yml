@@ -84,9 +84,27 @@ jobs:
         env:
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
+      - name: comment (Instance already created)
+        if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Results ❌
+
+            Instance **${{ steps.define.outputs.instance_name }}** already created.
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: instance already exists (failure)
+        if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
+        run: |
+          echo "::error ::Instance $INSTANCE_NAME already created"
+          exit 1
+        env:
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
       - name: Create floating IP
         id: ip_create
-        if: ${{ !fromJSON(steps.check_instance.outputs.exists) }}
         run: |
           export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
 
@@ -110,7 +128,6 @@ jobs:
           echo "floating_ip_address=$floating_ip_address" >> $GITHUB_OUTPUT
 
       - name: Create instance
-        if: ${{ !fromJSON(steps.check_instance.outputs.exists) }}
         run: |
           export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
 
