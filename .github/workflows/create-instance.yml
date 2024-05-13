@@ -127,7 +127,19 @@ jobs:
           echo "floating_ip_address [$floating_ip_address]"
           echo "floating_ip_address=$floating_ip_address" >> $GITHUB_OUTPUT
 
+      - name: comment (floating IP creation failed)
+        if: ${{ steps.ip_create.outcome == 'failure' && failure() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Results ❌
+
+            Failed to create floating IP for **${{ steps.define.outputs.instance_name }}** instance.
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
       - name: Create instance
+        id: create_instance
         run: |
           export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
 
@@ -168,7 +180,19 @@ jobs:
           INSTANCE_FLAVOR: ${{ steps.labels.outputs.instance_flavor }}
           FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
 
+      - name: comment (instance creation failed)
+        if: ${{ steps.create_instance.outcome == 'failure' && failure() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Results ❌
+
+            Failed to create instance **${{ steps.define.outputs.instance_name }}**.
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
       - name: Associate floating IP with created instance
+        id: associated_ip
         run: |
           export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
 
@@ -187,6 +211,17 @@ jobs:
           FLOATING_IP_ADDRESS:
             ${{ steps.ip_create.outputs.floating_ip_address }}
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+      - name: comment (failed to associate IP with instance)
+        if: ${{ steps.associated_ip.outcome == 'failure' && failure() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Results ❌
+
+            Failed to associate IP with instance **${{ steps.define.outputs.instance_name }}**.
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Poll instance setup status
         id: instance_poll
@@ -221,34 +256,27 @@ jobs:
           done
 
           if [ $total_wait_time -ge $max_wait_time ]; then
-              echo "Maximum wait time ($max_wait_time seconds) exceeded. Exiting."
-              status="polling_timeout"
+              echo "::error ::Maximum wait time ($max_wait_time seconds) exceeded."
+              exit 1
           fi
 
           echo "status=$status" >> $GITHUB_OUTPUT
         env:
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
-      - name: Send mail (not completed)
-        if: ${{ steps.instance_poll.outputs.status != 'complete' }}
-        uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
+      - name: comment (maximum wait time exceeded)
+        if: ${{ steps.instance_poll.outcome == 'failure' && failure() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
         with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{secrets.MAIL_USERNAME}}
-          password: ${{secrets.MAIL_PASSWORD}}
-          from: MorphoCloudPortal
-          to: ${{ steps.extract.outputs.email }}
-          subject:
-            "[MorphoCloudPortal] Instance ${{ steps.define.outputs.instance_name
-            }} creation failed"
-          body:
-            Failed to create instance ${{ steps.define.outputs.instance_name }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Results ❌
+
+            Maximum wait time for instance **${{ steps.define.outputs.instance_name }}** setup to complete exceeded.
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Retrieve metadata
         id: instance_metadata
-        if: ${{ steps.instance_poll.outputs.status == 'complete' }}
         run: |
           export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
 
@@ -280,6 +308,17 @@ jobs:
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
           FLOATING_IP_ADDRESS:
             ${{ steps.ip_create.outputs.floating_ip_address }}
+
+      - name: comment (failed to retrieve instance metadata)
+        if: ${{ steps.instance_metadata.outcome == 'failure' && failure() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Results ❌
+
+            Failed to retrieve metadata for instance **${{ steps.define.outputs.instance_name }}**.
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Generate Guacamole Connection URL
         if: ${{ steps.instance_poll.outputs.status == 'complete' }}
@@ -315,6 +354,17 @@ jobs:
         env:
           INSTANCE_IP: ${{ steps.instance_metadata.outputs.instance_ip }}
           INSTANCE_PWD: ${{ steps.instance_metadata.outputs.instance_pwd }}
+
+      - name: comment (failed to generate connection URL)
+        if: ${{ steps.guacamole.outcome == 'failure' && failure() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Results ❌
+
+            Failed to generate connection URL for instance **${{ steps.define.outputs.instance_name }}**.
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Send mail (completed)
         if: ${{ steps.instance_poll.outputs.status == 'complete' }}
