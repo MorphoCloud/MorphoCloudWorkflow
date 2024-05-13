@@ -3,23 +3,43 @@ on:
   issues:
     types:
       - opened
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number"
+        required: true
 
 jobs:
   initial_comments:
     runs-on: ubuntu-latest
     #if: contains(github.event.pull_request.labels.*.name, 'instance:requested')
     steps:
+      - name: Collect Inputs
+        id: collect_inputs
+        run: |
+          echo "EVENT_NAME [$EVENT_NAME]"
+          if [[ "$EVENT_NAME" == "issue" ]]; then
+            issue_number=${{ github.event.issue.number }}
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            issue_number=${{ github.event.inputs.issue_number }}
+          else
+            exit 1
+          fi
+          echo "issue_number=$issue_number" >> $GITHUB_OUTPUT
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+
       - name: Define instance name
         id: define
         run: |
-          instance_name="morpho-cloud-portal_instance-${{ github.event.issue.number }}"
+          instance_name="morpho-cloud-portal_instance-${{ steps.collect_inputs.outputs.issue_number }}"
           echo "instance_name=$instance_name" >> $GITHUB_OUTPUT
 
       - name: Find Instance Name Comment
         uses: peter-evans/find-comment@v3
         id: fc_instance_name
         with:
-          issue-number: ${{ github.event.issue.number }}
+          issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
           comment-author: "github-actions[bot]"
           body-includes: "### Instance Name"
 
@@ -27,7 +47,7 @@ jobs:
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
           comment-id: ${{ steps.fc_instance_name.outputs.comment-id }}
-          issue-number: ${{ github.event.issue.number }}
+          issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
           body: |
             ### Instance Name
 
@@ -40,7 +60,7 @@ jobs:
         uses: peter-evans/find-comment@v3
         id: fc_commands
         with:
-          issue-number: ${{ github.event.issue.number }}
+          issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
           comment-author: "github-actions[bot]"
           body-includes: "### Supported Issue Commands"
 
@@ -50,6 +70,6 @@ jobs:
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
           comment-id: ${{ steps.fc_commands.outputs.comment-id }}
-          issue-number: ${{ github.event.issue.number }}
+          issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
           body-path: "issue-commands.md"
           edit-mode: replace
