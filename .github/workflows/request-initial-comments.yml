@@ -1,0 +1,37 @@
+name: "Instance Request Initial Comments"
+on:
+  issues:
+    types:
+      - opened
+
+jobs:
+  initial_comments:
+    runs-on: ubuntu-latest
+    #if: contains(github.event.pull_request.labels.*.name, 'instance:requested')
+    steps:
+      - name: Define instance name
+        id: define
+        run: |
+          instance_name="morpho-cloud-portal_instance-${{ github.event.issue.number }}"
+          echo "instance_name=$instance_name" >> $GITHUB_OUTPUT
+
+      - name: Find Instance Name Comment
+        uses: peter-evans/find-comment@v3
+        id: fc_instance_name
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "### Instance Name"
+
+      - name: comment (instance name)
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          comment-id: ${{ steps.fc_instance_name.outputs.comment-id }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Name
+
+            `${{ steps.define.outputs.instance_name }}`
+
+            _The instance name is derived from the GitHub issue number using the template `morpho-cloud-portal_instance-NNN`. The instance may also be located in the exosphere interface using this name._
+          edit-mode: replace
