@@ -39,7 +39,7 @@ jobs:
             ### Instance Creation Progress ⏳
 
             | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ⏳                 |                 |              |                |                         |            |
           edit-mode: replace
 
@@ -169,7 +169,7 @@ jobs:
             ### Instance Creation Progress ⏳
 
             | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ✅                 | ⏳              |              |                |                         |            |
           edit-mode: replace
 
@@ -235,7 +235,7 @@ jobs:
             ### Instance Creation Progress ⏳
 
             | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ✅                 | ✅              | ⏳           |                |                         |            |
           edit-mode: replace
 
@@ -280,7 +280,7 @@ jobs:
             ### Instance Creation Progress ⏳
 
             | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ✅                 | ✅              | ✅           | ⏳             |                         |            |
           edit-mode: replace
 
@@ -345,7 +345,7 @@ jobs:
             ### Instance Creation Progress ⏳
 
             | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ✅                 | ✅              | ✅           | ✅             | ⏳                      |            |
           edit-mode: replace
 
@@ -449,7 +449,7 @@ jobs:
             ### Instance Creation Progress ⏳
 
             | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ✅                 | ✅              | ✅           | ✅             | ✅                      | ⏳         |
           edit-mode: replace
 
@@ -483,7 +483,7 @@ jobs:
             ### Instance Creation Progress ✅
 
             | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ✅                 | ✅              | ✅           | ✅             | ✅                      | ✅         |
           edit-mode: replace
 
