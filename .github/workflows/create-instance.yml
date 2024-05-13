@@ -23,17 +23,17 @@ jobs:
 
       - name: Find Progress Comment
         uses: peter-evans/find-comment@v3
-        id: fc
+        id: fc_progress
         with:
           issue-number: ${{ github.event.issue.number }}
           comment-author: "github-actions[bot]"
           body-includes: Instance Creation Progress
 
       - name: comment (progress)
-        id: couc
+        id: couc_progress
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
-          comment-id: ${{ steps.fc.outputs.comment-id }}
+          comment-id: ${{ steps.fc_progress.outputs.comment-id }}
           issue-number: ${{ github.event.issue.number }}
           body: |
             ### Instance Creation Progress ⏳
@@ -163,7 +163,7 @@ jobs:
       - name: comment (progress)
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
-          comment-id: ${{ steps.couc.outputs.comment-id }}
+          comment-id: ${{ steps.couc_progress.outputs.comment-id }}
           issue-number: ${{ github.event.issue.number }}
           body: |
             ### Instance Creation Progress ⏳
@@ -229,7 +229,7 @@ jobs:
       - name: comment (progress)
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
-          comment-id: ${{ steps.couc.outputs.comment-id }}
+          comment-id: ${{ steps.couc_progress.outputs.comment-id }}
           issue-number: ${{ github.event.issue.number }}
           body: |
             ### Instance Creation Progress ⏳
@@ -274,7 +274,7 @@ jobs:
       - name: comment (progress)
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
-          comment-id: ${{ steps.couc.outputs.comment-id }}
+          comment-id: ${{ steps.couc_progress.outputs.comment-id }}
           issue-number: ${{ github.event.issue.number }}
           body: |
             ### Instance Creation Progress ⏳
@@ -339,7 +339,7 @@ jobs:
       - name: comment (progress)
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
-          comment-id: ${{ steps.couc.outputs.comment-id }}
+          comment-id: ${{ steps.couc_progress.outputs.comment-id }}
           issue-number: ${{ github.event.issue.number }}
           body: |
             ### Instance Creation Progress ⏳
@@ -443,7 +443,7 @@ jobs:
       - name: comment (progress)
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
-          comment-id: ${{ steps.couc.outputs.comment-id }}
+          comment-id: ${{ steps.couc_progress.outputs.comment-id }}
           issue-number: ${{ github.event.issue.number }}
           body: |
             ### Instance Creation Progress ⏳
@@ -477,7 +477,7 @@ jobs:
       - name: comment (progress)
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
-          comment-id: ${{ steps.couc.outputs.comment-id }}
+          comment-id: ${{ steps.couc_progress.outputs.comment-id }}
           issue-number: ${{ github.event.issue.number }}
           body: |
             ### Instance Creation Progress ✅
