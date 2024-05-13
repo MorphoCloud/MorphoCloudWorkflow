@@ -2,7 +2,6 @@ name: "Instance Request Labeler"
 on:
   issues:
     types:
-      - reopened
       - opened
 
 permissions:
