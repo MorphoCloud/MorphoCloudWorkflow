@@ -35,3 +35,21 @@ jobs:
 
             _The instance name is derived from the GitHub issue number using the template `morpho-cloud-portal_instance-NNN`. The instance may also be located in the exosphere interface using this name._
           edit-mode: replace
+
+      - name: Find Issue Commands Comment
+        uses: peter-evans/find-comment@v3
+        id: fc_commands
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: "### Supported Issue Commands"
+
+      - uses: actions/checkout@v4
+
+      - name: comment (issue commands)
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          comment-id: ${{ steps.fc_commands.outputs.comment-id }}
+          issue-number: ${{ github.event.issue.number }}
+          body-path: "issue-commands.md"
+          edit-mode: replace
