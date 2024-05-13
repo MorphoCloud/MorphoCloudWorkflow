@@ -38,9 +38,9 @@ jobs:
           body: |
             ### Instance Creation Progress ⏳
 
-            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ⏳                 |                 |              |                |                         |            |
+            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
+            | ⏳        |                 |              |                |                         |            |
           edit-mode: replace
 
       - name: Issue Forms Body Parser
@@ -168,9 +168,9 @@ jobs:
           body: |
             ### Instance Creation Progress ⏳
 
-            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ✅                 | ⏳              |              |                |                         |            |
+            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
+            | ✅        | ⏳             |              |                |                         |            |
           edit-mode: replace
 
       - name: Create instance
@@ -234,9 +234,9 @@ jobs:
           body: |
             ### Instance Creation Progress ⏳
 
-            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ✅                 | ✅              | ⏳           |                |                         |            |
+            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
+            | ✅        | ✅             | ⏳           |                |                         |            |
           edit-mode: replace
 
       - name: Associate floating IP with created instance
@@ -279,9 +279,9 @@ jobs:
           body: |
             ### Instance Creation Progress ⏳
 
-            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ✅                 | ✅              | ✅           | ⏳             |                         |            |
+            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
+            | ✅        | ✅             | ✅           | ⏳             |                         |            |
           edit-mode: replace
 
       - name: Poll instance setup status
@@ -344,9 +344,9 @@ jobs:
           body: |
             ### Instance Creation Progress ⏳
 
-            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ✅                 | ✅              | ✅           | ✅             | ⏳                      |            |
+            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
+            | ✅        | ✅             | ✅           | ✅            | ⏳                      |            |
           edit-mode: replace
 
       - name: Retrieve metadata
@@ -448,9 +448,9 @@ jobs:
           body: |
             ### Instance Creation Progress ⏳
 
-            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ✅                 | ✅              | ✅           | ✅             | ✅                      | ⏳         |
+            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
+            | ✅        | ✅             | ✅           | ✅             | ✅                     | ⏳         |
           edit-mode: replace
 
       - name: Send mail (completed)
@@ -482,9 +482,9 @@ jobs:
           body: |
             ### Instance Creation Progress ✅
 
-            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:------------------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ✅                 | ✅              | ✅           | ✅             | ✅                      | ✅         |
+            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
+            | ✅        | ✅             | ✅           | ✅             | ✅                     | ✅         |
           edit-mode: replace
 
       - name: Add "instance:created" label
