@@ -21,6 +21,28 @@ jobs:
               name: ["instance:approved"]
             })
 
+      - name: Find Progress Comment
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          comment-author: "github-actions[bot]"
+          body-includes: Instance Creation Progress
+
+      - name: comment (progress)
+        id: couc
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Progress ⏳
+
+            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            | ⏳                 |                 |              |                |                         |            |
+          edit-mode: replace
+
       - name: Issue Forms Body Parser
         id: parse
         uses: zentered/issue-forms-body-parser@v2.0.0
@@ -138,6 +160,19 @@ jobs:
             Failed to create floating IP for **${{ steps.define.outputs.instance_name }}** instance.
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+      - name: comment (progress)
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          comment-id: ${{ steps.couc.outputs.comment-id }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Progress ⏳
+
+            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            | ✅                 | ⏳              |              |                |                         |            |
+          edit-mode: replace
+
       - name: Create instance
         id: create_instance
         run: |
@@ -191,6 +226,19 @@ jobs:
             Failed to create instance **${{ steps.define.outputs.instance_name }}**.
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+      - name: comment (progress)
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          comment-id: ${{ steps.couc.outputs.comment-id }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Progress ⏳
+
+            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            | ✅                 | ✅              | ⏳           |                |                         |            |
+          edit-mode: replace
+
       - name: Associate floating IP with created instance
         id: associated_ip
         run: |
@@ -222,6 +270,19 @@ jobs:
 
             Failed to associate IP with instance **${{ steps.define.outputs.instance_name }}**.
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: comment (progress)
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          comment-id: ${{ steps.couc.outputs.comment-id }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Progress ⏳
+
+            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            | ✅                 | ✅              | ✅           | ⏳             |                         |            |
+          edit-mode: replace
 
       - name: Poll instance setup status
         id: instance_poll
@@ -274,6 +335,19 @@ jobs:
 
             Maximum wait time for instance **${{ steps.define.outputs.instance_name }}** setup to complete exceeded.
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: comment (progress)
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          comment-id: ${{ steps.couc.outputs.comment-id }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Progress ⏳
+
+            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            | ✅                 | ✅              | ✅           | ✅             | ⏳                      |            |
+          edit-mode: replace
 
       - name: Retrieve metadata
         id: instance_metadata
@@ -366,6 +440,19 @@ jobs:
             Failed to generate connection URL for instance **${{ steps.define.outputs.instance_name }}**.
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+      - name: comment (progress)
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          comment-id: ${{ steps.couc.outputs.comment-id }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Progress ⏳
+
+            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            | ✅                 | ✅              | ✅           | ✅             | ✅                      | ⏳         |
+          edit-mode: replace
+
       - name: Send mail (completed)
         if: ${{ steps.instance_poll.outputs.status == 'complete' }}
         uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
@@ -386,6 +473,19 @@ jobs:
             Web connect: ${{ steps.guacamole.outputs.connection_url }}
             SSH: ssh exouser@${{ steps.instance_metadata.outputs.instance_ip }}
             Passphrase: ${{ steps.instance_metadata.outputs.instance_pwd }}
+
+      - name: comment (progress)
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          comment-id: ${{ steps.couc.outputs.comment-id }}
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Progress ✅
+
+            | Create Floating IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
+            |--------------------|-----------------|--------------|----------------|-------------------------|------------|
+            | ✅                 | ✅              | ✅           | ✅             | ✅                      | ✅         |
+          edit-mode: replace
 
       - name: Add "instance:created" label
         if: ${{ success() && steps.instance_poll.outputs.status == 'complete' }}
