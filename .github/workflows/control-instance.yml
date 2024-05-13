@@ -83,7 +83,7 @@ jobs:
             jq \
               --arg instance_name "$INSTANCE_NAME" \
               -c '.[] | select(.Name | contains($instance_name))' | \
-            jq -r '.Name')
+            jq -r '.Name' | tail -1)
 
           [[ $instance == "$INSTANCE_NAME" ]] && exists="true" || exists="false"
 
