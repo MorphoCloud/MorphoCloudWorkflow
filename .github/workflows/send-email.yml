@@ -1,0 +1,218 @@
+name: Send Email
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  send-email:
+    runs-on: self-hosted
+    if:
+      ${{ !github.event.issue.pull_request && (
+      contains(github.event.comment.body, '/email') ) }}
+    steps:
+      - name: email command
+        id: email_command
+        uses: github/command@v1.2.0
+        with:
+          command: "/email"
+          reaction: "rocket"
+          allowed_contexts: "issue"
+          permissions: "write,maintain,admin"
+          allowlist: "jcfr,muratmaga"
+
+      - name: Issue Forms Body Parser
+        id: parse
+        uses: zentered/issue-forms-body-parser@v2.0.0
+
+      - name: Display parsed data
+        run: |
+          echo ${{ toJSON(steps.parse.outputs.data) }} | jq .
+
+      - name: Extract fields
+        id: extract
+        run: |
+          email=$(
+            echo ${{ toJSON(steps.parse.outputs.data) }} |
+            jq -r ".email.text"
+          )
+          echo "email=$email" >> $GITHUB_OUTPUT
+
+      - name: Define instance name
+        id: define
+        run: |
+          instance_name="morpho-cloud-portal_instance-$ISSUE_NUMBER"
+          echo "instance_name=$instance_name" >> $GITHUB_OUTPUT
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+      - name: Check instance exists
+        id: check_instance
+        if: ${{ steps.email_command.outputs.continue == 'true' }}
+        run: |
+          export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
+
+          source ~/venv/bin/activate
+
+          instance=$(openstack server list -f json | \
+            jq \
+              --arg instance_name "$INSTANCE_NAME" \
+              -c '.[] | select(.Name | contains($instance_name))' | \
+            jq -r '.Name' | tail -1)
+
+          [[ $instance == "$INSTANCE_NAME" ]] && exists="true" || exists="false"
+
+          echo "exists [$exists]"
+          echo "exists=$exists" >> $GITHUB_OUTPUT
+        env:
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+      - name: command results comment (Instance does not exist)
+        if:
+          ${{ steps.email_command.outputs.continue == 'true' &&
+          steps.check_instance.outputs.exists == 'false' }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Command Results ❌
+
+            `email` command failed because **${{ steps.define.outputs.instance_name }}** instance does not exist.
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Retrieve metadata
+        id: instance_metadata
+        run: |
+          export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
+
+          source ~/venv/bin/activate
+
+          echo Retrieving instance "$INSTANCE_NAME" metadata
+
+          # Get instance IP
+          instance_ip=$(
+            openstack server show $INSTANCE_NAME -c addresses -f json | \
+            jq -r '.addresses.auto_allocated_network[1]'
+          )
+          echo "instance_ip [$instance_ip]"
+          if [[ "$instance_ip" == "null" ]]; then
+            echo "::error ::Failed to retrieve $INSTANCE_NAME IP"
+            exit 1
+          fi
+          echo "instance_ip=$instance_ip" >> $GITHUB_OUTPUT
+
+          # Get instance password
+          instance_pwd=$(
+            openstack server show $INSTANCE_NAME -c tags -f json | \
+            jq -r '.tags[] | select(startswith("exoPw")) | sub("^exoPw:"; "")'
+          )
+          if [[ -z "$instance_pwd" ]]; then
+            # Since 'exoPw' tag may not yet set, attempt to directly retrieve the password using
+            # the openstack endpoint local to the instance.
+            instance_pwd=$(ssh \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o LogLevel=ERROR \
+              exouser@$instance_ip \
+              'curl --silent http://169.254.169.254/openstack/latest/password')
+          fi
+          if [[ -z "$instance_pwd" ]]; then
+            echo "::error ::Failed to retrieve $INSTANCE_NAME password"
+            exit 1
+          fi
+          echo "::add-mask::$instance_pwd"
+          echo "instance_pwd=$instance_pwd" >> $GITHUB_OUTPUT
+        env:
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+      - name: comment (failed to retrieve instance metadata)
+        if: ${{ steps.instance_metadata.outcome == 'failure' && failure() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Command Results ❌
+
+            `email` command failed to retrieve metadata for **${{ steps.define.outputs.instance_name }}** instance.
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Generate Guacamole Connection URL
+        id: guacamole
+        run: |
+          # See hard-coded value in exosphere/src/Helpers/Interaction.elm
+          guacamole_port=49528
+
+          # See cloud_configs.js (allocation region is "IU")
+          proxy_hostname=proxy-js2-iu.exosphere.app
+
+          # See "buildProxyUrl" in src/Helpers/Url.elm
+          proxified_instance_ip=${INSTANCE_IP//./-}
+
+          # See "stepServerGuacamoleAuth" in exosphere/src/Orchestration/GoalServer.elm
+          # tokens_url="https://http-$proxified_instance_ip-$guacamole_port.$proxy_hostname/guacamole/api/tokens"
+          # auth_token=$(
+          #   curl -X POST --silent -d "username=exouser&password=$INSTANCE_PWD" $tokens_url | \
+          #   jq -r .authToken
+          # )
+          # echo "::add-mask::$auth_token"
+          #
+          # Since the token expires after a few hours, remove "?token=$auth_token" from "connection_url" and require
+          # the user to explicitly authenticate specifying the username and passphrase.
+
+          # See hard-coded value in exosphere/src/Helpers/Interaction.elm
+          client_id=ZGVza3RvcABjAGRlZmF1bHQ
+
+          connection_url="https://http-$proxified_instance_ip-$guacamole_port.$proxy_hostname/guacamole/#/client/$client_id="
+          echo $connection_url
+          echo "connection_url=$connection_url" >> $GITHUB_OUTPUT
+
+        env:
+          INSTANCE_IP: ${{ steps.instance_metadata.outputs.instance_ip }}
+          INSTANCE_PWD: ${{ steps.instance_metadata.outputs.instance_pwd }}
+
+      - name: comment (failed to generate connection URL)
+        if: ${{ steps.guacamole.outcome == 'failure' && failure() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Command Results ❌
+
+            `email` command failed to generate connection URL for instance **${{ steps.define.outputs.instance_name }}**.
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Send mail (completed)
+        id: send_email
+        uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{secrets.MAIL_USERNAME}}
+          password: ${{secrets.MAIL_PASSWORD}}
+          from: MorphoCloudPortal
+          to: ${{ steps.extract.outputs.email }}
+          subject:
+            "[MorphoCloudPortal] Instance ${{ steps.define.outputs.instance_name
+            }} created"
+          body: |
+            Instance ${{ steps.define.outputs.instance_name }} created
+
+            Web connect: ${{ steps.guacamole.outputs.connection_url }}
+            SSH: ssh exouser@${{ steps.instance_metadata.outputs.instance_ip }}
+            Passphrase: ${{ steps.instance_metadata.outputs.instance_pwd }}
+
+      - name: command results comment (success)
+        if: ${{ steps.send_email.outcome == 'success' && success() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Command Results ✅
+
+            `email` command successfully completed for **${{ steps.define.outputs.instance_name }}** instance.
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
