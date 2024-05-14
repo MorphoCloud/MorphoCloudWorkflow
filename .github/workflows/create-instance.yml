@@ -41,6 +41,8 @@ jobs:
             | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
             |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ⏳        |                 |              |                |                         |            |
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           edit-mode: replace
 
       - name: Issue Forms Body Parser
@@ -171,6 +173,8 @@ jobs:
             | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
             |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ✅        | ⏳             |              |                |                         |            |
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           edit-mode: replace
 
       - name: Create instance
@@ -237,6 +241,8 @@ jobs:
             | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
             |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ✅        | ✅             | ⏳           |                |                         |            |
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           edit-mode: replace
 
       - name: Associate floating IP with created instance
@@ -282,6 +288,8 @@ jobs:
             | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
             |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ✅        | ✅             | ✅           | ⏳             |                         |            |
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           edit-mode: replace
 
       - name: Poll instance setup status
@@ -347,6 +355,8 @@ jobs:
             | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
             |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ✅        | ✅             | ✅           | ✅            | ⏳                      |            |
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           edit-mode: replace
 
       - name: Retrieve metadata
@@ -451,6 +461,8 @@ jobs:
             | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
             |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ✅        | ✅             | ✅           | ✅             | ✅                     | ⏳         |
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           edit-mode: replace
 
       - name: Send mail (completed)
@@ -485,6 +497,8 @@ jobs:
             | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
             |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
             | ✅        | ✅             | ✅           | ✅             | ✅                     | ✅         |
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           edit-mode: replace
 
       - name: Add "instance:created" label
