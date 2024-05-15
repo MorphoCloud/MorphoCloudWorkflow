@@ -30,6 +30,8 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
 
+      - uses: actions/checkout@v4
+
       - name: Define instance name
         id: define
         uses: ./.github/actions/define-instance-name
@@ -64,8 +66,6 @@ jobs:
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
           comment-author: "github-actions[bot]"
           body-includes: "### Supported Issue Commands"
-
-      - uses: actions/checkout@v4
 
       - name: comment (issue commands)
         uses: peter-evans/create-or-update-comment@v4.0.0

@@ -63,6 +63,8 @@ jobs:
           START_COMMAND_CONTINUE: ${{ steps.start_command.outputs.continue }}
           STOP_COMMAND_CONTINUE: ${{ steps.stop_command.outputs.continue }}
 
+      - uses: actions/checkout@v4
+
       - name: Define instance name
         id: define
         uses: ./.github/actions/define-instance-name

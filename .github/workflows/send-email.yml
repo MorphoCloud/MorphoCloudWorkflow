@@ -21,6 +21,8 @@ jobs:
           permissions: "write,maintain,admin"
           allowlist: "jcfr,muratmaga"
 
+      - uses: actions/checkout@v4
+
       - name: Extract fields
         id: extract
         uses: ./.github/actions/extract-issue-fields

@@ -45,6 +45,8 @@ jobs:
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           edit-mode: replace
 
+      - uses: actions/checkout@v4
+
       - name: Extract fields
         id: extract
         uses: ./.github/actions/extract-issue-fields
@@ -71,8 +73,6 @@ jobs:
         uses: ./.github/actions/define-instance-name
         with:
           issue_number: ${{ github.event.issue.number }}
-
-      - uses: actions/checkout@v4
 
       - name: Check instance exists
         id: check_instance
