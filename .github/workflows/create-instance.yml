@@ -79,11 +79,9 @@ jobs:
 
       - name: Define instance name
         id: define
-        run: |
-          instance_name="morpho-cloud-portal_instance-$ISSUE_NUMBER"
-          echo "instance_name=$instance_name" >> $GITHUB_OUTPUT
-        env:
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        uses: ./.github/actions/define-instance-name
+        with:
+          issue_number: ${{ github.event.issue.number }}
 
       - uses: actions/checkout@v4
 

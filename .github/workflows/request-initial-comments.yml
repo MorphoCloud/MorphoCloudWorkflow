@@ -32,9 +32,9 @@ jobs:
 
       - name: Define instance name
         id: define
-        run: |
-          instance_name="morpho-cloud-portal_instance-${{ steps.collect_inputs.outputs.issue_number }}"
-          echo "instance_name=$instance_name" >> $GITHUB_OUTPUT
+        uses: ./.github/actions/define-instance-name
+        with:
+          issue_number: ${{ steps.collect_inputs.outputs.issue_number }}
 
       - name: Find Instance Name Comment
         uses: peter-evans/find-comment@v3
