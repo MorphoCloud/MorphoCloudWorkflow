@@ -13,7 +13,7 @@ runs:
   steps:
     - name: Issue Forms Body Parser
       id: parse
-      uses: zentered/issue-forms-body-parser@v2.0.0
+      uses: zentered/issue-forms-body-parser@v2.2.0
 
     - name: Display parsed data
       shell: bash
