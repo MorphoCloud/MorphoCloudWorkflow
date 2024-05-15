@@ -5,6 +5,9 @@ inputs:
     description: "Issue number identifying the issue to extract fields from"
     required: true
 outputs:
+  instance_flavor:
+    description: "Instance flavor"
+    value: ${{ steps.extract.outputs.instance_flavor }}
   email:
     description: "Email"
     value: ${{ steps.extract.outputs.email }}
@@ -35,6 +38,11 @@ runs:
       id: extract
       shell: bash
       run: |
+        instance_flavor=$(echo ${{ toJSON(steps.parse.outputs.data) }} | \
+            jq -r '."cloud-computing-instance-flavor".text | split(" - ")[0]')
+        echo "instance_flavor [$instance_flavor]"
+        echo "instance_flavor=$instance_flavor" >> $GITHUB_OUTPUT
+
         email=$(
           echo ${{ toJSON(steps.parse.outputs.data) }} |
           jq -r ".email.text"

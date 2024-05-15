@@ -13,17 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     #if: contains(github.event.pull_request.labels.*.name, 'instance:requested')
     steps:
-      - name: Issue Forms Body Parser
-        id: parse
-        uses: zentered/issue-forms-body-parser@v2.2.0
-
       - name: Extract issue fields
         id: extract
-        run: |
-          instance_flavor=$(echo ${{ toJSON(steps.parse.outputs.data) }} | \
-            jq -r '."cloud-computing-instance-flavor".text | split(" - ")[0]')
-          echo "instance_flavor [$instance_flavor]"
-          echo "instance_flavor=$instance_flavor" >> $GITHUB_OUTPUT
+        uses: ./.github/actions/extract-issue-fields
+        with:
+          issue_number: ${{ github.event.issue.number }}
 
       - name: Add flavor label
         run: gh issue edit "$NUMBER" --add-label "$LABELS"
