@@ -1,6 +1,9 @@
 name: "Extract issue fields"
 description: "Extract issue fields"
 inputs:
+  repository:
+    description: "The full name of the repository in which the issue exists"
+    required: true
   issue_number:
     description: "Issue number identifying the issue to extract fields from"
     required: true
@@ -19,7 +22,7 @@ runs:
       shell: bash
       run: |
         body=$(gh issue view ${{ inputs.issue_number }} \
-          --repo ${{ github.repo }} \
+          --repo ${{ inputs.repository }} \
           --json body --jq '.body')
         echo "body=$body" >> $GITHUB_OUTPUT
 

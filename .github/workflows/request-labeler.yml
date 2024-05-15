@@ -19,6 +19,7 @@ jobs:
         id: extract
         uses: ./.github/actions/extract-issue-fields
         with:
+          repository: ${{ github.repository }}
           issue_number: ${{ github.event.issue.number }}
 
       - name: Add flavor label
