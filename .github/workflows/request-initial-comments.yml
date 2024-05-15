@@ -18,11 +18,12 @@ jobs:
         id: collect_inputs
         run: |
           echo "EVENT_NAME [$EVENT_NAME]"
-          if [[ "$EVENT_NAME" == "issue" ]]; then
+          if [[ "$EVENT_NAME" == "issues" ]]; then
             issue_number=${{ github.event.issue.number }}
           elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             issue_number=${{ github.event.inputs.issue_number }}
           else
+            echo "::error ::Unsupported EVENT_NAME [$EVENT_NAME]"
             exit 1
           fi
           echo "issue_number=$issue_number" >> $GITHUB_OUTPUT
