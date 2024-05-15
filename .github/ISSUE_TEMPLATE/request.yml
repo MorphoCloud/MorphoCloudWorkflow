@@ -26,11 +26,9 @@ body:
       description:
         Briefly describe what your project is, your usage needs and how you will
         be using the instance. Approval of the request is contingent upon a
-        valid use case in the domain of 3D digital morphology. Please do not
-        leave this field empty. Requests with empty Description field will be
-        automatically denied.
+        valid use case in the domain of 3D digital morphology.
     validations:
-      required: false
+      required: true
 
   - type: input
     attributes:
