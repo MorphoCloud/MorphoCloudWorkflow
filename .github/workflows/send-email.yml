@@ -27,6 +27,7 @@ jobs:
         id: extract
         uses: ./.github/actions/extract-issue-fields
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
           issue_number: ${{ github.event.issue.number }}
 
