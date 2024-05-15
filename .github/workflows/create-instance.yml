@@ -45,22 +45,11 @@ jobs:
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           edit-mode: replace
 
-      - name: Issue Forms Body Parser
-        id: parse
-        uses: zentered/issue-forms-body-parser@v2.0.0
-
-      - name: Display parsed data
-        run: |
-          echo ${{ toJSON(steps.parse.outputs.data) }} | jq .
-
       - name: Extract fields
         id: extract
-        run: |
-          email=$(
-            echo ${{ toJSON(steps.parse.outputs.data) }} |
-            jq -r ".email.text"
-          )
-          echo "email=$email" >> $GITHUB_OUTPUT
+        uses: ./.github/actions/extract-issue-fields
+        with:
+          issue_number: ${{ github.event.issue.number }}
 
       - name: Extract labels
         id: labels

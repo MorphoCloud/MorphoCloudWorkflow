@@ -1,0 +1,31 @@
+name: "Extract issue fields"
+description: "Extract issue fields"
+inputs:
+  issue_number:
+    description: "Issue number identifying the issue to extract fields from"
+    required: true
+outputs:
+  email:
+    description: "Email"
+    value: ${{ steps.extract.outputs.email }}
+runs:
+  using: "composite"
+  steps:
+    - name: Issue Forms Body Parser
+      id: parse
+      uses: zentered/issue-forms-body-parser@v2.0.0
+
+    - name: Display parsed data
+      shell: bash
+      run: |
+        echo ${{ toJSON(steps.parse.outputs.data) }} | jq .
+
+    - name: Extract fields
+      id: extract
+      shell: bash
+      run: |
+        email=$(
+          echo ${{ toJSON(steps.parse.outputs.data) }} |
+          jq -r ".email.text"
+        )
+        echo "email=$email" >> $GITHUB_OUTPUT

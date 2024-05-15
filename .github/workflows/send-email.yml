@@ -21,22 +21,11 @@ jobs:
           permissions: "write,maintain,admin"
           allowlist: "jcfr,muratmaga"
 
-      - name: Issue Forms Body Parser
-        id: parse
-        uses: zentered/issue-forms-body-parser@v2.0.0
-
-      - name: Display parsed data
-        run: |
-          echo ${{ toJSON(steps.parse.outputs.data) }} | jq .
-
       - name: Extract fields
         id: extract
-        run: |
-          email=$(
-            echo ${{ toJSON(steps.parse.outputs.data) }} |
-            jq -r ".email.text"
-          )
-          echo "email=$email" >> $GITHUB_OUTPUT
+        uses: ./.github/actions/extract-issue-fields
+        with:
+          issue_number: ${{ github.event.issue.number }}
 
       - name: Define instance name
         id: define
