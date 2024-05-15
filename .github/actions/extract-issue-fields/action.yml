@@ -26,7 +26,8 @@ runs:
       run: |
         body=$(gh issue view ${{ inputs.issue_number }} \
           --repo ${{ inputs.repository }} \
-          --json body --jq '.body')
+          --json body | \
+          jq '.body')
         echo "body=$body" >> $GITHUB_OUTPUT
       env:
         GITHUB_TOKEN: ${{ inputs.token }}
