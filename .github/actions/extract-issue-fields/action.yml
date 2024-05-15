@@ -11,9 +11,20 @@ outputs:
 runs:
   using: "composite"
   steps:
+    - name: Fetch the issue
+      id: read_issue_body
+      shell: bash
+      run: |
+        body=$(gh issue view ${{ inputs.issue_number }} \
+          --repo ${{ github.repo }} \
+          --json body --jq '.body')
+        echo "body=$body" >> $GITHUB_OUTPUT
+
     - name: Issue Forms Body Parser
       id: parse
       uses: zentered/issue-forms-body-parser@v2.2.0
+      with:
+        body: ${{ steps.read_issue_body.output.body }}
 
     - name: Display parsed data
       shell: bash
