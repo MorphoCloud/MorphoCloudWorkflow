@@ -386,7 +386,7 @@ jobs:
             jq -r '.tags[] | select(startswith("exoPw")) | sub("^exoPw:"; "")'
           )
           if [[ -z "$instance_pwd" ]]; then
-            # Since 'exoPw' tag is not yet set, attempt to directly retrieve the password using
+            # Since 'exoPw' tag may not yet be set, attempt to directly retrieve the password using
             # the openstack endpoint local to the instance.
             instance_pwd=$(ssh \
               -o StrictHostKeyChecking=no \
@@ -394,6 +394,10 @@ jobs:
               -o LogLevel=ERROR \
               exouser@$instance_ip \
               'curl --silent http://169.254.169.254/openstack/latest/password')
+          fi
+          if [[ -z "$instance_pwd" ]]; then
+            echo "::error ::Failed to retrieve $INSTANCE_NAME password"
+            exit 1
           fi
           echo "::add-mask::$instance_pwd"
           echo "instance_pwd=$instance_pwd" >> $GITHUB_OUTPUT

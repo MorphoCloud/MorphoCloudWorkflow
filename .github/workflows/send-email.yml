@@ -108,7 +108,7 @@ jobs:
             jq -r '.tags[] | select(startswith("exoPw")) | sub("^exoPw:"; "")'
           )
           if [[ -z "$instance_pwd" ]]; then
-            # Since 'exoPw' tag may not yet set, attempt to directly retrieve the password using
+            # Since 'exoPw' tag may not yet be set, attempt to directly retrieve the password using
             # the openstack endpoint local to the instance.
             instance_pwd=$(ssh \
               -o StrictHostKeyChecking=no \
