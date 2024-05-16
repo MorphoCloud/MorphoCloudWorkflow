@@ -58,4 +58,4 @@ runs:
         echo "::add-mask::$instance_pwd"
         echo "instance_pwd=$instance_pwd" >> $GITHUB_OUTPUT
       env:
-        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
