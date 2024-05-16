@@ -47,7 +47,7 @@ jobs:
             continue="$START_COMMAND_CONTINUE"
             command_name="start"
             comment_id="${{ steps.start_command.outputs.comment_id }}"
-          elif [[ "$STOP_COMMAND_CONTINUE" == "true"  ]]; then
+          elif [[ "$STOP_COMMAND_CONTINUE" == "true" ]]; then
             continue="$STOP_COMMAND_CONTINUE"
             command_name="stop"
             comment_id="${{ steps.stop_command.outputs.comment_id }}"
