@@ -15,7 +15,8 @@ jobs:
     if:
       ${{ !github.event.issue.pull_request && (
       contains(github.event.comment.body, '/start') ||
-      contains(github.event.comment.body, '/stop') ) }}
+      contains(github.event.comment.body, '/stop') ||
+      contains(github.event.comment.body, '/delete') ) }}
     steps:
       - name: start command
         id: start_command
@@ -37,11 +38,22 @@ jobs:
           permissions: "read,triage,write,maintain,admin"
           allowlist: "jcfr,muratmaga,${{ github.event.issue.user.login }}"
 
+      - name: delete command
+        id: delete_command
+        uses: github/command@v1.2.0
+        with:
+          command: "/delete"
+          reaction: "rocket"
+          allowed_contexts: "issue"
+          permissions: "write,maintain,admin"
+          allowlist: "jcfr,muratmaga"
+
       - name: Set command metadata
         id: command
         if:
           ${{ steps.start_command.outputs.continue == 'true' ||
-          steps.stop_command.outputs.continue == 'true' }}
+          steps.stop_command.outputs.continue == 'true' ||
+          steps.delete_command.outputs.continue == 'true' }}
         run: |
           if [[ "$START_COMMAND_CONTINUE" == "true" ]]; then
             continue="$START_COMMAND_CONTINUE"
@@ -51,6 +63,10 @@ jobs:
             continue="$STOP_COMMAND_CONTINUE"
             command_name="stop"
             comment_id="${{ steps.stop_command.outputs.comment_id }}"
+          elif [[ "$DELETE_COMMAND_CONTINUE" == "true" ]]; then
+            continue="$DELETE_COMMAND_CONTINUE"
+            command_name="delete"
+            comment_id="${{ steps.delete_command.outputs.comment_id }}"
           else
             continue="false"
             command_name=""
@@ -62,6 +78,7 @@ jobs:
         env:
           START_COMMAND_CONTINUE: ${{ steps.start_command.outputs.continue }}
           STOP_COMMAND_CONTINUE: ${{ steps.stop_command.outputs.continue }}
+          DELETE_COMMAND_CONTINUE: ${{ steps.delete_command.outputs.continue }}
 
       - uses: actions/checkout@v4
 
