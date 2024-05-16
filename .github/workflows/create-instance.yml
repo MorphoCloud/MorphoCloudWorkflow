@@ -21,19 +21,10 @@ jobs:
           permissions: "write,maintain,admin"
           allowlist: "jcfr,muratmaga"
 
-      - name: Find Progress Comment
-        uses: peter-evans/find-comment@v3
-        id: fc_progress
-        with:
-          issue-number: ${{ github.event.issue.number }}
-          comment-author: "github-actions[bot]"
-          body-includes: Instance Creation Progress
-
       - name: comment (progress)
         id: couc_progress
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
-          comment-id: ${{ steps.fc_progress.outputs.comment-id }}
           issue-number: ${{ github.event.issue.number }}
           body: |
             ### Instance Creation Progress ⏳
@@ -43,7 +34,6 @@ jobs:
             | ⏳        |                 |              |                |                         |            |
 
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          edit-mode: replace
 
       - uses: actions/checkout@v4
 
