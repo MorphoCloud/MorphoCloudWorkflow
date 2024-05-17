@@ -106,7 +106,7 @@ jobs:
           fi
           echo "continue=$continue" >> $GITHUB_OUTPUT
           echo "command_name=$command_name" >> $GITHUB_OUTPUT
-          echo "comment_id=$comment_id$" >> $GITHUB_OUTPUT
+          echo "comment_id=$comment_id" >> $GITHUB_OUTPUT
         env:
           UNSHELVE_COMMAND_CONTINUE:
             ${{ steps.unshelve_command.outputs.continue }}
