@@ -1,0 +1,79 @@
+name: Validate Request
+
+on:
+  issue_comment:
+    types: [created]
+
+# Permissions needed for reacting to IssueOps commands on issues
+permissions:
+  issues: write
+  checks: read
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    if:
+      ${{ !github.event.issue.pull_request && (
+      contains(github.event.comment.body, '/validate') ) }}
+    steps:
+      - name: validate command
+        id: validate_command
+        uses: github/command@v1.2.0
+        with:
+          command: "/validate"
+          reaction: "rocket"
+          allowed_contexts: "issue"
+          permissions: "read,triage,write,maintain,admin"
+          allowlist: "jcfr,muratmaga,${{ github.event.issue.user.login }}"
+
+      - uses: actions/checkout@v4
+
+      - name: Extract fields
+        id: extract
+        uses: ./.github/actions/extract-issue-fields
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          issue_number: ${{ github.event.issue.number }}
+
+      - name: Check email format
+        id: check_email_format
+        run: |
+          # Adapted from https://gist.github.com/guessi/82a73ee7eb2b1216eb9db17bb8d65dd1
+          email_regex="^(([A-Za-z0-9]+((\.|\-|\_|\+)?[A-Za-z0-9]?)*[A-Za-z0-9]+)|[A-Za-z0-9]+)@(([A-Za-z0-9]+)+((\.|\-|\_)?([A-Za-z0-9]+)+)*)+\.([A-Za-z]{2,})+$"
+          if [[ "$EMAIL" =~ $email_regex ]]; then
+            valid="true"
+            emojii="✅"
+          else
+            valid="false"
+            emojii="❌"
+          fi
+          echo "valid=$valid" >> $GITHUB_OUTPUT
+          echo "emojii=$emojii" >> $GITHUB_OUTPUT
+        env:
+          EMAIL: ${{ steps.extract.outputs.email }}
+
+      - name: command results comment (failure)
+        if: ${{ failure() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Command Results ❌
+
+            `/validate` command failed.
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: command results comment (status)
+        if: ${{ success() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Validation Results
+
+            | Check           | Status  |
+            | --------------- |:-------:|
+            | Email format    | ${{ steps.check_email_format.outputs.emojii }} |
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
