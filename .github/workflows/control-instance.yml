@@ -14,10 +14,32 @@ jobs:
     runs-on: self-hosted
     if:
       ${{ !github.event.issue.pull_request && (
+      contains(github.event.comment.body, '/unshelve') ||
+      contains(github.event.comment.body, '/shelve') ||
       contains(github.event.comment.body, '/start') ||
       contains(github.event.comment.body, '/stop') ||
       contains(github.event.comment.body, '/delete') ) }}
     steps:
+      - name: unshelve command
+        id: unshelve_command
+        uses: github/command@v1.2.0
+        with:
+          command: "/unshelve"
+          reaction: "rocket"
+          allowed_contexts: "issue"
+          permissions: "read,triage,write,maintain,admin"
+          allowlist: "jcfr,muratmaga,${{ github.event.issue.user.login }}"
+
+      - name: shelve command
+        id: shelve_command
+        uses: github/command@v1.2.0
+        with:
+          command: "/shelve"
+          reaction: "rocket"
+          allowed_contexts: "issue"
+          permissions: "read,triage,write,maintain,admin"
+          allowlist: "jcfr,muratmaga,${{ github.event.issue.user.login }}"
+
       - name: start command
         id: start_command
         uses: github/command@v1.2.0
@@ -51,11 +73,21 @@ jobs:
       - name: Set command metadata
         id: command
         if:
-          ${{ steps.start_command.outputs.continue == 'true' ||
+          ${{ steps.unshelve_command.outputs.continue == 'true' ||
+          steps.shelve_command.outputs.continue == 'true' ||
+          steps.start_command.outputs.continue == 'true' ||
           steps.stop_command.outputs.continue == 'true' ||
           steps.delete_command.outputs.continue == 'true' }}
         run: |
-          if [[ "$START_COMMAND_CONTINUE" == "true" ]]; then
+          if [[ "$UNSHELVE_COMMAND_CONTINUE" == "true" ]]; then
+            continue="$UNSHELVE_COMMAND_CONTINUE"
+            command_name="unshelve"
+            comment_id="${{ steps.unshelve_command.outputs.comment_id }}"
+          elif [[ "$SHELVE_COMMAND_CONTINUE" == "true" ]]; then
+            continue="$SHELVE_COMMAND_CONTINUE"
+            command_name="shelve"
+            comment_id="${{ steps.shelve_command.outputs.comment_id }}"
+          elif [[ "$START_COMMAND_CONTINUE" == "true" ]]; then
             continue="$START_COMMAND_CONTINUE"
             command_name="start"
             comment_id="${{ steps.start_command.outputs.comment_id }}"
@@ -76,6 +108,9 @@ jobs:
           echo "command_name=$command_name" >> $GITHUB_OUTPUT
           echo "comment_id=$comment_id$" >> $GITHUB_OUTPUT
         env:
+          UNSHELVE_COMMAND_CONTINUE:
+            ${{ steps.unshelve_command.outputs.continue }}
+          SHELVE_COMMAND_CONTINUE: ${{ steps.shelve_command.outputs.continue }}
           START_COMMAND_CONTINUE: ${{ steps.start_command.outputs.continue }}
           STOP_COMMAND_CONTINUE: ${{ steps.stop_command.outputs.continue }}
           DELETE_COMMAND_CONTINUE: ${{ steps.delete_command.outputs.continue }}
