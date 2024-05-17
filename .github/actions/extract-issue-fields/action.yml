@@ -52,8 +52,10 @@ runs:
         echo "instance_flavor [$instance_flavor]"
         echo "instance_flavor=$instance_flavor" >> $GITHUB_OUTPUT
 
+        # Also strip "<" and ">" to convert from "<name@domain.org>" to "name@domain.org"
         email=$(
           echo ${{ toJSON(steps.parse.outputs.data) }} |
-          jq -r ".email.text"
+          jq -r ".email.text" |
+          sed -E 's/^<([^<>]+)>$/\1/'
         )
         echo "email=$email" >> $GITHUB_OUTPUT
