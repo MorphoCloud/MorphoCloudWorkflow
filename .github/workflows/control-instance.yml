@@ -16,8 +16,6 @@ jobs:
       ${{ !github.event.issue.pull_request && (
       contains(github.event.comment.body, '/unshelve') ||
       contains(github.event.comment.body, '/shelve') ||
-      contains(github.event.comment.body, '/start') ||
-      contains(github.event.comment.body, '/stop') ||
       contains(github.event.comment.body, '/delete') ) }}
     steps:
       - name: unshelve command
@@ -40,26 +38,6 @@ jobs:
           permissions: "read,triage,write,maintain,admin"
           allowlist: "jcfr,muratmaga,${{ github.event.issue.user.login }}"
 
-      - name: start command
-        id: start_command
-        uses: github/command@v1.2.0
-        with:
-          command: "/start"
-          reaction: "rocket"
-          allowed_contexts: "issue"
-          permissions: "read,triage,write,maintain,admin"
-          allowlist: "jcfr,muratmaga,${{ github.event.issue.user.login }}"
-
-      - name: stop command
-        id: stop_command
-        uses: github/command@v1.2.0
-        with:
-          command: "/stop"
-          reaction: "rocket"
-          allowed_contexts: "issue"
-          permissions: "read,triage,write,maintain,admin"
-          allowlist: "jcfr,muratmaga,${{ github.event.issue.user.login }}"
-
       - name: delete command
         id: delete_command
         uses: github/command@v1.2.0
@@ -75,8 +53,6 @@ jobs:
         if:
           ${{ steps.unshelve_command.outputs.continue == 'true' ||
           steps.shelve_command.outputs.continue == 'true' ||
-          steps.start_command.outputs.continue == 'true' ||
-          steps.stop_command.outputs.continue == 'true' ||
           steps.delete_command.outputs.continue == 'true' }}
         run: |
           if [[ "$UNSHELVE_COMMAND_CONTINUE" == "true" ]]; then
@@ -89,16 +65,6 @@ jobs:
             command_name="shelve"
             comment_id="${{ steps.shelve_command.outputs.comment_id }}"
             expected_status="SHELVED_OFFLOADED"
-          elif [[ "$START_COMMAND_CONTINUE" == "true" ]]; then
-            continue="$START_COMMAND_CONTINUE"
-            command_name="start"
-            comment_id="${{ steps.start_command.outputs.comment_id }}"
-            expected_status="ACTIVE"
-          elif [[ "$STOP_COMMAND_CONTINUE" == "true" ]]; then
-            continue="$STOP_COMMAND_CONTINUE"
-            command_name="stop"
-            comment_id="${{ steps.stop_command.outputs.comment_id }}"
-            expected_status="SHUTOFF"
           elif [[ "$DELETE_COMMAND_CONTINUE" == "true" ]]; then
             continue="$DELETE_COMMAND_CONTINUE"
             command_name="delete"
@@ -118,8 +84,6 @@ jobs:
           UNSHELVE_COMMAND_CONTINUE:
             ${{ steps.unshelve_command.outputs.continue }}
           SHELVE_COMMAND_CONTINUE: ${{ steps.shelve_command.outputs.continue }}
-          START_COMMAND_CONTINUE: ${{ steps.start_command.outputs.continue }}
-          STOP_COMMAND_CONTINUE: ${{ steps.stop_command.outputs.continue }}
           DELETE_COMMAND_CONTINUE: ${{ steps.delete_command.outputs.continue }}
 
       - uses: actions/checkout@v4
