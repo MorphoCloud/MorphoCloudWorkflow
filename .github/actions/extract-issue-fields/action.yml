@@ -14,6 +14,9 @@ outputs:
   instance_flavor:
     description: "Instance flavor"
     value: ${{ steps.extract.outputs.instance_flavor }}
+  orcid:
+    description: "ORCID iD"
+    value: ${{ steps.extract.outputs.orcid }}
   email:
     description: "Email"
     value: ${{ steps.extract.outputs.email }}
@@ -51,6 +54,12 @@ runs:
             jq -r '."cloud-computing-instance-flavor".text | split(" - ")[0]')
         echo "instance_flavor [$instance_flavor]"
         echo "instance_flavor=$instance_flavor" >> $GITHUB_OUTPUT
+
+        orcid=$(
+          echo ${{ toJSON(steps.parse.outputs.data) }} |
+          jq -r ".orcid.text"
+        )
+        echo "orcid=$orcid" >> $GITHUB_OUTPUT
 
         # Also strip "<" and ">" to convert from "<name@domain.org>" to "name@domain.org"
         email=$(

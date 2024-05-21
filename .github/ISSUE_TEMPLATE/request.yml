@@ -33,6 +33,14 @@ body:
 
   - type: input
     attributes:
+      label: ORCID
+      description: Your ORCID iD profile.
+      placeholder: 0000-0000-0000-0000
+    validations:
+      required: true
+
+  - type: input
+    attributes:
       label: Email
       description:
         Email to use for notifications. Please double check your entry.
