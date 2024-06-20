@@ -265,7 +265,7 @@ jobs:
 
           echo Polling "$INSTANCE_NAME" setup status
 
-          max_wait_time=300  # Maximum wait time in seconds (300s -> 5mins)
+          max_wait_time=600  # Maximum wait time in seconds (600s -> 10mins)
           wait_interval=5    # Interval between status checks in seconds
           total_wait_time=0
 
