@@ -9,7 +9,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        _Please enter a short description of your project in the title bar above this text. Format: "Instance: Short description"._
+        _Please enter a short description of your project in the title bar above this text. E.g.,: "Instance: 3D analysis of bryozoans"._
 
   - type: dropdown
     attributes:
@@ -27,7 +27,10 @@ body:
       description:
         Briefly describe what your project is, your usage needs and how you will
         be using the instance. Approval of the request is contingent upon a
-        valid use case in the domain of 3D digital morphology.
+        valid use case in the domain of 3D digital morphology. E.g., "I am PhD
+        candidate in XYZ University working on 3D morphometrics of fossil
+        bryozoans. I have microCT scans of 100s specimens, and would like to use
+        SlicerMorph to segment and extract models"._
     validations:
       required: true
 
