@@ -161,7 +161,7 @@ jobs:
             --security-group "default" \
             --security-group "exosphere" \
             --flavor $INSTANCE_FLAVOR \
-            --image "antsthings-vgl-gpu-image" \
+            --image "antsthings-vgl-gpu-image-Slicer-5.6.2" \
             --key-name "jcfr" \
             --property "exoGuac={\"v\":1,\"ssh\":true,\"vnc\":true}" \
             --property "exoClientUuid=$exoClientUuid" \
