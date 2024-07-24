@@ -29,17 +29,19 @@ runcmd:
     . /opt/ansible-venv/bin/activate
     pip install --upgrade pip
     pip install ansible-core
+    pip install lxml # required by community.general.xml
+    ansible-galaxy collection install community.general
     # --url "{instance-config-mgt-repo-url}"
     # --checkout "{instance-config-mgt-repo-checkout}"
     # -e "{ansible-extra-vars}"
     rm -rf /opt/instance-config-mgt
-    exosphere_sha="2516f12530088f6b70720d57e69b374a006dee2c" # morpho-cloud-portal-2024.07.17-78a7e2d93
+    exosphere_sha="0e8991531a323fe469c7bb0f65a3bc541089e774" # morpho-cloud-portal-2024.07.17-78a7e2d93
     ansible-pull \
       --url "https://github.com/jcfr/exosphere.git" \
       --checkout "$exosphere_sha" \
       --directory /opt/instance-config-mgt \
       -i /opt/instance-config-mgt/ansible/hosts \
-      -e "{\"guac_enabled\":true,\"gui_enabled\":true}" \
+      -e "{\"guac_enabled\":true,\"gui_enabled\":true,\"ansible_python_interpreter\":\"/opt/ansible-venv/bin/python\"}" \
       /opt/instance-config-mgt/ansible/playbook.yml
   - ANSIBLE_RETURN_CODE=$?
   - if [ $ANSIBLE_RETURN_CODE -eq 0 ]; then STATUS="complete"; else STATUS="error"; fi
