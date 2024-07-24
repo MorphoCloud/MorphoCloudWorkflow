@@ -21,21 +21,18 @@ jobs:
           permissions: "write,maintain,admin"
           allowlist: "jcfr,muratmaga"
 
+      - uses: actions/checkout@v4
+
       - name: comment (progress)
         id: couc_progress
-        uses: peter-evans/create-or-update-comment@v4.0.0
+        uses: ./.github/actions/comment-progress
         with:
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            ### Instance Creation Progress ⏳
-
-            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ⏳        |                 |              |                |                         |            |
-
-            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-      - uses: actions/checkout@v4
+          create_ip: ⏳
+          create_instance: ""
+          associate_ip: ""
+          setup_instance: ""
+          retrieve_connection_url: ""
+          send_email: ""
 
       - name: Extract fields
         id: extract
@@ -127,19 +124,15 @@ jobs:
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: comment (progress)
-        uses: peter-evans/create-or-update-comment@v4.0.0
+        uses: ./.github/actions/comment-progress
         with:
           comment-id: ${{ steps.couc_progress.outputs.comment-id }}
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            ### Instance Creation Progress ⏳
-
-            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ✅        | ⏳             |              |                |                         |            |
-
-            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          edit-mode: replace
+          create_ip: ✅
+          create_instance: ⏳
+          associate_ip: ""
+          setup_instance: ""
+          retrieve_connection_url: ""
+          send_email: ""
 
       - name: Create instance
         id: create_instance
@@ -195,19 +188,15 @@ jobs:
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: comment (progress)
-        uses: peter-evans/create-or-update-comment@v4.0.0
+        uses: ./.github/actions/comment-progress
         with:
           comment-id: ${{ steps.couc_progress.outputs.comment-id }}
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            ### Instance Creation Progress ⏳
-
-            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ✅        | ✅             | ⏳           |                |                         |            |
-
-            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          edit-mode: replace
+          create_ip: ✅
+          create_instance: ✅
+          associate_ip: ⏳
+          setup_instance: ""
+          retrieve_connection_url: ""
+          send_email: ""
 
       - name: Associate floating IP with created instance
         id: associated_ip
@@ -242,19 +231,15 @@ jobs:
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: comment (progress)
-        uses: peter-evans/create-or-update-comment@v4.0.0
+        uses: ./.github/actions/comment-progress
         with:
           comment-id: ${{ steps.couc_progress.outputs.comment-id }}
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            ### Instance Creation Progress ⏳
-
-            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ✅        | ✅             | ✅           | ⏳             |                         |            |
-
-            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          edit-mode: replace
+          create_ip: ✅
+          create_instance: ✅
+          associate_ip: ✅
+          setup_instance: ⏳
+          retrieve_connection_url: ""
+          send_email: ""
 
       - name: Poll instance setup status
         id: instance_poll
@@ -309,19 +294,15 @@ jobs:
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: comment (progress)
-        uses: peter-evans/create-or-update-comment@v4.0.0
+        uses: ./.github/actions/comment-progress
         with:
           comment-id: ${{ steps.couc_progress.outputs.comment-id }}
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            ### Instance Creation Progress ⏳
-
-            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ✅        | ✅             | ✅           | ✅            | ⏳                      |            |
-
-            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          edit-mode: replace
+          create_ip: ✅
+          create_instance: ✅
+          associate_ip: ✅
+          setup_instance: ✅
+          retrieve_connection_url: ⏳
+          send_email: ""
 
       - name: Retrieve metadata
         id: instance_metadata
@@ -359,19 +340,15 @@ jobs:
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: comment (progress)
-        uses: peter-evans/create-or-update-comment@v4.0.0
+        uses: ./.github/actions/comment-progress
         with:
           comment-id: ${{ steps.couc_progress.outputs.comment-id }}
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            ### Instance Creation Progress ⏳
-
-            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ✅        | ✅             | ✅           | ✅             | ✅                     | ⏳         |
-
-            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          edit-mode: replace
+          create_ip: ✅
+          create_instance: ✅
+          associate_ip: ✅
+          setup_instance: ✅
+          retrieve_connection_url: ✅
+          send_email: ⏳
 
       - name: Send mail (completed)
         if: ${{ steps.instance_poll.outputs.status == 'complete' }}
@@ -386,19 +363,15 @@ jobs:
           instance_pwd: ${{ steps.instance_metadata.outputs.instance_pwd }}
 
       - name: comment (progress)
-        uses: peter-evans/create-or-update-comment@v4.0.0
+        uses: ./.github/actions/comment-progress
         with:
           comment-id: ${{ steps.couc_progress.outputs.comment-id }}
-          issue-number: ${{ github.event.issue.number }}
-          body: |
-            ### Instance Creation Progress ✅
-
-            | Create IP | Create Instance | Associate IP | Setup Instance | Retrieve Connection URL | Send Email |
-            |:---------:|:---------------:|:------------:|:--------------:|:-----------------------:|:----------:|
-            | ✅        | ✅             | ✅           | ✅             | ✅                     | ✅         |
-
-            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          edit-mode: replace
+          create_ip: ✅
+          create_instance: ✅
+          associate_ip: ✅
+          setup_instance: ✅
+          retrieve_connection_url: ✅
+          send_email: ✅
 
       - name: Add "instance:created" label
         if: ${{ success() && steps.instance_poll.outputs.status == 'complete' }}
