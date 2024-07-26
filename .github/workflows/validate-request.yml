@@ -82,6 +82,29 @@ jobs:
           EMAIL: ${{ steps.extract.outputs.email }}
           STRING_ENCRYPTION_KEY: ${{ secrets.STRING_ENCRYPTION_KEY }}
 
+      - name: Update issue body
+        id: update_issue_body
+        shell: bash
+        run: |
+          body=$(gh issue view $ISSUE_NUMBER \
+            --repo $GH_REPO \
+            --json body | \
+            jq '.body')
+
+          # Replace email
+          updated_body=$(echo "$body" | sed "s#$EMAIL#$ENCRYPTED_EMAIL#")
+
+          gh issue edit $ISSUE_NUMBER \
+            --repo $GH_REPO \
+            --body "${updated_body}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          EMAIL: ${{ steps.check_email_format.outputs.email }}
+          ENCRYPTED_EMAIL:
+            ${{ steps.check_email_format.outputs.encrypted_email }}
+
       - name: command results comment (failure)
         if: ${{ failure() }}
         uses: peter-evans/create-or-update-comment@v4.0.0
