@@ -397,6 +397,10 @@ jobs:
             jq -r '.ID' | tail -1)
           echo "volume_id [$volume_id]"
 
+          openstack server set \
+            --property "exoVolumes::$volume_id={\"name\":\"My Data\"}" \
+            $instance_id
+
           openstack server add volume \
             $instance_id \
             $volume_id
