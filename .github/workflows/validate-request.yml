@@ -54,19 +54,33 @@ jobs:
       - name: Check email format
         id: check_email_format
         run: |
+          input_email=$EMAIL
+          if [[ "$input_email" != *"@"* ]]; then
+            # decrypt
+            email=$(echo "$input_email" | openssl enc -base64 -d -aes-256-cbc -salt -pass pass:$STRING_ENCRYPTION_KEY -pbkdf2)
+          else
+            email=$input_email
+          fi
+
           # Adapted from https://gist.github.com/guessi/82a73ee7eb2b1216eb9db17bb8d65dd1
           email_regex="^(([A-Za-z0-9]+((\.|\-|\_|\+)?[A-Za-z0-9]?)*[A-Za-z0-9]+)|[A-Za-z0-9]+)@(([A-Za-z0-9]+)+((\.|\-|\_)?([A-Za-z0-9]+)+)*)+\.([A-Za-z]{2,})+$"
-          if [[ "$EMAIL" =~ $email_regex ]]; then
+          if [[ "$email" =~ $email_regex ]]; then
             valid="true"
             emojii="✅"
           else
             valid="false"
             emojii="❌"
           fi
+
+          encrypted_email=$(echo "$email" | openssl enc -base64 -e -aes-256-cbc -salt -pass pass:$STRING_ENCRYPTION_KEY -pbkdf2)
+
           echo "valid=$valid" >> $GITHUB_OUTPUT
           echo "emojii=$emojii" >> $GITHUB_OUTPUT
+          echo "email=$email" >> $GITHUB_OUTPUT
+          echo "encrypted_email=$encrypted_email" >> $GITHUB_OUTPUT
         env:
           EMAIL: ${{ steps.extract.outputs.email }}
+          STRING_ENCRYPTION_KEY: ${{ secrets.STRING_ENCRYPTION_KEY }}
 
       - name: command results comment (failure)
         if: ${{ failure() }}
