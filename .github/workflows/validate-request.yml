@@ -1,8 +1,14 @@
 name: Validate Request
 
 on:
-  issue_comment:
-    types: [created]
+  issues:
+    types:
+      - opened
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number"
+        required: true
 
 # Permissions needed for reacting to IssueOps commands on issues
 permissions:
@@ -10,21 +16,24 @@ permissions:
   checks: read
 
 jobs:
-  control:
+  validate:
     runs-on: ubuntu-latest
-    if:
-      ${{ !github.event.issue.pull_request && (
-      contains(github.event.comment.body, '/validate') ) }}
     steps:
-      - name: validate command
-        id: validate_command
-        uses: github/command@v1.2.0
-        with:
-          command: "/validate"
-          reaction: "rocket"
-          allowed_contexts: "issue"
-          permissions: "read,triage,write,maintain,admin"
-          allowlist: "jcfr,muratmaga,${{ github.event.issue.user.login }}"
+      - name: Collect Inputs
+        id: collect_inputs
+        run: |
+          echo "EVENT_NAME [$EVENT_NAME]"
+          if [[ "$EVENT_NAME" == "issues" ]]; then
+            issue_number=${{ github.event.issue.number }}
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            issue_number=${{ github.event.inputs.issue_number }}
+          else
+            echo "::error ::Unsupported EVENT_NAME [$EVENT_NAME]"
+            exit 1
+          fi
+          echo "issue_number=$issue_number" >> $GITHUB_OUTPUT
+        env:
+          EVENT_NAME: ${{ github.event_name }}
 
       - uses: actions/checkout@v4
 
@@ -34,7 +43,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
-          issue_number: ${{ github.event.issue.number }}
+          issue_number: ${{ steps.collect_inputs.outputs.issue_number }}
 
       - name: Check ORCID iD format
         id: check_orcid_format
@@ -51,65 +60,49 @@ jobs:
         env:
           ORCID: ${{ steps.extract.outputs.orcid }}
 
+      - name: Check if email is encoded
+        id: check_email_encryption
+        run: |
+          if [[ "$EMAIL" != *"@"* ]]; then
+            encoded="true"
+          else
+            encoded="false"
+          fi
+          echo "encoded=$encoded" >> $GITHUB_OUTPUT
+        env:
+          EMAIL: ${{ steps.extract.outputs.email }}
+
+      - name: Decode email
+        id: decode_email
+        uses: ./.github/actions/encode-decode-string
+        with:
+          input_string: ${{ steps.extract.outputs.email }}
+          encryption_key: ${{ secrets.STRING_ENCRYPTION_KEY }}
+          operation: "decode"
+          skip: ${{ steps.check_email_encryption.outputs.encoded == 'false' }}
+
       - name: Check email format
         id: check_email_format
         run: |
-          input_email=$EMAIL
-          if [[ "$input_email" != *"@"* ]]; then
-            # decrypt
-            email=$(echo "$input_email" | openssl enc -base64 -d -aes-256-cbc -salt -pass pass:$STRING_ENCRYPTION_KEY -pbkdf2)
-          else
-            email=$input_email
-          fi
-
           # Adapted from https://gist.github.com/guessi/82a73ee7eb2b1216eb9db17bb8d65dd1
           email_regex="^(([A-Za-z0-9]+((\.|\-|\_|\+)?[A-Za-z0-9]?)*[A-Za-z0-9]+)|[A-Za-z0-9]+)@(([A-Za-z0-9]+)+((\.|\-|\_)?([A-Za-z0-9]+)+)*)+\.([A-Za-z]{2,})+$"
-          if [[ "$email" =~ $email_regex ]]; then
+          if [[ "$EMAIL" =~ $email_regex ]]; then
             valid="true"
             emojii="✅"
           else
             valid="false"
             emojii="❌"
           fi
-
-          encrypted_email=$(echo "$email" | openssl enc -base64 -e -aes-256-cbc -salt -pass pass:$STRING_ENCRYPTION_KEY -pbkdf2)
-
           echo "valid=$valid" >> $GITHUB_OUTPUT
           echo "emojii=$emojii" >> $GITHUB_OUTPUT
-          echo "email=$email" >> $GITHUB_OUTPUT
-          echo "encrypted_email=$encrypted_email" >> $GITHUB_OUTPUT
         env:
-          EMAIL: ${{ steps.extract.outputs.email }}
-          STRING_ENCRYPTION_KEY: ${{ secrets.STRING_ENCRYPTION_KEY }}
-
-      - name: Update issue body
-        id: update_issue_body
-        shell: bash
-        run: |
-          body=$(gh issue view $ISSUE_NUMBER \
-            --repo $GH_REPO \
-            --json body | \
-            jq '.body')
-
-          # Replace email
-          updated_body=$(echo "$body" | sed "s#$EMAIL#$ENCRYPTED_EMAIL#")
-
-          gh issue edit $ISSUE_NUMBER \
-            --repo $GH_REPO \
-            --body "${updated_body}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          EMAIL: ${{ steps.check_email_format.outputs.email }}
-          ENCRYPTED_EMAIL:
-            ${{ steps.check_email_format.outputs.encrypted_email }}
+          EMAIL: ${{ steps.decode_email.outputs.output_string }}
 
       - name: command results comment (failure)
         if: ${{ failure() }}
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
-          issue-number: ${{ github.event.issue.number }}
+          issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
           body: |
             ### Command Results ❌
 
@@ -120,7 +113,7 @@ jobs:
         if: ${{ success() }}
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
-          issue-number: ${{ github.event.issue.number }}
+          issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
           body: |
             ### Validation Results
 
