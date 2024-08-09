@@ -1,0 +1,47 @@
+name: Update repository labels
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/labels.yml"
+
+jobs:
+  create-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      LABELS_JSON: |
+        [
+          {"name": "flavor:g3.xl", "color": "D93F0B", "description": "GPU instance (32 CPUs, 125 GB RAM, A100 GPU)"},
+          {"name": "flavor:m3.xl", "color": "D93F0B", "description": "General-purpose instance (32 CPUs, 125 GB RAM)"},
+          {"name": "instance:approved", "color": "027210", "description": "Instance has been approved for creation and is being provisioned"},
+          {"name": "instance:created", "color": "027210", "description": "Instance has been successfully provisioned"},
+          {"name": "timeout:4hrs", "color": "5319E7", "description": "Duration in hours after which the instance will be stopped"}
+        ]
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = JSON.parse(process.env.LABELS_JSON);
+            for (const label of labels) {
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label.name,
+                  description: label.description || '',
+                  color: label.color
+                });
+              } catch (error) {
+                // Check if the error is because the label already exists
+                if (error.status === 422) {
+                  console.log(`Label '${label.name}' already exists. Skipping.`);
+                } else {
+                  // Log other errors
+                  console.error(`Error creating label '${label.name}': ${error}`);
+                }
+              }
+            }
