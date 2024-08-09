@@ -18,7 +18,6 @@ jobs:
           {"name": "flavor:g3.xl", "color": "D93F0B", "description": "GPU instance (32 CPUs, 125 GB RAM, A100 GPU)"},
           {"name": "flavor:m3.xl", "color": "D93F0B", "description": "General-purpose instance (32 CPUs, 125 GB RAM)"},
           {"name": "request:approved", "color": "027210", "description": "Instance has been approved for creation and is being provisioned"},
-          {"name": "instance:created", "color": "027210", "description": "Instance has been successfully provisioned"},
           {"name": "timeout:4hrs", "color": "5319E7", "description": "Duration in hours after which the instance will be stopped"}
         ]
     steps:
