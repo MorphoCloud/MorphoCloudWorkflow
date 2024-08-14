@@ -203,3 +203,5 @@ jobs:
             ### Command Results ✅
 
             `${{ steps.command.outputs.command_name }}` command successfully applied to **${{ steps.define.outputs.instance_name }}** instance.
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
