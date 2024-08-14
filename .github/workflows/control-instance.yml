@@ -138,6 +138,7 @@ jobs:
             ### Command Results ❌
 
             `${{ steps.command.outputs.command_name }}` command failed to applied to **${{ steps.define.outputs.instance_name }}** instance.
+
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: Poll instance status
@@ -190,6 +191,7 @@ jobs:
             ### Command Results ❌
 
             Maximum wait time for command `${{ steps.command.outputs.command_name }}` command to complete exceeded.
+
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: command results comment (success)
