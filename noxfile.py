@@ -22,9 +22,16 @@ def _vendorize(session: nox.Session, paths: list[str]) -> None:
     """
     Vendorize files into a directory. Directory must exist.
     """
+    project = "MorphoCloudWorkflow"
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--commit", action="store_true", help="Make a branch and commit."
+        "--commit", action="store_true", help="Commit onto the current branch."
+    )
+    parser.add_argument(
+        "--branch",
+        action="store_true",
+        help=f"Make a branch (e.g update-to-{project.lower()}-SHA).",
     )
     parser.add_argument(
         "target", type=Path, help="The target directory to vendorize file into."
@@ -50,7 +57,6 @@ def _vendorize(session: nox.Session, paths: list[str]) -> None:
 
     if args.commit:
         org = "MorphoCloud"
-        project = "MorphoCloudWorkflow"
 
         # if any, extract SHA associated with the last update
         with session.chdir(target_dir):
@@ -87,13 +93,15 @@ def _vendorize(session: nox.Session, paths: list[str]) -> None:
         )
 
         with session.chdir(target_dir):
-            session.run(
-                "git",
-                "switch",
-                "-c",
-                f"update-to-{project.lower()}-{after}",
-                external=True,
-            )
+            if args.branch:
+                session.run(
+                    "git",
+                    "switch",
+                    "-c",
+                    f"update-to-{project.lower()}-{after}",
+                    external=True,
+                )
+
             session.run("git", "add", "-A", external=True)
             session.run(
                 "git",
@@ -114,10 +122,13 @@ See https://github.com/{org}/{project}/compare/{before}...{after}
                 else f"fix: Update to {org}/{project}@{after}",
                 external=True,
             )
-            command = f"cd MorphoCloudWorkflow; pipx run nox -s {session.name} -- /path/to/{target_dir.stem} --commit"
-            session.log(
-                f'Complete! Now run: gh pr create --fill --body "Created by running `{command}`"'
-            )
+            if args.branch:
+                command = f"cd {src_dir.stem}; pipx run nox -s {session.name} -- /path/to/{target_dir.stem} --commit"
+                session.log(
+                    f'Complete! Now run: cd {target_dir}; gh pr create --fill --body "Created by running `{command}`"'
+                )
+            else:
+                session.log(f"Complete! Now run: cd {target_dir}; git push origin main")
 
 
 @nox.session
