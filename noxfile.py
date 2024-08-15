@@ -24,6 +24,9 @@ def _vendorize(session: nox.Session, paths: list[str]) -> None:
     """
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--commit", action="store_true", help="Make a branch and commit."
+    )
+    parser.add_argument(
         "target", type=Path, help="The target directory to vendorize file into."
     )
     args = parser.parse_args(session.posargs)
@@ -44,6 +47,77 @@ def _vendorize(session: nox.Session, paths: list[str]) -> None:
         else:
             session.log(f"Copying file {src_path} -> {target_path}")
             shutil.copy2(src_path, target_path)
+
+    if args.commit:
+        org = "MorphoCloud"
+        project = "MorphoCloudWorkflow"
+
+        # if any, extract SHA associated with the last update
+        with session.chdir(target_dir):
+            title = session.run(
+                "git",
+                "log",
+                "-n",
+                "1",
+                f"--grep=^fix: Update to {org}/{project}" + "@[0-9a-fA-F]\\{1,40\\}$",
+                "--pretty=format:%s",
+                external=True,
+                log=True,
+                silent=True,
+            ).strip()
+
+            before = title.split("@")[1] if title else None
+
+        after = session.run(
+            "git", "rev-parse", "--short", "HEAD", external=True, log=False, silent=True
+        ).strip()
+
+        changes = (
+            session.run(
+                "git",
+                "shortlog",
+                f"{before}..{after}",
+                "--no-merges",
+                external=True,
+                log=False,
+                silent=True,
+            ).strip()
+            if before
+            else None
+        )
+
+        with session.chdir(target_dir):
+            session.run(
+                "git",
+                "switch",
+                "-c",
+                f"update-to-{project.lower()}-{after}",
+                external=True,
+            )
+            session.run("git", "add", "-A", external=True)
+            session.run(
+                "git",
+                "commit",
+                "-m",
+                f"""fix: Update to {org}/{project}@{after}
+
+List of {project} changes:
+
+```
+$ git shortlog {before}..{after} --no-merges
+{changes}
+```
+
+See https://github.com/{org}/{project}/compare/{before}...{after}
+"""
+                if changes
+                else f"fix: Update to {org}/{project}@{after}",
+                external=True,
+            )
+            command = f"cd MorphoCloudWorkflow; pipx run nox -s {session.name} -- /path/to/{target_dir.stem} --commit"
+            session.log(
+                f'Complete! Now run: gh pr create --fill --body "Created by running `{command}`"'
+            )
 
 
 @nox.session
