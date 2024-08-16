@@ -123,7 +123,7 @@ See https://github.com/{org}/{project}/compare/{before}...{after}
                 external=True,
             )
             if args.branch:
-                command = f"cd {src_dir.stem}; pipx run nox -s {session.name} -- /path/to/{target_dir.stem} --commit"
+                command = f"cd {src_dir.stem}; pipx run nox -s {session.name} -- /path/to/{target_dir.stem} --commit --branch"
                 session.log(
                     f'Complete! Now run: cd {target_dir}; gh pr create --fill --body "Created by running `{command}`"'
                 )
