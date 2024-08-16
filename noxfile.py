@@ -1,4 +1,5 @@
 import argparse
+import re
 import shutil
 from pathlib import Path
 
@@ -142,3 +143,128 @@ def vendorize(session: nox.Session) -> None:
             "cloud-config",
         ],
     )
+
+
+CLOUD_CONFIG_EXOSPHERE_PATTERN = (
+    r"^    exosphere_sha=\"([0-9a-fA-F]{1,40})\" \# ([\w\d\-\_\.]+)$"
+)
+
+
+def _exosphere_version():
+    txt = Path("cloud-config").read_text()
+    match = next(
+        iter(re.finditer(CLOUD_CONFIG_EXOSPHERE_PATTERN, txt, flags=re.MULTILINE))
+    )
+    current_version = match.group(1)
+    current_branch = match.group(2)
+    return current_version, current_branch
+
+
+def _update_file(filepath: Path, regex: re.Pattern[str], replacement: str) -> None:
+    pattern = re.compile(regex)
+    with filepath.open() as doc_file:
+        updated_content = [pattern.sub(replacement, line) for line in doc_file]
+    with filepath.open("w") as doc_file:
+        doc_file.writelines(updated_content)
+
+
+@nox.session(name="bump-exosphere")
+def bump_exosphere(session: nox.Session) -> None:
+    org = "MorphoCloud"
+    project = "exosphere"
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--commit", action="store_true", help="Commit onto the current branch."
+    )
+    parser.add_argument(
+        "--branch",
+        action="store_true",
+        help=f"Make a branch (e.g update-to-{project.lower()}-SHA).",
+    )
+    parser.add_argument(
+        "exosphere",
+        type=Path,
+        help="The exosphere source directory to lookup the updates.",
+    )
+
+    args = parser.parse_args(session.posargs)
+
+    if not args.exosphere.is_dir():
+        msg = f"Exosphere directory {args.target} does not exist"
+        raise AssertionError(msg)
+
+    exosphere_src_dir = args.exosphere
+
+    current_version, current_branch = _exosphere_version()
+
+    with session.chdir(exosphere_src_dir):
+        updated_version = session.run(
+            "git", "rev-parse", "HEAD", external=True, log=True, silent=True
+        ).strip()
+
+        if current_version == updated_version:
+            session.log(
+                f"Skipping. Current exosphere version is already the latest: {current_version}"
+            )
+            return
+
+        changes = session.run(
+            "git",
+            "shortlog",
+            f"{current_version}..{updated_version}",
+            "--no-merges",
+            external=True,
+            log=True,
+            silent=True,
+        ).strip()
+
+    _update_file(
+        Path("cloud-config"),
+        re.compile(CLOUD_CONFIG_EXOSPHERE_PATTERN),
+        f'    exosphere_sha="{updated_version}" # {current_branch}',
+    )
+
+    if args.commit:
+        if args.branch:
+            session.run(
+                "git",
+                "switch",
+                "-c",
+                f"update-to-{project.lower()}-{updated_version[:9]}",
+                external=True,
+            )
+
+        src_dir = Path(__file__).parent
+
+        session.run("git", "add", "cloud-config", external=True)
+        session.run(
+            "git",
+            "commit",
+            "-m",
+            f"""fix(cloud-config): Update to {org}/{project}@{updated_version[:9]}
+
+List of {project} changes:
+
+```
+$ git shortlog {current_version[:9]}..{updated_version[:9]} --no-merges
+{changes}
+```
+
+See https://github.com/{org}/{project}/compare/{current_version[:9]}...{updated_version[:9]}
+""",
+            external=True,
+        )
+        if args.branch:
+            command = f"cd {src_dir.stem}; pipx run nox -s {session.name} -- /path/to/exosphere --commit --branch"
+            session.log(
+                f'Complete! Now run: cd {src_dir}; gh pr create --fill --body "Created by running `{command}`"'
+            )
+        else:
+            session.log(f"Complete! Now run: cd {src_dir}; git push origin main")
+
+
+@nox.session(name="display-exosphere-version", venv_backend="none")
+def display_exosphere_version(session: nox.Session) -> None:
+    version, branch = _exosphere_version()
+    session.log(f"Exosphere version [{version}] branch [{branch}]")
