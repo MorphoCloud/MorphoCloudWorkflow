@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  issues: write
   contents: read
 
 jobs:
@@ -13,6 +14,12 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/create-github-app-token@31c86eb3b33c9b601a1f60f98dcbfd1d70f379b4 # v1.10.3
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
 
       - name: Auto Shelve
         run: |
@@ -35,6 +42,9 @@ jobs:
                 # Skip because instance status is being updated
                 continue
               fi
+              # Extract issue number
+              issue_number=${instance_name##*-}
+              echo "issue_number [$issue_number]"
               # Get instance IP
               instance_ip=$(
                 openstack server show $instance_name -c addresses -f json | \
@@ -62,6 +72,18 @@ jobs:
                 action=""
               fi
               echo "instance_name [$instance_name], uptime_hours [$uptime_hours] -> action[$action]"
+              # Perform action
+              if [[ "$action" == "shelve" ]]; then
+                gh workflow run control-instance-from-workflow.yml \
+                  -f issue_number=$issue_number \
+                  -f command_name=shelve
+                gh issue comment $issue_number \
+                  -b "Workflow **control-instance-from-workflow.yml** triggered by **automatic-instance-shelving.yml** for command <tt>shelve</tt><br> \
+                  <br> \
+                  For details, see https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}_"
+              fi
             done
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
