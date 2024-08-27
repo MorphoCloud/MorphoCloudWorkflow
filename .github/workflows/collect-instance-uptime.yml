@@ -11,7 +11,40 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Define metadata
+        id: define-metadata
+        run: |
+          echo "branch=instance-uptime-data" >> $GITHUB_OUTPUT
+          echo "directory=data" >> $GITHUB_OUTPUT
+
+      - name: Create & push branch
+        run: |
+          exist_in_remote=$(git ls-remote --heads origin $BRANCH)
+          if [[ -z ${exist_in_remote} ]]; then
+            echo "Creating $BRANCH branch"
+            mkdir $DIRECTORY
+            cp -r .git $DIRECTORY/.git
+            cd $DIRECTORY
+            user_name='github-actions[bot]'
+            git config user.name  "$user_name" && echo "user.name:  ${user_name}"
+            user_email='41898282+github-actions[bot]@users.noreply.github.com'
+            git config user.email "$user_email" && echo "user.email: ${user_email}"
+            git checkout --orphan $BRANCH
+            git reset --hard
+            git commit --allow-empty -m "Initializing $BRANCH branch"
+            git push origin $BRANCH
+          fi
+        env:
+          BRANCH: ${{ steps.define-metadata.outputs.branch }}
+          DIRECTORY: ${{ steps.define-metadata.outputs.directory }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: instance-uptime-data
+          path: ${{ steps.define-metadata.outputs.directory }}
+
       - name: Collect Instance Uptime
+        id: collect-instance-uptime
         run: |
           export OS_CLOUD=BIO180006_IU # Select openstack auth settings defined in ".config/openstack/clouds.yaml"
 
@@ -21,8 +54,8 @@ jobs:
           instance_basename="${instance_prefix}instance"
 
           # Define the JSON file paths for storing/updating uptimes
-          JSON_FILE=uptime.json
-          JSON_FILE_TMP=uptime.json.tmp
+          JSON_FILE=$JSON_DIR/uptime.json
+          JSON_FILE_TMP=$(mktemp $RUNNER_TEMP/uptime.XXXXXX.json)
 
           # Initialize the JSON file if it doesn't exist, with a basic structure
           if [[ ! -f $JSON_FILE ]]; then
@@ -146,3 +179,13 @@ jobs:
             echo "--------"
         env:
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
+          JSON_DIR: ${{ steps.define-metadata.outputs.directory }}
+
+      - name: Publish
+        uses: s0/git-publish-subdir-action@5bc6742efb946f4cba68c7a9067a31ea5631071d # develop
+        env:
+          REPO: self
+          BRANCH: ${{ steps.define-metadata.outputs.branch }}
+          FOLDER: ${{ steps.define-metadata.outputs.directory }}
+          SQUASH_HISTORY: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
