@@ -147,7 +147,7 @@ runs:
 
             echo -n "status [$status]. "
 
-            if [[ "$status" = "$EXPECTED_STATUS" ]]; then
+            if [[ "$status" == "$EXPECTED_STATUS" ]]; then
                 echo "Exiting loop."
                 break
             else
