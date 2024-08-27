@@ -1,8 +1,8 @@
 name: Collect Instance Uptime
 on:
-  #  schedule:
-  #    # Run every 5 mins
-  #    - cron: "* * * * *"
+  schedule:
+    # Run every 5 mins
+    - cron: "* * * * *"
   workflow_dispatch:
 
 jobs:
