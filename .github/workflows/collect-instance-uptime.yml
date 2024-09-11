@@ -5,6 +5,10 @@ on:
     - cron: "* * * * *"
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ vars.MORPHOCLOUD_OS_CLOUD }}
+  cancel-in-progress: true
+
 jobs:
   collect-instance-uptime:
     runs-on: self-hosted
