@@ -170,7 +170,17 @@ configure the necessary infrastructure:
 10. Install the GitHub command line tool following
     [these instructions](https://github.com/cli/cli/blob/trunk/docs/install_linux.md).
 
-11. Install and register the GitHub runner:
+11. Create the `docker` group and add instance user.
+
+    ```bash
+    sudo usermod -aG docker $USER
+    ```
+
+    This grants the current user access to Docker without needing `sudo` and
+    prevents errors such as _"Got permission denied while trying to connect to
+    the Docker daemon socket at unix:///var/run/docker.sock"_
+
+12. Install and register the GitHub runner:
 
     Follow these steps to install and register a GitHub runner:
 
