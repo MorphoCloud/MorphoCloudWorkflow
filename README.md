@@ -100,11 +100,15 @@ configure the necessary infrastructure:
    | Name                                   | Repository Variable | Repository Secret  |
    | -------------------------------------- | ------------------- | ------------------ |
    | `MORPHOCLOUD_OS_CLOUD`                 | :white_check_mark:  |                    |
+   | `MORPHOCLOUD_GITHUB_ADMINS`            | :white_check_mark:  |                    |
    | `MORPHOCLOUD_WORKFLOW_APP_ID`          | :white_check_mark:  |                    |
    | `MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY` |                     | :white_check_mark: |
    | `STRING_ENCRYPTION_KEY`                |                     | :white_check_mark: |
    | `MAIL_USERNAME`                        |                     | :white_check_mark: |
    | `MAIL_PASSWORD`                        |                     | :white_check_mark: |
+
+   - `MORPHOCLOUD_GITHUB_ADMINS`: This variable should be set as a
+     comma-separated list of GitHub handles (e.g., "jcfr,muratmaga").
 
 9. **Vendorize Workflow into Your GitHub Project**
 

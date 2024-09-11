@@ -19,7 +19,7 @@ jobs:
           reaction: "rocket"
           allowed_contexts: "issue"
           permissions: "write,maintain,admin"
-          allowlist: "jcfr,muratmaga"
+          allowlist: "${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}"
 
       - uses: actions/checkout@v4
 
