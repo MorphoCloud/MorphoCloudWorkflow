@@ -101,14 +101,21 @@ configure the necessary infrastructure:
    | -------------------------------------- | ------------------- | ------------------ |
    | `MORPHOCLOUD_OS_CLOUD`                 | :white_check_mark:  |                    |
    | `MORPHOCLOUD_GITHUB_ADMINS`            | :white_check_mark:  |                    |
+   | `MORPHOCLOUD_GITHUB_ADMIN_EMAILS`      | :white_check_mark:  |                    |
    | `MORPHOCLOUD_WORKFLOW_APP_ID`          | :white_check_mark:  |                    |
    | `MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY` |                     | :white_check_mark: |
    | `STRING_ENCRYPTION_KEY`                |                     | :white_check_mark: |
    | `MAIL_USERNAME`                        |                     | :white_check_mark: |
    | `MAIL_PASSWORD`                        |                     | :white_check_mark: |
 
-   - `MORPHOCLOUD_GITHUB_ADMINS`: This variable should be set as a
-     comma-separated list of GitHub handles (e.g., "jcfr,muratmaga").
+   - `MORPHOCLOUD_GITHUB_ADMINS`: A comma-separated list of GitHub usernames
+     (e.g., `"jcfr,muratmaga"`) for users with admin privileges to execute
+     commands like `/create` or `/delete`.
+
+   - `MORPHOCLOUD_GITHUB_ADMIN_EMAILS`: A comma-separated list of email
+     addresses corresponding to the GitHub admins. These emails will be used to
+     notify the admins each time an instance is requested and correspond to the
+     users authorized to issue [commands](issue-commands.md).
 
 9. **Vendorize Workflow into Your GitHub Project**
 
