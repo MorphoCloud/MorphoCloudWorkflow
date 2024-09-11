@@ -58,6 +58,7 @@ runs:
       id: check_instance
       uses: ./.github/actions/check-instance-exists
       with:
+        os_cloud: ${{ inputs.os_cloud }}
         instance_name: ${{ steps.define.outputs.instance_name }}
 
     - name: command results comment (Instance does not exist)
