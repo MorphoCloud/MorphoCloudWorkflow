@@ -43,6 +43,7 @@ jobs:
         if: ${{ steps.email_command.outputs.continue == 'true' }}
         uses: ./.github/actions/check-instance-exists
         with:
+          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           instance_name: ${{ steps.define.outputs.instance_name }}
 
       - name: command results comment (Instance does not exist)
@@ -63,6 +64,7 @@ jobs:
         id: instance_metadata
         uses: ./.github/actions/retrieve-metadata
         with:
+          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           instance_name: ${{ steps.define.outputs.instance_name }}
 
       - name: comment (failed to retrieve instance metadata)
