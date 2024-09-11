@@ -167,7 +167,10 @@ configure the necessary infrastructure:
    sudo apt-get install -y jq
    ```
 
-10. Install and register the GitHub runner:
+10. Install the GitHub command line tool following
+    [these instructions](https://github.com/cli/cli/blob/trunk/docs/install_linux.md).
+
+11. Install and register the GitHub runner:
 
     Follow these steps to install and register a GitHub runner:
 
