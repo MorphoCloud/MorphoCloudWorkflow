@@ -123,15 +123,11 @@ runs:
           _The commands described below may be added as issue comments. Only one command
           may be entered per comment._
 
-          | Command         | Description                                        | Who                  |
-          | --------------- | -------------------------------------------------- | -------------------- |
-          | `/shelve`       | Shelve the instance.                               | Issue creator, Admin |
-          | `/unshelve`     | Unshelve the instance.                             | Issue creator, Admin |
-          | `/encode_email` | Update issue description obfuscating email.        | Issue creator, Admin |
-          | `/decode_email` | Update issue description deobfuscating email.      | Issue creator, Admin |
-          | `/email`        | Send email to _Issue creator_ with connection URL. | Issue creator, Admin |
-          | `/create`       | Create the instance.                               | Admin                |
-          | `/delete`       | Delete the instance.                               | Admin                |
+          - `/shelve`: Shelve the instance
+          - `/unshelve`: Unshelve the instance
+          - `/encode_email`: Update issue description obfuscating email
+          - `/decode_email`: Update issue description deobfuscating email
+          - `/email`: Send email to _Issue creator_ with connection URL
 
     - name: Set error message
       id: set_error_message
