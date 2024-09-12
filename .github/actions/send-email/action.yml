@@ -75,15 +75,6 @@ runs:
         operation: "decode"
         skip: ${{ steps.check_email_encryption.outputs.encoded == 'false' }}
 
-    - name: Read issue-commands.md
-      id: read_issue_commands
-      shell: bash
-      run: |
-        echo "content<<EOF" >> $GITHUB_OUTPUT
-        # Read file content expect the first 2 lines with the header
-        tail -n +3 issue-commands.md
-        echo "EOF" >> $GITHUB_OUTPUT
-
     - name: Send mail
       uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
       with:
@@ -129,7 +120,18 @@ runs:
 
           **Supported Issue Commands:**
 
-          ${{ steps.read_issue_commands.outputs.content }}
+          _The commands described below may be added as issue comments. Only one command
+          may be entered per comment._
+
+          | Command         | Description                                        | Who                  |
+          | --------------- | -------------------------------------------------- | -------------------- |
+          | `/shelve`       | Shelve the instance.                               | Issue creator, Admin |
+          | `/unshelve`     | Unshelve the instance.                             | Issue creator, Admin |
+          | `/encode_email` | Update issue description obfuscating email.        | Issue creator, Admin |
+          | `/decode_email` | Update issue description deobfuscating email.      | Issue creator, Admin |
+          | `/email`        | Send email to _Issue creator_ with connection URL. | Issue creator, Admin |
+          | `/create`       | Create the instance.                               | Admin                |
+          | `/delete`       | Delete the instance.                               | Admin                |
 
     - name: Set error message
       id: set_error_message
