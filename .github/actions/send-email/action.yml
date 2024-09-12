@@ -87,7 +87,7 @@ runs:
         to: ${{ steps.decode_email.outputs.output_string }}
         subject:
           "[${{ github.event.repository.name }}] Instance ${{
-          inputs.instance_name }} created"
+          inputs.instance_name }} active"
         convert_markdown: true
         html_body: |
           Your MorphoCloud instance is up and running:
