@@ -420,6 +420,15 @@ jobs:
 
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+      - name: Update Request Status Label
+        uses: ./.github/actions/update-request-status-label
+        with:
+          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          instance_name: ${{ steps.define.outputs.instance_name }}
+          issue_number: ${{ github.event.issue.number }}
+
       - name: comment (progress)
         uses: ./.github/actions/comment-progress
         with:
