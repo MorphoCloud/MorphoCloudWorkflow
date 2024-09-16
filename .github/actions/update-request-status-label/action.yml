@@ -9,9 +9,6 @@ inputs:
   token:
     description: "GITHUB_TOKEN or repo scoped PAT"
     required: true
-  repository:
-    description: "The full name of the repository in which the issue exists"
-    required: true
   issue_number:
     description:
       "The GitHub issue number that corresponds to the instance request."
@@ -61,7 +58,7 @@ runs:
         gh issue edit ${issue_number} --add-label "${add_label}" --remove-label "${remove_labels}"
       env:
         GH_TOKEN: ${{ inputs.token }}
-        GH_REPO: ${{ inputs.repository }}
+        GH_REPO: ${{ github.repository }}
         ISSUE_NUMBER: ${{ inputs.issue_number }}
         INSTANCE_STATUS:
           ${{ steps.retrieve_instance_status.outputs.instance_status }}

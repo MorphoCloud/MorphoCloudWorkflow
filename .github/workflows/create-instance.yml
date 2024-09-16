@@ -425,7 +425,6 @@ jobs:
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
           instance_name: ${{ steps.define.outputs.instance_name }}
           issue_number: ${{ github.event.issue.number }}
 

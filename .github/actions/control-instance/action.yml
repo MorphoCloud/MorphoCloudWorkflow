@@ -6,9 +6,6 @@ inputs:
       "Name of the OpenStack cloud allocation to select openstack auth settings
       defined in '.config/openstack/clouds.yaml'"
     required: true
-  repository:
-    description: "The full name of the repository in which the issue exists"
-    required: true
   issue_number:
     description: "Issue number"
     required: true
@@ -245,6 +242,5 @@ runs:
       with:
         os_cloud: ${{ inputs.os_cloud }}
         token: ${{ inputs.token }}
-        repository: ${{ inputs.repository }}
         issue_number: ${{ inputs.issue_number }}
         instance_name: ${{ steps.define.outputs.instance_name }}
