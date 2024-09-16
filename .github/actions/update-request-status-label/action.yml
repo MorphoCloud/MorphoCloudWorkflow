@@ -28,11 +28,22 @@ runs:
 
         echo Retrieving instance "$INSTANCE_NAME" status
 
-        # Get instance status
-        instance_status=$(
-          openstack server show $INSTANCE_NAME -c status -f json | \
-          jq -r .status
+        server_count=$(
+          openstack server list --name "^${INSTANCE_NAME}$" -f json | \
+          jq length
         )
+        if [[ $server_count == 1 ]]; then
+          # Get instance status
+          instance_status=$(
+            openstack server show $INSTANCE_NAME -c status -f json | \
+            jq -r .status
+          )
+        elif [[ $server_count == 0 ]]; then
+          instance_status="DELETED"
+        else
+          echo "::error ::Unexpected number of server '$server_count'. Expected count is 0 or 1."
+          exit 1
+        fi
         echo "instance_status [$instance_status]"
         echo "instance_status=$instance_status" >> $GITHUB_OUTPUT
       env:
