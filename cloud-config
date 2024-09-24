@@ -30,6 +30,7 @@ runcmd:
     pip install --upgrade pip
     pip install ansible-core
     pip install lxml # required by community.general.xml
+    pip install psutil # required by community.general.pids
     ansible-galaxy collection install community.general
     # --url "{instance-config-mgt-repo-url}"
     # --checkout "{instance-config-mgt-repo-checkout}"
