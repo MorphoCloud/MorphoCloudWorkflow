@@ -110,7 +110,7 @@ configure the necessary infrastructure:
 
    - `MORPHOCLOUD_GITHUB_ADMINS`: A comma-separated list of GitHub usernames
      (e.g., `"jcfr,muratmaga"`) for users with admin privileges to execute
-     commands like `/create` or `/delete`.
+     commands like `/create` or `/delete_instance`.
 
    - `MORPHOCLOUD_GITHUB_ADMIN_EMAILS`: A comma-separated list of email
      addresses corresponding to the GitHub admins. These emails will be used to
