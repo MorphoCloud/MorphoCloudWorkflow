@@ -13,3 +13,4 @@ may be entered per comment._
 | `/create`          | Create the instance and associated volume.         | Admin                |
 | `/delete_instance` | Delete the instance.                               | Admin                |
 | `/delete_volume`   | Delete the volume.                                 | Admin                |
+| `/delete_all`      | Delete the instance and volume.                    | Admin                |
