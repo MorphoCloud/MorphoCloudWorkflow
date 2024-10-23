@@ -99,6 +99,62 @@ jobs:
         env:
           EMAIL: ${{ steps.decode_email.outputs.output_string }}
 
+      - name: Check if confirm email is encoded
+        id: check_confirm_email_encryption
+        run: |
+          if [[ "$CONFIRM_EMAIL" != *"@"* ]]; then
+            encoded="true"
+          else
+            encoded="false"
+          fi
+          echo "encoded=$encoded" >> $GITHUB_OUTPUT
+        env:
+          CONFIRM_EMAIL: ${{ steps.extract.outputs.confirm_email }}
+
+      - name: Decode confirm email
+        id: decode_confirm_email
+        uses: ./.github/actions/encode-decode-string
+        with:
+          input_string: ${{ steps.extract.outputs.confirm_email }}
+          encryption_key: ${{ secrets.STRING_ENCRYPTION_KEY }}
+          operation: "decode"
+          skip:
+            ${{ steps.check_confirm_email_encryption.outputs.encoded == 'false'
+            }}
+
+      - name: Check confirm email format
+        id: check_confirm_email_format
+        run: |
+          # Adapted from https://gist.github.com/guessi/82a73ee7eb2b1216eb9db17bb8d65dd1
+          email_regex="^(([A-Za-z0-9]+((\.|\-|\_|\+)?[A-Za-z0-9]?)*[A-Za-z0-9]+)|[A-Za-z0-9]+)@(([A-Za-z0-9]+)+((\.|\-|\_)?([A-Za-z0-9]+)+)*)+\.([A-Za-z]{2,})+$"
+          if [[ "$CONFIRM_EMAIL" =~ $email_regex ]]; then
+            valid="true"
+            emojii="✅"
+          else
+            valid="false"
+            emojii="❌"
+          fi
+          echo "valid=$valid" >> $GITHUB_OUTPUT
+          echo "emojii=$emojii" >> $GITHUB_OUTPUT
+        env:
+          CONFIRM_EMAIL: ${{ steps.decode_confirm_email.outputs.output_string }}
+
+      - name: Check emails match
+        id: check_emails_match
+        run: |
+          if [[ "$EMAIL" == "$CONFIRM_EMAIL" ]]; then
+            valid="true"
+            emojii="✅"
+          else
+            valid="false"
+            emojii="❌"
+          fi
+          echo "valid=$valid" >> $GITHUB_OUTPUT
+          echo "emojii=$emojii" >> $GITHUB_OUTPUT
+        env:
+          EMAIL: ${{ steps.decode_email.outputs.output_string }}
+          CONFIRM_EMAIL: ${{ steps.decode_confirm_email.outputs.output_string }}
+
       - name: command results comment (failure)
         if: ${{ failure() }}
         uses: peter-evans/create-or-update-comment@v4.0.0
@@ -119,9 +175,18 @@ jobs:
           body: |
             ### Validation Results
 
-            | Check           | Status  |
-            | --------------- |:-------:|
-            | ORCID iD format | ${{ steps.check_orcid_format.outputs.emojii }} |
-            | Email format    | ${{ steps.check_email_format.outputs.emojii }} |
+            The validation checks have completed. Below is the status of each check:
+
+            | Check                   | Status  |
+            | ----------------------- |:-------:|
+            | ORCID iD format         | ${{ steps.check_orcid_format.outputs.emojii }}         |
+            | Email format            | ${{ steps.check_email_format.outputs.emojii }}         |
+            | Confirm Email format    | ${{ steps.check_confirm_email_format.outputs.emojii }} |
+            | Emails match            | ${{ steps.check_emails_match.outputs.emojii }} | |
+
+            > [!IMPORTANT]
+            > If the ORCID iD format is incorrect, edit the issue description to correct it.
+            >
+            > If either email format is invalid or the emails do not match, please update the issue description accordingly.
 
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}

@@ -111,24 +111,68 @@ jobs:
           operation: "decode"
           skip: ${{ steps.check_email_encryption.outputs.encoded == 'false' }}
 
+      - name: Check if confirm email is encoded
+        id: check_confirm_email_encryption
+        run: |
+          if [[ "$EMAIL" != *"@"* ]]; then
+            encoded="true"
+          else
+            encoded="false"
+          fi
+          echo "encoded=$encoded" >> $GITHUB_OUTPUT
+        env:
+          CONFIRM_EMAIL: ${{ steps.extract.outputs.confirm_email }}
+
+      - name: Encode confirm email
+        id: encode_confirm_email
+        if: ${{ steps.encode_email_command.outputs.continue == 'true' }}
+        uses: ./.github/actions/encode-decode-string
+        with:
+          input_string: ${{ steps.extract.outputs.confirm_email }}
+          encryption_key: ${{ secrets.STRING_ENCRYPTION_KEY }}
+          operation: "encode"
+          skip:
+            ${{ steps.check_confirm_email_encryption.outputs.encoded == 'true'
+            }}
+
+      - name: Decode confirm email
+        id: decode_confirm_email
+        if: ${{ steps.decode_email_command.outputs.continue == 'true' }}
+        uses: ./.github/actions/encode-decode-string
+        with:
+          input_string: ${{ steps.extract.outputs.confirm_email }}
+          encryption_key: ${{ secrets.STRING_ENCRYPTION_KEY }}
+          operation: "decode"
+          skip:
+            ${{ steps.check_confirm_email_encryption.outputs.encoded == 'false'
+            }}
+
       - name: Set updated email
         id: set_updated_email
         if: ${{ steps.command.outputs.continue == 'true' }}
         run: |
           updated_email=""
+          updated_confirm_email=""
           if [[ "$ENCODE_EMAIL_COMMAND_CONTINUE" == "true" ]]; then
             updated_email="$ENCODED_EMAIL"
+            updated_confirm_email="$ENCODED_CONFIRM_EMAIL"
           elif [[ "$DECODE_EMAIL_COMMAND_CONTINUE" == "true" ]]; then
             updated_email="$DECODED_EMAIL"
+            updated_confirm_email="$DECODED_CONFIRM_EMAIL"
           fi
           echo "updated_email=$updated_email" >> $GITHUB_OUTPUT
+          echo "updated_confirm_email=$updated_confirm_email" >> $GITHUB_OUTPUT
         env:
           ENCODE_EMAIL_COMMAND_CONTINUE:
             ${{ steps.encode_email_command.outputs.continue }}
           ENCODED_EMAIL: ${{ steps.encode_email.outputs.output_string }}
+          ENCODED_CONFIRM_EMAIL:
+            ${{ steps.encode_confirm_email.outputs.output_string }}
           DECODE_EMAIL_COMMAND_CONTINUE:
             ${{ steps.decode_email_command.outputs.continue }}
           DECODED_EMAIL: ${{ steps.decode_email.outputs.output_string }}
+          DECODED_CONFIRM_EMAIL:
+            ${{ steps.decode_confirm_email.outputs.output_string }}
 
       - name: Update issue body
         id: update_issue_body
@@ -140,8 +184,11 @@ jobs:
             --json body \
             --jq .body > ./body.md
 
-          # Replace email
-          sed "s#$OLD_EMAIL#$NEW_EMAIL#" ./body.md > ./updated_body.md
+          # Replace email and confirm emails
+          sed \
+            -e "s#$OLD_EMAIL#$NEW_EMAIL#" \
+            -e "s#$OLD_CONFIRM_EMAIL#$NEW_CONFIRM_EMAIL#" \
+            ./body.md > ./updated_body.md
 
           gh issue edit $ISSUE_NUMBER \
             --repo $GH_REPO \
@@ -152,6 +199,9 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           OLD_EMAIL: ${{ steps.extract.outputs.email }}
           NEW_EMAIL: ${{ steps.set_updated_email.outputs.updated_email }}
+          OLD_CONFIRM_EMAIL: ${{ steps.extract.outputs.confirm_email }}
+          NEW_CONFIRM_EMAIL:
+            ${{ steps.set_updated_email.outputs.updated_confirm_email }}
 
       - name: command results comment (success)
         if: ${{ steps.command.outputs.continue == 'true' && success() }}
