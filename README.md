@@ -187,7 +187,7 @@ configure the necessary infrastructure:
     1. In your GitHub repository, go to _Settings_ -> _Actions_ -> _New
        self-hosted runner_.
 
-    2. Choose _Linux_ and _x86_ architecture.
+    2. Choose _Linux_ and _x64_ architecture.
 
     3. After connecting to the runner instance via SSH, create a directory for
        your project:
