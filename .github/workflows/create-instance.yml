@@ -175,7 +175,7 @@ jobs:
         run: |
           source ~/venv/bin/activate
 
-          openstack volume create --size 60 "${VOLUME_NAME}"
+          openstack volume create --size 100 "${VOLUME_NAME}"
         env:
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           VOLUME_NAME: ${{ steps.define_volume_name.outputs.volume_name }}
