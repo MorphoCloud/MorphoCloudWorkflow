@@ -202,12 +202,9 @@ jobs:
 
             The validation checks have completed. Below is the status of each check:
 
-            | Check                   | Status  |
-            | ----------------------- |:-------:|
-            | ORCID iD format         | ${{ steps.check_orcid_format.outputs.emojii }}         |
-            | Email format            | ${{ steps.check_email_format.outputs.emojii }}         |
-            | Confirm Email format    | ${{ steps.check_confirm_email_format.outputs.emojii }} |
-            | Emails match            | ${{ steps.check_emails_match.outputs.emojii }} | |
+            | Check                   | ORCID iD format                                | Email format                                   | Confirm Email format                                   | Emails match                                   |
+            | ----------------------- |:----------------------------------------------:|:----------------------------------------------:|:------------------------------------------------------:|:----------------------------------------------:|
+            | Status                  | ${{ steps.check_orcid_format.outputs.emojii }} | ${{ steps.check_email_format.outputs.emojii }} | ${{ steps.check_confirm_email_format.outputs.emojii }} | ${{ steps.check_emails_match.outputs.emojii }} |
 
             > [!IMPORTANT]
             > If the ORCID iD format is incorrect, edit the issue description to correct it.
