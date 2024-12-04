@@ -173,9 +173,8 @@ jobs:
             -f issue_number=$ISSUE_NUMBER \
             -f command_name=$COMMAND_NAME
           gh issue comment $ISSUE_NUMBER \
-            -b "Workflow **update-issue-from-workflow.yml** triggered by **validate-request.yml** for command <tt>$COMMAND_NAME</tt><br> \
-            <br> \
-            For details, see https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}_"
+            -b "Workflow **update-issue-from-workflow.yml** triggered by **validate-request.yml** for command <tt>$COMMAND_NAME</tt>. \
+            See details [here](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})."
         env:
           ISSUE_NUMBER: ${{ steps.collect_inputs.outputs.issue_number }}
           COMMAND_NAME: encode_email
@@ -218,4 +217,4 @@ jobs:
             > [!TIP]
             > Once the emails are correctly formatted and match, they will be automatically obfuscated for security.
 
-            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            See details [here](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}).
