@@ -190,7 +190,29 @@ jobs:
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: command results comment (status)
-        if: ${{ success() }}
+        if:
+          ${{ success() && (steps.check_orcid_format.outputs.valid == 'true' &&
+          steps.check_email_format.outputs.valid == 'true' &&
+          steps.check_confirm_email_format.outputs.valid == 'true' &&
+          steps.check_emails_match.outputs.valid == 'true') }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
+          body: |
+            ### Validation Results
+
+            The validation checks have completed. Below is the status of each check:
+
+            | Check                   | ORCID iD format                                | Email format                                   | Confirm Email format                                   | Emails match                                   |
+            | ----------------------- |:----------------------------------------------:|:----------------------------------------------:|:------------------------------------------------------:|:----------------------------------------------:|
+            | Status                  | ${{ steps.check_orcid_format.outputs.emojii }} | ${{ steps.check_email_format.outputs.emojii }} | ${{ steps.check_confirm_email_format.outputs.emojii }} | ${{ steps.check_emails_match.outputs.emojii }} |
+
+      - name: command results comment (status)
+        if:
+          ${{ success() && (steps.check_orcid_format.outputs.valid == 'false' ||
+          steps.check_email_format.outputs.valid == 'false' ||
+          steps.check_confirm_email_format.outputs.valid == 'false' ||
+          steps.check_emails_match.outputs.valid == 'false') }}
         uses: peter-evans/create-or-update-comment@v4.0.0
         with:
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
