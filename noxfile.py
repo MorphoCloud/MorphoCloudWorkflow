@@ -2,6 +2,7 @@ import argparse
 import re
 import shutil
 from pathlib import Path
+from typing import Optional
 
 import nox
 
@@ -146,18 +147,21 @@ def vendorize(session: nox.Session) -> None:
 
 
 CLOUD_CONFIG_EXOSPHERE_PATTERN = (
-    r"^    exosphere_sha=\"([0-9a-fA-F]{1,40})\" \# ([\w\d\-\_\.]+)$"
+    r"^exosphere_sha=\"([0-9a-fA-F]{1,40})\" \# ([\w\d\-\_\.]+)$"
 )
 
 
-def _exosphere_version():
+class ExosphereVersionParseError(RuntimeError):
+    """Raised when the Exosphere version cannot be parsed from cloud-config."""
+
+
+def _exosphere_version() -> tuple[Optional[str], Optional[str]]:
+    """Extracts the Exosphere version and branch from cloud-config."""
     txt = Path("cloud-config").read_text()
     match = next(
-        iter(re.finditer(CLOUD_CONFIG_EXOSPHERE_PATTERN, txt, flags=re.MULTILINE))
+        iter(re.finditer(CLOUD_CONFIG_EXOSPHERE_PATTERN, txt, flags=re.MULTILINE)), None
     )
-    current_version = match.group(1)
-    current_branch = match.group(2)
-    return current_version, current_branch
+    return (match.group(1), match.group(2)) if match else (None, None)
 
 
 def _update_file(filepath: Path, regex: re.Pattern[str], replacement: str) -> None:
@@ -197,6 +201,8 @@ def bump_exosphere(session: nox.Session) -> None:
     exosphere_src_dir = args.exosphere
 
     current_version, current_branch = _exosphere_version()
+    if current_version is None or current_branch is None:
+        session.error("Failed to extract Exosphere version from cloud-config")
 
     with session.chdir(exosphere_src_dir):
         updated_version = session.run(
@@ -222,7 +228,7 @@ def bump_exosphere(session: nox.Session) -> None:
     _update_file(
         Path("cloud-config"),
         re.compile(CLOUD_CONFIG_EXOSPHERE_PATTERN),
-        f'    exosphere_sha="{updated_version}" # {current_branch}',
+        f'exosphere_sha="{updated_version}" # {current_branch}',
     )
 
     if args.commit:
@@ -267,4 +273,6 @@ See https://github.com/{org}/{project}/compare/{current_version[:9]}...{updated_
 @nox.session(name="display-exosphere-version", venv_backend="none")
 def display_exosphere_version(session: nox.Session) -> None:
     version, branch = _exosphere_version()
+    if version is None or branch is None:
+        session.error("Failed to extract Exosphere version from cloud-config")
     session.log(f"Exosphere version [{version}] branch [{branch}]")
