@@ -587,6 +587,34 @@ jobs:
 
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+      - name: Set instance properties
+        id: set_instance_properties
+        run: |
+          source ~/venv/bin/activate
+
+          # Explicitly set status to complete
+          exoSetup='{"status":"complete", "epoch": '$(date '+%s')'000}'
+
+          openstack server set \
+              --property "exoSetup=$exoSetup" \
+            $INSTANCE_NAME
+        env:
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+      - name: comment (failed to set instance properties)
+        if:
+          ${{ steps.set_instance_properties.outcome == 'failure' && failure() }}
+        uses: peter-evans/create-or-update-comment@v4.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Results ❌
+
+            Failed to set instance **${{ steps.define.outputs.instance_name }}** properties.
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
       - name: Update Request Status Label
         id: update-request-status-label
         uses: ./.github/actions/update-request-status-label
