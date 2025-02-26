@@ -1,0 +1,40 @@
+name: "Create floating IP"
+description: "Create floating IP"
+inputs:
+  os_cloud:
+    description:
+      "Name of the OpenStack cloud allocation to select openstack auth settings
+      defined in '.config/openstack/clouds.yaml'"
+    required: true
+outputs:
+  floating_ip_address:
+    description: "Created floating IP"
+    value: ${{ steps.ip_create.outputs.floating_ip_address }}
+runs:
+  using: "composite"
+  steps:
+    - name: "Create floating IP"
+      id: ip_create
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        json_output=$(openstack floating ip create public -f json)
+        echo "Floating IP Creation Output:"
+        echo "$json_output"
+
+        floating_ip_uuid=$(
+          echo $json_output |
+          jq -r ".id"
+        )
+        echo "floating_ip_uuid [$floating_ip_uuid]"
+        echo "floating_ip_uuid=$floating_ip_uuid" >> $GITHUB_OUTPUT
+
+        floating_ip_address=$(
+          echo $json_output |
+          jq -r ".floating_ip_address"
+        )
+        echo "floating_ip_address [$floating_ip_address]"
+        echo "floating_ip_address=$floating_ip_address" >> $GITHUB_OUTPUT
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
