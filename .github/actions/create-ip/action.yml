@@ -6,6 +6,8 @@ inputs:
       "Name of the OpenStack cloud allocation to select openstack auth settings
       defined in '.config/openstack/clouds.yaml'"
     required: true
+  preferred_ip_address:
+    description: "If already created and unassigned, IP address to return"
 outputs:
   floating_ip_address:
     description: "Retrieved or created floating IP"
@@ -22,6 +24,13 @@ runs:
         json_output=$(openstack floating ip list -f json | jq 'map(select(.Port == null))')
         echo "Filtered JSON Output:"
         echo "$json_output" | jq
+
+        if [[ -n "${{ inputs.preferred_ip_address }}" ]]; then
+          floating_ip_address=$(echo "$json_output" | jq -r --arg ip "${{ inputs.preferred_ip_address }}" \
+            'map(select(."Floating IP Address" == $ip)) | if length > 0 then .[0]["Floating IP Address"] else "" end')
+        else
+          floating_ip_address=$(echo "$json_output" | jq -r 'if length > 0 then .[0]["Floating IP Address"] else "" end')
+        fi
 
         floating_ip_address=$(echo "$json_output" | jq -r 'if length > 0 then .[0]["Floating IP Address"] else "" end')
         echo "floating_ip_address [$floating_ip_address]"
