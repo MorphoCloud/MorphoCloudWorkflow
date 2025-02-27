@@ -1,5 +1,5 @@
-name: "Create floating IP"
-description: "Create floating IP"
+name: "Retrieve or create floating IP"
+description: "Retrieve or create floating IP"
 inputs:
   os_cloud:
     description:
@@ -8,12 +8,29 @@ inputs:
     required: true
 outputs:
   floating_ip_address:
-    description: "Created floating IP"
-    value: ${{ steps.ip_create.outputs.floating_ip_address }}
+    description: "Retrieved or created floating IP"
+    value: ${{ steps.define_output.outputs.floating_ip_address }}
 runs:
   using: "composite"
   steps:
+    - name: "Retrieve unassigned floating IP"
+      id: ip_retrieve_unassigned
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        json_output=$(openstack floating ip list -f json | jq 'map(select(.Port == null))')
+        echo "Filtered JSON Output:"
+        echo "$json_output" | jq
+
+        floating_ip_address=$(echo "$json_output" | jq -r 'if length > 0 then .[0]["Floating IP Address"] else "" end')
+        echo "floating_ip_address [$floating_ip_address]"
+        echo "floating_ip_address=$floating_ip_address" >> $GITHUB_OUTPUT
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+
     - name: "Create floating IP"
+      if: ${{ steps.ip_retrieve_unassigned.outputs.floating_ip_address == '' }}
       id: ip_create
       shell: bash
       run: |
@@ -38,3 +55,22 @@ runs:
         echo "floating_ip_address=$floating_ip_address" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
+
+    - name: "Define output"
+      id: define_output
+      shell: bash
+      run: |
+        echo "RETRIEVED_FLOATING_IP [$RETRIEVED_FLOATING_IP]"
+        echo "CREATED_IP [$CREATED_IP]"
+        if [[ -n "$RETRIEVED_FLOATING_IP" ]]; then
+          echo "floating_ip_address=$RETRIEVED_FLOATING_IP" >> $GITHUB_OUTPUT
+        elif [[ -n "$CREATED_IP" ]]; then
+          echo "floating_ip_address=$CREATED_IP" >> $GITHUB_OUTPUT
+        else
+          echo "::error ::Failed to either retrieve or create a floating IP."
+          exit 1
+        fi
+      env:
+        RETRIEVED_FLOATING_IP:
+          ${{ steps.ip_retrieve_unassigned.outputs.floating_ip_address }}
+        CREATED_IP: ${{ steps.ip_create.outputs.floating_ip_address }}

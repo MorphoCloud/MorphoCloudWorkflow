@@ -95,7 +95,7 @@ jobs:
         env:
           INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
-      - name: Create floating IP
+      - name: Retrieve or create floating IP
         id: ip_create
         uses: ./.github/actions/create-ip
         with:
