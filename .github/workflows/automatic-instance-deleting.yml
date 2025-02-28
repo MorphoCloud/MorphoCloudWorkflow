@@ -74,7 +74,7 @@ jobs:
 
               if [[ "$days_until_expiration" -le 0 ]]; then
                 echo "Instance ${instance_name} has expired. Deleting..."
-                # gh issue comment "$issue_number" --body "/delete_all"
+                gh issue comment "$issue_number" --body "/delete_all"
               elif [[ "$days_until_expiration" -le $EXPIRATION_WARNING_DAYS ]]; then
                 echo "Instance ${instance_name} will expire soon. Sending warning..."
                 gh issue comment "$issue_number" \
