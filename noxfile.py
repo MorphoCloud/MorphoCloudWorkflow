@@ -20,10 +20,50 @@ def lint(session: nox.Session) -> str:
     session.run("pre-commit", "run", "-a")
 
 
-def _vendorize(session: nox.Session, paths: list[str]) -> None:
+def _collect_files_to_copy(
+    session: nox.Session,
+    src_dir: Path,
+    paths: list[str],
+    exclude_paths: Optional[list[str]],
+) -> list[Path]:
+    if exclude_paths is None:
+        exclude_paths = []
+
+    # Normalize exclude paths to absolute paths for comparison
+    exclude_paths_set = {
+        str((src_dir / exclude).resolve()) for exclude in exclude_paths
+    }
+
+    # Collect files to be copied
+    files_to_copy = []
+    for path in paths:
+        src_path = src_dir / path
+        if src_path.is_dir():
+            if str(src_path.resolve()) in exclude_paths_set:
+                session.log(f"Ignoring {src_path}")
+                continue
+            session.log(f"Analysing directory {src_path}")
+            for file_path in src_path.rglob("*"):
+                if file_path.is_file():
+                    if str(file_path.resolve()) in exclude_paths_set:
+                        session.log(f"Ignoring {file_path}")
+                        continue
+                    files_to_copy.append(file_path)
+        elif src_path.is_file():
+            if str(src_path.resolve()) in exclude_paths_set:
+                session.log(f"Ignoring {src_path}")
+                continue
+            files_to_copy.append(src_path)
+    return files_to_copy
+
+
+def _vendorize(
+    session: nox.Session, paths: list[str], exclude_paths: Optional[list[str]] = None
+) -> None:
     """
     Vendorize files into a directory. Directory must exist.
     """
+
     project = "MorphoCloudWorkflow"
 
     parser = argparse.ArgumentParser()
@@ -47,15 +87,17 @@ def _vendorize(session: nox.Session, paths: list[str]) -> None:
     src_dir = Path(__file__).parent
     target_dir = args.target
 
-    for path in paths:
-        src_path = src_dir / path
-        target_path = target_dir / path
-        if src_path.is_dir():
-            session.log(f"Copying directory {src_path} -> {target_path}")
-            shutil.copytree(src_path, target_path, dirs_exist_ok=True)
-        else:
-            session.log(f"Copying file {src_path} -> {target_path}")
-            shutil.copy2(src_path, target_path)
+    files_to_copy = _collect_files_to_copy(session, src_dir, paths, exclude_paths)
+
+    session.log(f"Target directory {target_dir}")
+
+    # Copy files
+    for src_file in files_to_copy:
+        relative_path = src_file.relative_to(src_dir)
+        target_file = target_dir / relative_path
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        session.log(f"Copying file {relative_path}")
+        shutil.copy2(src_file, target_file)
 
     if args.commit:
         org = "MorphoCloud"
