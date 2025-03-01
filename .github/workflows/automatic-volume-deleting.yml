@@ -4,6 +4,10 @@ on:
     # Run once per day
     - cron: "0 0 * * *"
   workflow_dispatch:
+    inputs:
+      expiration_graceperiod_days:
+        description: "Expiration Grace Period in days (default: 14)"
+        type: number
 
 concurrency:
   group: ${{ github.workflow }}-${{ vars.MORPHOCLOUD_OS_CLOUD }}
@@ -17,6 +21,31 @@ jobs:
   auto-delete:
     runs-on: self-hosted
     steps:
+      - name: Collect Inputs
+        id: collect_inputs
+        run: |
+          echo "EVENT_NAME [$EVENT_NAME]"
+
+          # Default value
+          expiration_graceperiod_days=14
+
+          # If manually triggered, check if an input was provided
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && -n "${{ github.event.inputs.expiration_graceperiod_days }}" ]]; then
+            input_days="${{ github.event.inputs.expiration_graceperiod_days }}"
+
+            # Validate that input_days is a positive integer
+            if [[ "$input_days" =~ ^[0-9]+$ && "$input_days" -ge 0 ]]; then
+              expiration_graceperiod_days=$input_days
+            else
+              echo "⚠️ Invalid input for expiration_graceperiod_days: [$input_days]. Using default: [$expiration_graceperiod_days]"
+            fi
+          fi
+
+          echo "expiration_graceperiod_days [$expiration_graceperiod_days]"
+          echo "expiration_graceperiod_days=$expiration_graceperiod_days" >> $GITHUB_OUTPUT
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+
       - uses: actions/checkout@v4
 
       - uses: actions/create-github-app-token@31c86eb3b33c9b601a1f60f98dcbfd1d70f379b4 # v1.10.3
@@ -129,4 +158,5 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           SUFFIX: ${{ vars.VOLUME_NAME_SUFFIX }}
-          EXPIRATION_GRACEPERIOD_DAYS: 14
+          EXPIRATION_GRACEPERIOD_DAYS:
+            ${{ steps.collect_inputs.outputs.expiration_graceperiod_days }}
