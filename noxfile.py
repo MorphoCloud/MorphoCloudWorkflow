@@ -57,6 +57,17 @@ def _collect_files_to_copy(
     return files_to_copy
 
 
+def _patch_files(target_dir: Path) -> None:
+    # .github/ISSUE_TEMPLATE/config.yml
+    pattern = re.compile(r"^blank_issues_enabled: .*")
+    replacement = "blank_issues_enabled: false"
+    _update_file(
+        target_dir / ".github/ISSUE_TEMPLATE/config.yml",
+        pattern,
+        replacement,
+    )
+
+
 def _vendorize(
     session: nox.Session, paths: list[str], exclude_paths: Optional[list[str]] = None
 ) -> None:
@@ -98,6 +109,8 @@ def _vendorize(
         target_file.parent.mkdir(parents=True, exist_ok=True)
         session.log(f"Copying file {relative_path}")
         shutil.copy2(src_file, target_file)
+
+    _patch_files(target_dir)
 
     if args.commit:
         org = "MorphoCloud"
