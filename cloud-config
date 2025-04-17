@@ -85,7 +85,7 @@ exosphere_sha="446f18d0d90a33ed43c3f378536493d2b65819a5" # morpho-cloud-portal-2
 
 ansible-playbook \
   -i /opt/instance-config-mgt/ansible/hosts \
-  -e "{\"guac_enabled\":true,\"gui_enabled\":true,\"ansible_python_interpreter\":\"/opt/ansible-venv/bin/python\"}" \
+  -e "{\"guac_enabled\":true,\"gui_enabled\":true,\"ansible_python_interpreter\":\"/opt/ansible-venv/bin/python\",\"instance_flavor\":\"INSTANCE_FLAVOR\"}" \
   /opt/instance-config-mgt/ansible/playbook.yml
 ANSIBLE_RETURN_CODE=$?
 if [ $ANSIBLE_RETURN_CODE -eq 0 ]; then STATUS="complete"; else STATUS="error"; fi
