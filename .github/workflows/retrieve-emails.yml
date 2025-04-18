@@ -1,0 +1,144 @@
+name: Retrieve Emails
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ vars.MORPHOCLOUD_OS_CLOUD }}
+  cancel-in-progress: true
+
+jobs:
+  retrieve-issue-numbers:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.retrieve-issue-numbers.outputs.value }}
+      first-issue-number:
+        ${{ steps.retrieve-issue-numbers.outputs.first-issue-number }}
+      last-issue-number:
+        ${{ steps.retrieve-issue-numbers.outputs.last-issue-number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Retrieve issue number
+        id: retrieve-issue-numbers
+        run: |
+          # List all approved issues and build a JSON array of their numbers
+          json_array=$(gh issue list \
+            --label "request:approved" \
+            --state all \
+            --limit 500 \
+            --json number |
+              jq -r -c 'sort_by(.number) | map(.number|tostring)')
+
+          # Extract the first and last elements
+          first_issue=$(jq -r '.[0]' <<< "$json_array")
+          echo "first_issue [$first_issue]"
+          last_issue=$(jq -r '.[-1]' <<< "$json_array")
+          echo "last_issue [$last_issue]"
+
+          echo "value=$json_array" >> $GITHUB_OUTPUT
+          echo "first-issue-number=$first_issue" >> $GITHUB_OUTPUT
+          echo "last-issue-number=$last_issue" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  extract-emails:
+    needs: [retrieve-issue-numbers]
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        issue_number: ${{fromJSON(needs.retrieve-issue-numbers.outputs.matrix)}}
+
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          echo "${{ matrix.issue_number }}"
+
+      - name: Extract fields
+        id: extract
+        uses: ./.github/actions/extract-issue-fields
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          issue_number: ${{ matrix.issue_number }}
+
+      - name: Check if email is encoded
+        id: check_email_encryption
+        shell: bash
+        run: |
+          if [[ "$EMAIL" != *"@"* ]]; then
+            encoded="true"
+          else
+            encoded="false"
+          fi
+          echo "encoded=$encoded" >> $GITHUB_OUTPUT
+        env:
+          EMAIL: ${{ steps.extract.outputs.email }}
+
+      - name: Decode email
+        id: decode_email
+        uses: ./.github/actions/encode-decode-string
+        with:
+          input_string: ${{ steps.extract.outputs.email }}
+          encryption_key: ${{ secrets.STRING_ENCRYPTION_KEY }}
+          operation: "decode"
+          skip: ${{ steps.check_email_encryption.outputs.encoded == 'false' }}
+
+      - name: Write email to file
+        run: |
+          echo "::add-mask::$EMAIL"
+          mkdir -p email
+          echo "$EMAIL" > email/extracted-${{ matrix.issue_number }}.txt
+        env:
+          EMAIL: ${{ steps.decode_email.outputs.output_string }}
+
+      - name: Upload extracted email artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: email-${{ matrix.issue_number }}
+          path: email/extracted-${{ matrix.issue_number }}.txt
+          compression-level: 1
+          retention-days: 1
+        env:
+          # See https://github.com/actions/upload-artifact/issues/623
+          ACTIONS_ARTIFACT_UPLOAD_CONCURRENCY: 5
+
+  send-email:
+    needs: [retrieve-issue-numbers, extract-emails]
+    runs-on: self-hosted
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all email artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: emails/
+          merge-multiple: true
+
+      - name: Aggregate emails into a single list
+        id: aggregate
+        run: |
+          # concatenate all the little files into one comma‑separated list
+          emails=$(find emails/ -name 'extracted-*.txt' -exec cat {} \; | paste -sd, -)
+          echo "::add-mask::$emails"
+          echo "emails=$emails" >> $GITHUB_OUTPUT
+
+      - name: Send mail
+        uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: MorphoCloudPortal
+          to: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          subject:
+            "[${{ github.event.repository.name }}] List of emails for instances
+            ${{ needs.retrieve-issue-numbers.outputs.first-issue-number }} to
+            ${{ needs.retrieve-issue-numbers.outputs.last-issue-number }}"
+          convert_markdown: true
+          html_body: |
+            Emails: `${{ steps.aggregate.outputs.emails }}`
+
+            _Requested by ${{ github.actor }}. See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}._
