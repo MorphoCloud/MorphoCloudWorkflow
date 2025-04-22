@@ -234,6 +234,41 @@ configure the necessary infrastructure:
        sudo ./svc.sh status
        ```
 
+## Scripts
+
+### Download
+
+Fetch the desired script into `/tmp` and mark it executable. For example:
+
+```bash
+SCRIPT=list-instance-credentials.sh
+
+curl -o "/tmp/$SCRIPT" -# "https://raw.githubusercontent.com/MorphoCloud/MorphoCloudWorkflow/refs/heads/main/scripts/$SCRIPT"
+chmod u+x "/tmp/$SCRIPT"
+```
+
+### `list-instance-credentials.sh`
+
+|                           |                                                                                |
+| ------------------------- | ------------------------------------------------------------------------------ |
+| **Execution Path**        | `/tmp/list-instance-credentials.sh`                                            |
+| **Execution Environment** | Runner (`morpho-cloud-instances_github-runner`, SSH‑accessible)                |
+| **Description**           | List instance name, SSH endpoint, web‑connect URL, and passphrase              |
+| **Source**                | [scripts/list-instance-credentials.sh](./scripts/list-instance-credentials.sh) |
+
+> [!NOTE]
+>
+> - The script **automatically sources** `venv/bin/activate` on startup.
+> - `OS_CLOUD` is auto‑detected from `~/.config/openstack/clouds.yaml` file; to
+>   override, run:
+>   ```bash
+>   export OS_CLOUD=YOUR_CLOUD_NAME
+>   ```
+> - Prefix filtering is available via `-p` (default: `instance`):
+>   ```bash
+>   /tmp/list-instance-credentials.sh -p myprefix
+>   ```
+
 ## Funding Acknowledgments
 
 MorphoCloud services are supported by funding from National Science Foundation
