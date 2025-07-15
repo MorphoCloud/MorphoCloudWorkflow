@@ -105,6 +105,9 @@ pipx run nox -s display-exosphere-version
 # Bump exosphere version
 pipx run nox -s bump-exosphere -- $PROJECTS_DIR/exosphere --commit
 
+# Push updates to MorphoCloudWorkflow repository
+git push origin main
+
 # Vendor scripts
 pipx run nox -s vendorize -- $PROJECTS_DIR/MorphoCloudInstances/ --commit
 
