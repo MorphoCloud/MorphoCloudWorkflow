@@ -76,7 +76,8 @@ Ansible scripts for MorphoCloud instances are maintained in our fork of
 ### Steps to Update Ansible Scripts
 
 1. Update `exosphere` version in `MorphoCloudWorkflow`
-2. Vendor the updated `MorphoCloudWorkflow` into the target repository
+2. Vendor the updated `MorphoCloudWorkflow` into the target repository (e.g.,
+   `MorphoCloudInstances` or `MorphoCloudInstancesTest`)
 
 ### Example: Vendoring to `MorphoCloudInstances`
 
