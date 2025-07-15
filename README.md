@@ -43,12 +43,9 @@ configure the necessary infrastructure:
    You'll need a GitHub App to enable workflows to authenticate via the GitHub
    API and support triggering other workflows. Follow these steps to register
    and configure the app:
-
    1. Register a
       [new GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app):
-
       - Set the following options:
-
         - GitHub App name (e.g `YourProject Workflow App`)
         - Homepage URL (e.g `https://github.com/YourOrganization/YourProject`)
         - Permissions:
@@ -107,7 +104,6 @@ configure the necessary infrastructure:
    | `STRING_ENCRYPTION_KEY`                |                     | :white_check_mark: |
    | `MAIL_USERNAME`                        |                     | :white_check_mark: |
    | `MAIL_PASSWORD`                        |                     | :white_check_mark: |
-
    - `MORPHOCLOUD_GITHUB_ADMINS`: A comma-separated list of GitHub usernames
      (e.g., `"jcfr,muratmaga"`) for users with admin privileges to execute
      commands like `/create` or `/delete_instance`.
@@ -183,7 +179,6 @@ configure the necessary infrastructure:
 12. Install and register the GitHub runner:
 
     Follow these steps to install and register a GitHub runner:
-
     1. In your GitHub repository, go to _Settings_ -> _Actions_ -> _New
        self-hosted runner_.
 
