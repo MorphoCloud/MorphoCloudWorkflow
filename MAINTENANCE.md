@@ -143,9 +143,11 @@ The version of Slicer is defined in the Ansible script maintained in `exosphere`
 
 ### Example: Updating Slicer Version
 
-**Step 1**: Identify the version of `exosphere` branch used in `MorphoCloudWorkflow`
+**Step 1**: Identify the version of `exosphere` branch used in
+`MorphoCloudWorkflow`
 
-See [Vendoring to `MorphoCloudInstances`](#example-vendoring-to-morphocloudinstances-1)
+See
+[Vendoring to `MorphoCloudInstances`](#example-vendoring-to-morphocloudinstances-1)
 
 **Step 2:** Update the Slicer version in the `exosphere` Ansible script:
 
@@ -184,9 +186,11 @@ git commit -m "feat(Slicer role): Download Slicer 5.8.0 r33216 instead of 5.7.0 
 git push origin $exosphere_branch
 ```
 
-**Step 3**: Update `exosphere` in `MorphoCloudWorkflow` and vendor changes in target repository.
+**Step 3**: Update `exosphere` in `MorphoCloudWorkflow` and vendor changes in
+target repository.
 
-Follow the steps in [Vendoring to `MorphoCloudInstances`](#example-vendoring-to-morphocloudinstances-1)
+Follow the steps in
+[Vendoring to `MorphoCloudInstances`](#example-vendoring-to-morphocloudinstances-1)
 
 ## Updating Slicer Extensions
 
