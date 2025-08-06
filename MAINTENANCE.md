@@ -24,13 +24,13 @@ follow these steps to vendor or re-vendor the GitHub Workflow scripts.
 PROJECTS_DIR=/home/jcfr/Projects
 cd $PROJECTS_DIR
 
-# Clone target GitHub repository
+# Clone the target GitHub repository
 git clone git@github.com:MorphoCloud/MorphoCloudInstances.git
 
 # Clone MorphoCloudWorkflow
 git clone git@github.com:MorphoCloud/MorphoCloudWorkflow.git
 
-cd $PROJECTS_DIR/MorphoCloudWorkflow
+cd MorphoCloudWorkflow
 
 # Vendor scripts
 pipx run nox -s vendorize -- $PROJECTS_DIR/MorphoCloudInstances/ --commit
@@ -75,38 +75,57 @@ Ansible scripts for MorphoCloud instances are maintained in our fork of
 
 ### Steps to Update Ansible Scripts
 
-1. Update `exosphere` version in `MorphoCloudWorkflow`
-2. Vendor the updated `MorphoCloudWorkflow` into the target repository (e.g.,
+1. Identify the version of the `exosphere` used in `MorphoCloudWorkflow`
+2. Update the `exosphere` version in `MorphoCloudWorkflow`
+3. Vendor the updated `MorphoCloudWorkflow` into the target repository (e.g.,
    `MorphoCloudInstances` or `MorphoCloudInstancesTest`)
 
 ### Example: Vendoring to `MorphoCloudInstances`
 
-```bash
+**Step 1**: Identify the version of `exosphere` used in `MorphoCloudWorkflow`
+
+```
 PROJECTS_DIR=/home/jcfr/Projects
 cd $PROJECTS_DIR
-
-# Clone target GitHub repository
-git clone git@github.com:MorphoCloud/MorphoCloudInstances.git
-
-# Clone exosphere
-git clone git@github.com:MorphoCloud/exosphere.git
-
-# Checkout exosphere branch
-git checkout morpho-cloud-portal-2024.07.17-78a7e2d93
 
 # Clone MorphoCloudWorkflow
 git clone git@github.com:MorphoCloud/MorphoCloudWorkflow.git
 
-cd $PROJECTS_DIR/MorphoCloudWorkflow
+cd MorphoCloudWorkflow
 
-# Display version of exosphere currently associated with MorphoCloudWorkflow
+# Display current exosphere SHA and branch
 pipx run nox -s display-exosphere-version
 
-# Bump exosphere version
+# Set the branch variable using the displayed value
+exosphere_branch=morpho-cloud-portal-YYYY.MM.DD-SHA{N}
+```
+
+**Step 2**: Update `exosphere` in `MorphoCloudWorkflow`
+
+```bash
+cd $PROJECTS_DIR
+
+# Clone exosphere and check out the desired branch
+git clone git@github.com:MorphoCloud/exosphere.git -b $exosphere_branch
+
+cd MorphoCloudWorkflow
+
+# Update exosphere version in cloud-config and commit
 pipx run nox -s bump-exosphere -- $PROJECTS_DIR/exosphere --commit
 
-# Push updates to MorphoCloudWorkflow repository
+# Push updates to the MorphoCloudWorkflow repository
 git push origin main
+```
+
+**Step 3:** Vendor changes into the `MorphoCloudInstances` target repository
+
+```
+cd $PROJECTS_DIR
+
+# Clone the target GitHub repository
+git clone git@github.com:MorphoCloud/MorphoCloudInstances.git
+
+cd MorphoCloudWorkflow
 
 # Vendor scripts
 pipx run nox -s vendorize -- $PROJECTS_DIR/MorphoCloudInstances/ --commit
@@ -124,15 +143,17 @@ The version of Slicer is defined in the Ansible script maintained in `exosphere`
 
 ### Example: Updating Slicer Version
 
+**Step 1**: Identify the version of `exosphere` branch used in `MorphoCloudWorkflow`
+
+See [Vendoring to `MorphoCloudInstances`](#example-vendoring-to-morphocloudinstances-1)
+
+**Step 2:** Update the Slicer version in the `exosphere` Ansible script:
+
 ```bash
-PROJECTS_DIR=/home/jcfr/Projects
 cd $PROJECTS_DIR
 
-# Clone exosphere
-git clone git@github.com:MorphoCloud/exosphere.git
-
-# Checkout exosphere branch
-git checkout morpho-cloud-portal-2024.07.17-78a7e2d93
+# Clone exosphere and check out the appropriate branch
+git clone git@github.com:MorphoCloud/exosphere.git -b $exosphere_branch
 
 cd $PROJECTS_DIR/exosphere
 
@@ -156,27 +177,16 @@ Example commit (see
 ```bash
 git add ansible/roles/slicer/vars/main.yml
 
+# Commit the change. For example:
 git commit -m "feat(Slicer role): Download Slicer 5.8.0 r33216 instead of 5.7.0 r33153"
 
 # Push changes to exosphere
-git push origin morpho-cloud-portal-2024.07.17-78a7e2d93
+git push origin $exosphere_branch
 ```
 
-Next, update `exosphere` in `MorphoCloudWorkflow` and vendor changes:
+**Step 3**: Update `exosphere` in `MorphoCloudWorkflow` and vendor changes in target repository.
 
-```bash
-cd $PROJECTS_DIR/MorphoCloudWorkflow
-
-# Bump exosphere version
-pipx run nox -s bump-exosphere -- $PROJECTS_DIR/exosphere --commit
-
-# Vendor scripts
-pipx run nox -s vendorize -- $PROJECTS_DIR/MorphoCloudInstances/ --commit
-
-# Push updates to target repository
-cd $PROJECTS_DIR/MorphoCloudInstances
-git push origin main
-```
+Follow the steps in [Vendoring to `MorphoCloudInstances`](#example-vendoring-to-morphocloudinstances-1)
 
 ## Updating Slicer Extensions
 
