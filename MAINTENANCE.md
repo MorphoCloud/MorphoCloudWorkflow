@@ -89,7 +89,7 @@ PROJECTS_DIR=/home/jcfr/Projects
 cd $PROJECTS_DIR
 cd MorphoCloudWorkflow
 pipx run nox -s display-exosphere-version
-exosphere_branch=$(pipx run nox -s display-exosphere-version 2>&1 | grep -o '\[morpho-cloud[^]]*\]')
+exosphere_branch=$(pipx run nox -s display-exosphere-version 2>&1 | grep -o 'morpho-cloud[^]]*')
 echo $exosphere_branch 
 ```
 
@@ -140,7 +140,7 @@ The version of Slicer is defined in the Ansible script maintained in `exosphere`
 ```bash
 cd MorphoCloudWorkflow
 pipx run nox -s display-exosphere-version
-exosphere_branch=$(pipx run nox -s display-exosphere-version 2>&1 | grep -o '\[morpho-cloud[^]]*\]')
+exosphere_branch=$(pipx run nox -s display-exosphere-version 2>&1 | grep -o 'morpho-cloud[^]]*')
 echo $exosphere_branch 
 
 **Step 2:** Update the Slicer version in the `exosphere` Ansible script:
