@@ -60,7 +60,7 @@ jobs:
           UNAPPROVE_COMMAND_CONTINUE:
             ${{ steps.unapprove_command.outputs.continue }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Update approval
         id: update_approval
