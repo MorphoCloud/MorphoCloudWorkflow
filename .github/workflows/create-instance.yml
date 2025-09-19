@@ -27,7 +27,7 @@ jobs:
 
       - name:
           Convenienty add "request:approved" label if comment added by an admin
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const admins = process.env.MORPHOCLOUD_GITHUB_ADMINS.split(',').map(s => s.trim());
