@@ -90,7 +90,7 @@ cd $PROJECTS_DIR
 cd MorphoCloudWorkflow
 pipx run nox -s display-exosphere-version
 exosphere_branch=$(pipx run nox -s display-exosphere-version 2>&1 | grep -o 'morpho-cloud[^]]*')
-echo $exosphere_branch 
+echo $exosphere_branch
 ```
 
 **Step 2**: Update `exosphere` in `MorphoCloudWorkflow`
@@ -137,11 +137,13 @@ The version of Slicer is defined in the Ansible script maintained in `exosphere`
 ### Example: Updating Slicer Version
 
 **Step 1**: Identify the version of `exosphere` branch used in
+
 ```bash
 cd MorphoCloudWorkflow
 pipx run nox -s display-exosphere-version
 exosphere_branch=$(pipx run nox -s display-exosphere-version 2>&1 | grep -o 'morpho-cloud[^]]*')
-echo $exosphere_branch 
+echo $exosphere_branch
+```
 
 **Step 2:** Update the Slicer version in the `exosphere` Ansible script:
 
@@ -188,7 +190,7 @@ cd $PROJECTS_DIR/MorphoCloudWorkflow
 pipx run nox -s vendorize -- $PROJECTS_DIR/MorphoCloudInstances/ --commit
 cd $PROJECTS_DIR/MorphoCloudInstances
 git push origin main
-
+```
 
 ## Updating Slicer Extensions
 
