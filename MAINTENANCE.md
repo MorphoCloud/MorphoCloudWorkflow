@@ -187,7 +187,17 @@ target repository.
 
 ```bash
 cd $PROJECTS_DIR/MorphoCloudWorkflow
+
+# Update exosphere version in cloud-config and commit
+pipx run nox -s bump-exosphere -- $PROJECTS_DIR/exosphere --commit
+
+# Push updates to the MorphoCloudWorkflow repository
+git push origin main
+
+# Vendor scripts
 pipx run nox -s vendorize -- $PROJECTS_DIR/MorphoCloudInstances/ --commit
+
+# Publish updated target repository
 cd $PROJECTS_DIR/MorphoCloudInstances
 git push origin main
 ```
