@@ -198,7 +198,10 @@ def vendorize(session: nox.Session) -> None:
             "issue-commands.md",
             "cloud-config",
         ],
-        [".github/dependabot.yml"],
+        [
+            ".github/dependabot.yml",
+            ".github/workflows/jekyll.yml",
+        ],
     )
 
 
