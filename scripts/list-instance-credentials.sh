@@ -4,18 +4,21 @@ set -euo pipefail
 
 usage() {
   cat <<EOF
-Usage: $0 [-p prefix]
+Usage: $0 [-p prefix] [-w workshop-id]
 
-  -p prefix   Filter instances by name prefix (default: 'instance')
-  -h          Show this help message
+  -p prefix       Filter instances by name prefix (default: 'instance')
+  -w workshop-id  Filter instances associated with the specified workshop issue number
+  -h              Show this help message
 EOF
   exit 1
 }
 
 INSTANCE_NAME_PREFIX="instance"
-while getopts ":p:h" opt; do
+WORKSHOP_ID=""
+while getopts ":p:w:h" opt; do
   case ${opt} in
     p) INSTANCE_NAME_PREFIX="${OPTARG}" ;;
+    w) WORKSHOP_ID="${OPTARG}" ;;
     h) usage ;;
     \?) echo "Error: Invalid option -${OPTARG}" >&2; usage ;;
     :) echo "Error: Option -${OPTARG} requires an argument." >&2; usage ;;
@@ -35,6 +38,49 @@ for cmd in openstack jq ssh curl; do
     exit 1
   fi
 done
+
+# Workshop filtering
+declare -A WORKSHOP_INSTANCES=()
+
+if [[ -n "$WORKSHOP_ID" ]]; then
+  if ! command -v gh &>/dev/null; then
+    echo "Error: required command 'gh' not found in PATH when using -w." >&2
+    exit 1
+  fi
+
+  if [[ -z "${GH_TOKEN:-}" ]]; then
+    echo "Error: GH_TOKEN must be set when using -w." >&2
+    exit 1
+  fi
+
+  if [[ -z "${GH_REPO:-}" ]]; then
+    GH_REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || true
+  fi
+
+  : "${GH_REPO:?Environment variable GH_REPO must be set or gh repo view must succeed}"
+
+  mapfile -t WORKSHOP_ISSUE_NUMBERS < <(
+    gh api \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "repos/$GH_REPO/issues/$WORKSHOP_ID/sub_issues" \
+      --paginate \
+      --jq '.[].number'
+  )
+
+  if [[ ${#WORKSHOP_ISSUE_NUMBERS[@]} -eq 0 ]]; then
+    echo "Warning: no instance issues found for workshop #${WORKSHOP_ID}" >&2
+  fi
+
+  for issue_number in "${WORKSHOP_ISSUE_NUMBERS[@]}"; do
+    if [[ -n "$INSTANCE_NAME_PREFIX" ]]; then
+      instance_name="${INSTANCE_NAME_PREFIX}_instance-${issue_number}"
+    else
+      instance_name="instance-${issue_number}"
+    fi
+    WORKSHOP_INSTANCES["$instance_name"]=1
+  done
+fi
 
 # Attempt to auto‑set OS_CLOUD if not already provided
 if [[ -z "${OS_CLOUD:-}" ]]; then
@@ -56,6 +102,10 @@ openstack server list --name "^$INSTANCE_NAME_PREFIX" --status ACTIVE -f json -c
 
     INSTANCE_NAME=$(echo "$instance_json" | jq -r '.Name')
     INSTANCE_IP=$(echo "$instance_json" | jq -r '.Networks.auto_allocated_network[1]')
+
+    if [[ -n "$WORKSHOP_ID" && -z "${WORKSHOP_INSTANCES[$INSTANCE_NAME]:-}" ]]; then
+      continue
+    fi
 
     # See hard-coded value in exosphere/src/Helpers/Interaction.elm
     guacamole_port=49528

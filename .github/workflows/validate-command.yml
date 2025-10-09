@@ -54,9 +54,34 @@ jobs:
         env:
           COMMENT_BODY: ${{ github.event.comment.body }}
 
+      - name: Validate workshop command
+        id: validate-workshop
+        if:
+          ${{ contains(github.event.issue.labels.*.name,
+          'request-type:workshop') }}
+        run: |
+          echo "Raw comment body: [$COMMENT_BODY]"
+
+          # Trim leading/trailing whitespace and normalize
+          TRIMMED_COMMAND="$(echo "$COMMENT_BODY" | xargs)"
+          echo "Trimmed command: [$TRIMMED_COMMAND]"
+
+          SUPPORTED_COMMANDS=("/create")
+
+          if printf '%s\n' "${SUPPORTED_COMMANDS[@]}" | grep -Fxq "$TRIMMED_COMMAND"; then
+            echo "✅ Command [$TRIMMED_COMMAND] is supported for workshop issues."
+          else
+            echo "::error ::Unsupported command [$TRIMMED_COMMAND] for workshop issues"
+            exit 1
+          fi
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+
       - name: validatation results comment
         id: validate_comment
-        if: ${{ steps.validate-instance.outcome == 'failure' && failure() }}
+        if:
+          ${{ (steps.validate-instance.outcome == 'failure' ||
+          steps.validate-workshop.outcome == 'failure') && failure() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}
@@ -66,7 +91,9 @@ jobs:
             Command `${{ github.event.comment.body }}` is not recognized.
 
       - name: Append supported commands to failure comment
-        if: ${{ steps.validate-instance.outcome == 'failure' && failure() }}
+        if:
+          ${{ (steps.validate-instance.outcome == 'failure' ||
+          steps.validate-workshop.outcome == 'failure') && failure() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           comment-id: ${{ steps.validate_comment.outputs.comment-id }}
@@ -75,7 +102,9 @@ jobs:
           edit-mode: append
 
       - name: Append action run link to failure comment
-        if: ${{ steps.validate-instance.outcome == 'failure' && failure() }}
+        if:
+          ${{ (steps.validate-instance.outcome == 'failure' ||
+          steps.validate-workshop.outcome == 'failure') && failure() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           comment-id: ${{ steps.validate_comment.outputs.comment-id }}
