@@ -177,15 +177,24 @@ jobs:
           COMMAND_NAME: encode_email
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
 
+      - name: find command results comment
+        uses: peter-evans/find-comment@v4
+        id: fc
+        with:
+          issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
+          body-includes: "### Validation Results"
+
       - name: command results comment (failure)
         if: ${{ failure() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          edit-mode: replace
           body: |
-            ### Command Results ❌
+            ### Validation Results
 
-            `/validate` command failed.
+            The validation checks failed ❌.
 
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -197,7 +206,9 @@ jobs:
           steps.check_emails_match.outputs.valid == 'true') }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
+          edit-mode: replace
           body: |
             ### Validation Results
 
@@ -215,7 +226,9 @@ jobs:
           steps.check_emails_match.outputs.valid == 'false') }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
+          edit-mode: replace
           body: |
             ### Validation Results
 
