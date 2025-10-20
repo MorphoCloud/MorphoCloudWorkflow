@@ -343,10 +343,18 @@ runs:
 
         while [ $total_wait_time -lt $max_wait_time ]; do
 
-            status=$(openstack console log show $INSTANCE_NAME | \
-              grep "^\{\"status\":\"" | \
-              tail -1 | \
-              jq -r '.status // "pending"')
+            # Get the log; bail if openstack itself fails
+            log_output=$(openstack console log show "$INSTANCE_NAME") || {
+              echo "ERROR: failed to fetch console log for $INSTANCE_NAME" >&2
+              exit 1
+            }
+
+            # Extract the last {"status":"..."} line; default to pending if none
+            status_line=$(printf '%s\n' "$log_output" | grep -E '^\{"status":"' || true)
+            status=$(
+              { [ -n "$status_line" ] && printf '%s\n' "$status_line" | tail -n1 || echo '{"status":"pending"}'; } \
+              | jq -r '.status // "pending"'
+            )
 
             echo -n "setup status [$status]. "
 
