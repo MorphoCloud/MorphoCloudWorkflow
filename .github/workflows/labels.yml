@@ -25,6 +25,7 @@ jobs:
           {"name": "expiration:120d", "color": "892368", "description": "Instance expires in 120 days unless extended"},
           {"name": "expiration:180d", "color": "892368", "description": "Instance expires in 180 days unless extended"},
           {"name": "request:approved", "color": "027210", "description": "Instance has been approved for creation and is being provisioned"},
+          {"name": "request-type:instance", "color": "0A84FF", "description": "Issue tracks a single instance request"},
           {"name": "renewed:1", "color": "1550D4", "description": "Instance lifespan renewed once"},
           {"name": "renewed:2", "color": "1550D4", "description": "Instance lifespan renewed twice"},
           {"name": "status:active", "color": "CFD3D7", "description": "The server is active."},

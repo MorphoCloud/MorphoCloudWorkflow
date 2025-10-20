@@ -18,8 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Validate
-        id: validate
+      - name: Validate instance command
+        id: validate-instance
+        if:
+          ${{ contains(github.event.issue.labels.*.name,
+          'request-type:instance') }}
         run: |
           echo "Raw comment body: [$COMMENT_BODY]"
 
@@ -53,7 +56,7 @@ jobs:
 
       - name: validatation results comment
         id: validate_comment
-        if: ${{ steps.validate.outcome == 'failure' && failure() }}
+        if: ${{ steps.validate-instance.outcome == 'failure' && failure() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}
@@ -63,7 +66,7 @@ jobs:
             Command `${{ github.event.comment.body }}` is not recognized.
 
       - name: Append supported commands to failure comment
-        if: ${{ steps.validate.outcome == 'failure' && failure() }}
+        if: ${{ steps.validate-instance.outcome == 'failure' && failure() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           comment-id: ${{ steps.validate_comment.outputs.comment-id }}
@@ -72,7 +75,7 @@ jobs:
           edit-mode: append
 
       - name: Append action run link to failure comment
-        if: ${{ steps.validate.outcome == 'failure' && failure() }}
+        if: ${{ steps.validate-instance.outcome == 'failure' && failure() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           comment-id: ${{ steps.validate_comment.outputs.comment-id }}

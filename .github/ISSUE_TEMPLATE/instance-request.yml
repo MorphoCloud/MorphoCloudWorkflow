@@ -1,6 +1,8 @@
 name: Instance Request
 description: Issue template to request an individual cloud instance.
 title: "Instance: "
+labels:
+  - request-type:instance
 
 body:
   - type: markdown

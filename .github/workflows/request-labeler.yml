@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   labeler:
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
