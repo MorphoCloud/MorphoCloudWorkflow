@@ -27,6 +27,7 @@ jobs:
           {"name": "request:approved", "color": "027210", "description": "Instance has been approved for creation and is being provisioned"},
           {"name": "request-type:instance", "color": "0A84FF", "description": "Issue tracks a single instance request"},
           {"name": "request-type:workshop", "color": "0A84FF", "description": "Issue tracks a workshop bulk instance request"},
+          {"name": "request-creator:user", "color": "7B6F4C", "description": "Issue was explicitly created by the user"},
           {"name": "renewed:1", "color": "1550D4", "description": "Instance lifespan renewed once"},
           {"name": "renewed:2", "color": "1550D4", "description": "Instance lifespan renewed twice"},
           {"name": "workflow:creating-instances", "color": "5319E7", "description": "Workshop instances are currently being created"},
