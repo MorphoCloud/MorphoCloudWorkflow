@@ -11,6 +11,8 @@ on:
 
 jobs:
   initial_comments:
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') }}
     runs-on: ubuntu-latest
     steps:
       - name: Collect Inputs
@@ -29,35 +31,16 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
 
-      - name: Ensure instance request
-        id: ensure_instance_request
-        run: |
-          labels=$(gh issue view "$ISSUE_NUMBER" --repo "$GH_REPO" --json labels | jq -r '.labels[].name')
-          echo "labels [$labels]"
-          if printf '%s\n' "$labels" | grep -Fxq 'request-type:instance'; then
-            echo "is_instance=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_instance=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping issue $ISSUE_NUMBER because it does not have label request-type:instance"
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          ISSUE_NUMBER: ${{ steps.collect_inputs.outputs.issue_number }}
-
       - uses: actions/checkout@v5
-        if: ${{ steps.ensure_instance_request.outputs.is_instance == 'true' }}
 
       - name: Define instance name
         id: define
-        if: ${{ steps.ensure_instance_request.outputs.is_instance == 'true' }}
         uses: ./.github/actions/define-instance-name
         with:
           prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
           issue_number: ${{ steps.collect_inputs.outputs.issue_number }}
 
       - name: description (instance name)
-        if: ${{ steps.ensure_instance_request.outputs.is_instance == 'true' }}
         uses: julien-deramond/update-issue-body@v1.1.0
         with:
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
@@ -72,14 +55,12 @@ jobs:
 
       - name: Define volume name
         id: define_volume_name
-        if: ${{ steps.ensure_instance_request.outputs.is_instance == 'true' }}
         uses: ./.github/actions/define-volume-name
         with:
           issue_number: ${{ steps.collect_inputs.outputs.issue_number }}
           suffix: ${{ vars.VOLUME_NAME_SUFFIX }}
 
       - name: description (volume name)
-        if: ${{ steps.ensure_instance_request.outputs.is_instance == 'true' }}
         uses: julien-deramond/update-issue-body@v1.1.0
         with:
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
@@ -93,7 +74,6 @@ jobs:
           append-separator: newline
 
       - name: Find Issue Commands Comment
-        if: ${{ steps.ensure_instance_request.outputs.is_instance == 'true' }}
         uses: peter-evans/find-comment@v4
         id: fc_commands
         with:
@@ -102,7 +82,6 @@ jobs:
           body-includes: "### Supported Issue Commands"
 
       - name: comment (issue commands)
-        if: ${{ steps.ensure_instance_request.outputs.is_instance == 'true' }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           comment-id: ${{ steps.fc_commands.outputs.comment-id }}
