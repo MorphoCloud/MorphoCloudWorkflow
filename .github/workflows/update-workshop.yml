@@ -60,6 +60,28 @@ jobs:
           repository: ${{ github.repository }}
           issue_number: ${{ matrix.issue_number }}
 
+      - name: Check if email is encoded
+        id: check_email_encryption
+        shell: bash
+        run: |
+          if [[ "$EMAIL" != *"@"* ]]; then
+            encoded="true"
+          else
+            encoded="false"
+          fi
+          echo "encoded=$encoded" >> $GITHUB_OUTPUT
+        env:
+          EMAIL: ${{ steps.extract.outputs.email }}
+
+      - name: Decode email
+        id: decode_email
+        uses: ./.github/actions/encode-decode-string
+        with:
+          input_string: ${{ steps.extract.outputs.email }}
+          encryption_key: ${{ secrets.STRING_ENCRYPTION_KEY }}
+          operation: "decode"
+          skip: ${{ steps.check_email_encryption.outputs.encoded == 'false' }}
+
       - name: Extract workshop fields
         id: extract_workshop
         uses: ./.github/actions/extract-workshop-fields
@@ -174,7 +196,7 @@ jobs:
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
           from: MorphoCloudPortal
-          to: ${{ steps.extract.outputs.email }}
+          to: ${{ steps.decode_email.outputs.output_string }}
           subject:
             "[${{ github.event.repository.name }}] Workshop #${{
             matrix.issue_number }} instances ready"
