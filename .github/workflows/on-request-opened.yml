@@ -16,7 +16,7 @@ jobs:
       ${{ contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/validate-request.yml
     with:
-      issue_number: ${{ github.event.issue.number }}
+      issue_number: "${{ github.event.issue.number }}"
     secrets: inherit
 
   call-request-labeler:
@@ -25,7 +25,7 @@ jobs:
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/request-labeler.yml
     with:
-      issue_number: ${{ github.event.issue.number }}
+      issue_number: "${{ github.event.issue.number }}"
     secrets: inherit
 
   call-request-initial-comments:
@@ -34,7 +34,7 @@ jobs:
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/request-initial-comments.yml
     with:
-      issue_number: ${{ github.event.issue.number }}
+      issue_number: "${{ github.event.issue.number }}"
     secrets: inherit
 
   call-request-notify-admin:
@@ -43,5 +43,5 @@ jobs:
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/request-notify-admin.yml
     with:
-      issue_number: ${{ github.event.issue.number }}
+      issue_number: "${{ github.event.issue.number }}"
     secrets: inherit
