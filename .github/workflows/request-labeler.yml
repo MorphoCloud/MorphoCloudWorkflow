@@ -18,8 +18,6 @@ permissions:
 
 jobs:
   labeler:
-    if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') }}
     runs-on: ubuntu-latest
     steps:
       - name: Collect Inputs
