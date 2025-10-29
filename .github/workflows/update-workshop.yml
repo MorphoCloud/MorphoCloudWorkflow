@@ -70,7 +70,11 @@ jobs:
           if [[ -z "$issues" || "$issues" == "null" ]]; then
             issues="[]"
           fi
-          echo "issues=$issues" >> "$GITHUB_OUTPUT"
+          {
+            echo 'issues<<EOF'
+            echo "$issues"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
