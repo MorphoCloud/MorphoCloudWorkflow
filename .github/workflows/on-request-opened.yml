@@ -21,7 +21,7 @@ jobs:
 
   call-request-labeler:
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') ||
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/request-labeler.yml
     with:
@@ -30,7 +30,7 @@ jobs:
 
   call-request-initial-comments:
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') ||
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/request-initial-comments.yml
     with:
@@ -39,7 +39,7 @@ jobs:
 
   call-request-notify-admin:
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') ||
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/request-notify-admin.yml
     with:
