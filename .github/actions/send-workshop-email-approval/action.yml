@@ -1,0 +1,89 @@
+name: "Send approval email"
+description: "Send approval email"
+inputs:
+  token:
+    description: "GITHUB_TOKEN or repo scoped PAT"
+    required: true
+  string_encryption_key:
+    description: "Encryption key to encode and decode the email address"
+    required: true
+  mail_server_username:
+    description: "mail server username"
+    required: true
+  mail_server_password:
+    description: "mail server password"
+    required: true
+  workshop_issue_number:
+    description: "Reference of the GitHub issue associated with the workshop"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Extract fields
+      id: extract
+      uses: ./.github/actions/extract-issue-fields
+      with:
+        token: ${{ inputs.token }}
+        repository: ${{ github.repository }}
+        issue_number: ${{ inputs.workshop_issue_number }}
+
+    - name: Check if email is encoded
+      id: check_email_encryption
+      shell: bash
+      run: |
+        if [[ "$EMAIL" != *"@"* ]]; then
+          encoded="true"
+        else
+          encoded="false"
+        fi
+        echo "encoded=$encoded" >> $GITHUB_OUTPUT
+      env:
+        EMAIL: ${{ steps.extract.outputs.email }}
+
+    - name: Decode email
+      id: decode_email
+      uses: ./.github/actions/encode-decode-string
+      with:
+        input_string: ${{ steps.extract.outputs.email }}
+        encryption_key: ${{ inputs.string_encryption_key }}
+        operation: "decode"
+        skip: ${{ steps.check_email_encryption.outputs.encoded == 'false' }}
+
+    - name: Extract workshop specific fields
+      id: extract_workshop
+      uses: ./.github/actions/extract-workshop-fields
+      with:
+        token: ${{ inputs.token }}
+        repository: ${{ github.repository }}
+        issue_number: ${{ inputs.workshop_issue_number }}
+
+    - name: Send approval mail
+      uses: dawidd6/action-send-mail@2cea9617b09d79a095af21254fbcb7ae95903dde # v3.12.0
+      with:
+        server_address: smtp.gmail.com
+        server_port: 465
+        secure: true
+        username: ${{ inputs.mail_server_username }}
+        password: ${{ inputs.mail_server_password }}
+        from: MorphoCloudPortal
+        to: ${{ steps.decode_email.outputs.output_string }}
+        subject:
+          "[${{ github.event.repository.name }}] Approval granted for workshop
+          #${{ inputs.workshop_issue_number }}"
+        convert_markdown: true
+        html_body: |
+          ✅ Your request for a MorphoCloud workshop has been approved.
+
+          **What’s next?**
+
+          - To initiate the creation of ${{ steps.extract_workshop.outputs.number_of_instances }} instances expected to be running for ${{ steps.extract_workshop.outputs.duration_days }} days, comment `/create` on the issue.
+
+          _Only one command should be used per comment._
+
+          If you have questions, please contact [morphocloud@outlook.com](mailto:morphocloud@outlook.com).
+
+          **Supported Issue Commands:**
+
+          _The following commands can be added as comments to issue [${{ github.repository }}#${{ inputs.workshop_issue_number }}](https://github.com/${{ github.repository }}/issues/${{ inputs.workshop_issue_number }}):_
+
+          - `/create`: Initiate the **${{ steps.extract_workshop.outputs.number_of_instances }}** workshop instances
