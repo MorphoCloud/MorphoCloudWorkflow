@@ -48,8 +48,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Extract workshop fields
+      - name: Extract common fields
         id: extract
+        uses: ./.github/actions/extract-issue-fields
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          issue_number: ${{ matrix.issue_number }}
+
+      - name: Extract workshop fields
+        id: extract_workshop
         uses: ./.github/actions/extract-workshop-fields
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -119,7 +127,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ matrix.issue_number }}
-          EXPECTED_COUNT: ${{ steps.extract.outputs.number_of_instances }}
+          EXPECTED_COUNT: ${{ steps.extract_workshop.outputs.number_of_instances }}
           INSTANCE_PREFIX: ${{ env.INSTANCE_PREFIX }}
           ISSUES: ${{ steps.list_instances.outputs.issues }}
 
@@ -172,9 +180,8 @@ jobs:
       - name: Comment on workshop issue
         if: ${{ steps.readiness.outputs.ready == 'true' }}
         run: |
-          gh issue comment "$ISSUE_NUMBER" --body "**All workshop instances are active.** Notification sent to $RECIPIENT."
+          gh issue comment "$ISSUE_NUMBER" --body "**All workshop instances are active.** Notification email sent."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ matrix.issue_number }}
-          RECIPIENT: ${{ steps.extract.outputs.email }}
