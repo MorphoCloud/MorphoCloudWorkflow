@@ -115,6 +115,7 @@ jobs:
           cat workshop_credentials.csv >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
         env:
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ matrix.issue_number }}
