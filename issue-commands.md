@@ -20,6 +20,3 @@ may be entered per comment._
 
 _Once approved, the issue creator can run `/create`, `/delete_instance`,
 `/delete_volume`, and `/delete_all`._
-
-Workshop issues labeled `request-type:workshop` only support the `/create`
-command.

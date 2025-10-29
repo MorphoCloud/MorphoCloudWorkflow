@@ -13,8 +13,11 @@ Once approved, cloud instance requests are provisioned within the
 GitHub project.
 
 Tasks such as instance creation, deletion, shelving, and unshelving are
-initiated by adding issue comments that follow the `/action` pattern. For a full
-list of supported commands, see the [documentation](issue-commands.md)
+initiated by adding issue comments that follow the `/action` pattern. For the
+complete command list, see the command references: [instance](issue-commands.md)
+and [workshop](workshop-issue-commands.md).
+
+Tasks such as workshop management
 
 ## Requirements
 

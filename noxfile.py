@@ -196,6 +196,7 @@ def vendorize(session: nox.Session) -> None:
             ".github",
             ".pre-commit-config.yaml",
             "issue-commands.md",
+            "workshop-issue-commands.md",
             "cloud-config",
         ],
         [".github/dependabot.yml"],
