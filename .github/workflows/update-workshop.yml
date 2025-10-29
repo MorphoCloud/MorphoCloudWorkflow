@@ -30,7 +30,11 @@ jobs:
           if [[ "$issue_numbers" == "null" ]]; then
             issue_numbers="[]"
           fi
-          echo "issue_numbers=$issue_numbers" >> "$GITHUB_OUTPUT"
+          {
+            echo 'issue_numbers<<EOF'
+            echo "$issue_numbers"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
