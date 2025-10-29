@@ -28,7 +28,18 @@ shift $((OPTIND -1))
 
 # Attempt to auto-activate the Python environment
 if ! command -v "openstack" &>/dev/null; then
-  . venv/bin/activate
+  ACTIVATE_PATH="$HOME/venv/bin/activate"
+  if [[ -r "$ACTIVATE_PATH" ]]; then
+
+    . $ACTIVATE_PATH
+
+    # Re-check after activating
+    if ! command -v openstack >/dev/null 2>&1; then
+      echo "Warning: Sourced '$ACTIVATE_PATH' but 'openstack' is still not in PATH" >&2
+    fi
+  else
+    echo "Warning: OpenStack CLI not found and venv activate script missing at '$ACTIVATE_PATH'" >&2
+  fi
 fi
 
 # Prerequisites
