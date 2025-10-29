@@ -146,7 +146,7 @@ openstack server list --name "^$INSTANCE_NAME_PREFIX" --status ACTIVE -f json -c
           -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null \
           -o LogLevel=ERROR \
-          exouser@$instance_ip \
+          exouser@$proxified_instance_ip \
           'curl --silent http://169.254.169.254/openstack/latest/password')
         echo "$instance_pwd"
       }
