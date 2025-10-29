@@ -198,6 +198,7 @@ def vendorize(session: nox.Session) -> None:
             "issue-commands.md",
             "workshop-issue-commands.md",
             "cloud-config",
+            "scripts/list-instance-credentials.sh",
         ],
         [".github/dependabot.yml"],
     )
