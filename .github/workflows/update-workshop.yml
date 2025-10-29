@@ -59,11 +59,14 @@ jobs:
       - name: List workshop instance issues
         id: list_instances
         run: |
-          issues=$(gh api \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "repos/$GH_REPO/issues/$ISSUE_NUMBER/sub_issues" \
-            --paginate | jq -s 'map(.[]) | map({number: .number})')
+          issues=$(
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "repos/$GH_REPO/issues/$ISSUE_NUMBER/sub_issues" \
+              --paginate \
+              | jq -s 'map(.[]) | map({number: .number})'
+          )
           if [[ -z "$issues" || "$issues" == "null" ]]; then
             issues="[]"
           fi
