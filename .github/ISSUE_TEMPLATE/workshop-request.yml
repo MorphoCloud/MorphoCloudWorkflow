@@ -3,6 +3,7 @@ description: Issue template to request bulk creation of workshop instances.
 title: "Workshop: "
 labels:
   - request-type:workshop
+  - request-creator:user
 
 body:
   - type: markdown
