@@ -40,6 +40,10 @@ jobs:
 
   control:
     runs-on: self-hosted
+    needs:
+      - call-validate-request
+      - call-request-labeler
+      - call-request-initial-comments
     steps:
       - uses: actions/checkout@v5
 
