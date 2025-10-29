@@ -10,7 +10,7 @@ on:
       issue_number:
         description: "Issue number"
         required: true
-        type: number
+        type: string
 
 jobs:
   request_notify_admins:
