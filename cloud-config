@@ -83,6 +83,10 @@ retry git clone \
 exosphere_sha="57c32b31d66b2492166897e17f3defc5c822ae23" # morpho-cloud-portal-2025.09.17-96cec41fb
 (cd /opt/instance-config-mgt && git reset --hard $exosphere_sha)
 
+# Remove ffmpeg from package list to avoid symbol lookup errors
+# See: https://github.com/MorphoCloud/MorphoCloudWorkflow/issues/XXX
+sed -i "/  - 'ffmpeg'/d" /opt/instance-config-mgt/ansible/roles/desktop-setup/vars/Ubuntu.yml
+
 ansible-playbook \
   -i /opt/instance-config-mgt/ansible/hosts \
   -e "{\"guac_enabled\":true,\"gui_enabled\":true,\"ansible_python_interpreter\":\"/opt/ansible-venv/bin/python\",\"instance_flavor\":\"INSTANCE_FLAVOR\"}" \
