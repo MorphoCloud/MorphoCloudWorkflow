@@ -92,34 +92,6 @@ runs:
         GH_REPO: ${{ github.repository }}
         ISSUE_NUMBER: ${{ inputs.issue_number }}
 
-    - name: Check instance exists
-      id: check_instance
-      uses: ./.github/actions/check-instance-exists
-      with:
-        os_cloud: ${{ inputs.os_cloud }}
-        instance_name: ${{ steps.define.outputs.instance_name }}
-
-    - name: comment (Instance already created)
-      if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
-      with:
-        issue-number: ${{ inputs.issue_number }}
-        body: |
-          ### Instance Creation Results ❌
-
-          Instance **${{ steps.define.outputs.instance_name }}** already created.
-
-          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-    - name: instance already exists (failure)
-      if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
-      shell: bash
-      run: |
-        echo "::error ::Instance $INSTANCE_NAME already created"
-        exit 1
-      env:
-        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
-
     - name: Retrieve or create floating IP
       id: ip_create
       uses: ./.github/actions/create-ip
@@ -209,6 +181,34 @@ runs:
         setup_instance: ""
         attach_volume: ""
         send_email: ""
+
+    - name: Check instance exists
+      id: check_instance
+      uses: ./.github/actions/check-instance-exists
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        instance_name: ${{ steps.define.outputs.instance_name }}
+
+    - name: comment (Instance already created)
+      if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Instance **${{ steps.define.outputs.instance_name }}** already created.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: instance already exists (failure)
+      if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
+      shell: bash
+      run: |
+        echo "::error ::Instance $INSTANCE_NAME already created"
+        exit 1
+      env:
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: Create instance
       id: create_instance
