@@ -33,7 +33,7 @@ runs:
   steps:
     - name: Extract fields
       id: extract
-      uses: ./.github/actions/extract-workshop-fields
+      uses: ./.github/actions/extract-issue-fields
       with:
         token: ${{ inputs.token }}
         repository: ${{ github.repository }}
