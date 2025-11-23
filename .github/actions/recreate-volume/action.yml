@@ -101,7 +101,9 @@ runs:
       uses: ./.github/actions/comment-progress
       with:
         issue-number: ${{ inputs.issue_number }}
-        create_volume: ⏳
+        check_volume: ⏳
+        reboot_instance: ""
+        create_volume: ""
         attach_volume: ""
         setup_volume: ""
 
@@ -140,6 +142,108 @@ runs:
       env:
         VOLUME_NAME: ${{ steps.define_volume_name.outputs.volume_name }}
 
+    - name: comment (progress)
+      uses: ./.github/actions/comment-progress
+      with:
+        comment-id: ${{ steps.couc_progress.outputs.comment-id }}
+        check_volume: ✅
+        reboot_instance: ⏳
+        create_volume: ""
+        attach_volume: ""
+        setup_volume: ""
+
+    - name: Reboot instance to expose MyData directory
+      id: reboot_instance
+      shell: bash
+      run: |
+        set +e
+
+        ssh \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          exouser@$INSTANCE_IP \
+          'sudo shutdown -r now'
+
+        sleep 10
+        function check_instance_ready {
+          ssh \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o LogLevel=ERROR \
+            exouser@$INSTANCE_IP \
+            'true'
+        }
+
+        max_attempts=5
+        instance_ready=false
+        for attempt in $(seq 1 $max_attempts); do
+          echo "Checking if instance is ready ($attempt/$max_attempts)"
+          if check_instance_ready; then
+            instance_ready=true
+            echo "Instance '$INSTANCE_NAME' is ready."
+            break
+          else
+            echo "Instance '$INSTANCE_NAME' is not ready. Retrying in 10 seconds..."
+            sleep 10
+          fi
+        done
+        if ! $instance_ready; then
+          echo "::error ::Instance '$INSTANCE_NAME' is not ready after $max_attempts attempts to connect."
+          exit 1
+        fi
+        set -e
+      env:
+        INSTANCE_IP: ${{ steps.get_instance_ip.outputs.instance_ip }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+    - name: comment (failed to reboot instance)
+      if: ${{ steps.reboot_instance.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Volume Recreation Results ❌
+
+          Failed to reboot instance **${{ steps.define.outputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: comment (progress)
+      uses: ./.github/actions/comment-progress
+      with:
+        comment-id: ${{ steps.couc_progress.outputs.comment-id }}
+        check_volume: ✅
+        reboot_instance: ✅
+        create_volume: ⏳
+        attach_volume: ""
+        setup_volume: ""
+
+    - name: Rename MyData directory to MyData-tmp
+      id: rename_mydata
+      shell: bash
+      run: |
+        ssh \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          exouser@$INSTANCE_IP \
+          'mv /media/volume/MyData /media/volume/MyData-tmp'
+      env:
+        INSTANCE_IP: ${{ steps.get_instance_ip.outputs.instance_ip }}
+
+    - name: comment (failed to rename MyData)
+      if: ${{ steps.rename_mydata.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Volume Recreation Results ❌
+
+          Failed to rename `/media/volume/MyData` to `/media/volume/MyData-tmp` for instance **${{ steps.define.outputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
     - name: Create Volume
       id: create_volume
       shell: bash
@@ -167,6 +271,8 @@ runs:
       uses: ./.github/actions/comment-progress
       with:
         comment-id: ${{ steps.couc_progress.outputs.comment-id }}
+        check_volume: ✅
+        reboot_instance: ✅
         create_volume: ✅
         attach_volume: ⏳
         setup_volume: ""
@@ -219,11 +325,13 @@ runs:
       uses: ./.github/actions/comment-progress
       with:
         comment-id: ${{ steps.couc_progress.outputs.comment-id }}
+        check_volume: ✅
+        reboot_instance: ✅
         create_volume: ✅
         attach_volume: ✅
         setup_volume: ⏳
 
-    - name: Wait for mount point and setup R environment
+    - name: Setup volume with Slicer and R environment
       id: setup_volume
       shell: bash
       run: |
@@ -253,6 +361,14 @@ runs:
           exit 1
         fi
         set -e
+
+        # Copy Slicer from MyData-tmp to the new volume
+        ssh \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          exouser@$INSTANCE_IP \
+          '[ ! -d /media/volume/MyData/Slicer ] && mv /media/volume/MyData-tmp/Slicer /media/volume/MyData/Slicer && rmdir /media/volume/MyData-tmp || rm -rf /media/volume/MyData-tmp'
 
         # Create R environment file and directory
         ssh \
@@ -303,6 +419,8 @@ runs:
       uses: ./.github/actions/comment-progress
       with:
         comment-id: ${{ steps.couc_progress.outputs.comment-id }}
+        check_volume: ✅
+        reboot_instance: ✅
         create_volume: ✅
         attach_volume: ✅
         setup_volume: ✅
