@@ -1,0 +1,308 @@
+name: "Recreate Volume"
+description: "Recreate and attach volume to an existing instance"
+inputs:
+  os_cloud:
+    description:
+      "Name of the OpenStack cloud allocation to select openstack auth settings
+      defined in '.config/openstack/clouds.yaml'"
+    required: true
+  issue_number:
+    description: "Issue number"
+    required: true
+  instance_name_prefix:
+    description: "Instance name prefix"
+    required: true
+  volume_name_suffix:
+    description: "Volume name suffix"
+    required: true
+  token:
+    description: "GITHUB_TOKEN or repo scoped PAT"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Define instance name
+      id: define
+      uses: ./.github/actions/define-instance-name
+      with:
+        prefix: ${{ inputs.instance_name_prefix }}
+        issue_number: ${{ inputs.issue_number }}
+
+    - name: Check instance management approval
+      id: check_approval
+      uses: ./.github/actions/check-approval
+      with:
+        token: ${{ inputs.token }}
+        issue_number: ${{ inputs.issue_number }}
+
+    - name: comment (Instance management not approved)
+      if: ${{ ! fromJSON(steps.check_approval.outputs.is_approved) }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Command Results ❌
+
+          `/recreate_volume` command failed because management of **${{ steps.define.outputs.instance_name }}** has not been approved yet.
+
+    - name: instance management not approved (failure)
+      if: ${{ ! fromJSON(steps.check_approval.outputs.is_approved) }}
+      shell: bash
+      run: |
+        echo "::error ::Instance $INSTANCE_NAME management not approved"
+        exit 1
+      env:
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+    - name: Check instance exists
+      id: check_instance
+      uses: ./.github/actions/check-instance-exists
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        instance_name: ${{ steps.define.outputs.instance_name }}
+
+    - name: comment (Instance does not exist)
+      if: ${{ ! fromJSON(steps.check_instance.outputs.exists) }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Volume Recreation Results ❌
+
+          Instance **${{ steps.define.outputs.instance_name }}** does not exist. Use `/create` to create both instance and volume.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: instance does not exist (failure)
+      if: ${{ ! fromJSON(steps.check_instance.outputs.exists) }}
+      shell: bash
+      run: |
+        echo "::error ::Instance $INSTANCE_NAME does not exist"
+        exit 1
+      env:
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+    - name: Get instance IP
+      id: get_instance_ip
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        instance_ip=$(openstack server show $INSTANCE_NAME -c addresses -f json | \
+          jq -r '.addresses.auto_allocated_network[-1]')
+        echo "instance_ip=$instance_ip" >> $GITHUB_OUTPUT
+        echo "Instance IP: $instance_ip"
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+    - name: comment (progress)
+      id: couc_progress
+      uses: ./.github/actions/comment-progress
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        create_volume: ⏳
+        attach_volume: ""
+        setup_volume: ""
+
+    - name: Define volume name
+      id: define_volume_name
+      uses: ./.github/actions/define-volume-name
+      with:
+        issue_number: ${{ inputs.issue_number }}
+        suffix: ${{ inputs.volume_name_suffix }}
+
+    - name: Check volume exists
+      id: check_volume
+      uses: ./.github/actions/check-volume-exists
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        volume_name: ${{ steps.define_volume_name.outputs.volume_name }}
+
+    - name: comment (volume already exists)
+      if: ${{ fromJSON(steps.check_volume.outputs.exists) }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Volume Recreation Results ❌
+
+          Volume **${{ steps.define_volume_name.outputs.volume_name }}** already exists. Delete it first with `/delete_volume` before recreating.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: volume already exists (failure)
+      if: ${{ fromJSON(steps.check_volume.outputs.exists) }}
+      shell: bash
+      run: |
+        echo "::error ::Volume $VOLUME_NAME already exists"
+        exit 1
+      env:
+        VOLUME_NAME: ${{ steps.define_volume_name.outputs.volume_name }}
+
+    - name: Create Volume
+      id: create_volume
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        openstack volume create --size 100 "${VOLUME_NAME}"
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        VOLUME_NAME: ${{ steps.define_volume_name.outputs.volume_name }}
+
+    - name: comment (failed to create volume)
+      if: ${{ steps.create_volume.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Volume Recreation Results ❌
+
+          Failed to create volume.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: comment (progress)
+      uses: ./.github/actions/comment-progress
+      with:
+        comment-id: ${{ steps.couc_progress.outputs.comment-id }}
+        create_volume: ✅
+        attach_volume: ⏳
+        setup_volume: ""
+
+    - name: Attach Volume
+      id: attach_volume
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        instance_id=$(openstack server list -f json | \
+          jq \
+          --arg instance_name "$INSTANCE_NAME" \
+          -c '.[] | select(.Name == $instance_name)' | \
+          jq -r '.ID' | tail -1)
+        echo "instance_id [$instance_id]"
+
+        volume_id=$(openstack volume list -f json | \
+          jq \
+          --arg volume_name "$VOLUME_NAME" \
+          -c '.[] | select(.Name == $volume_name)' | \
+          jq -r '.ID' | tail -1)
+        echo "volume_id [$volume_id]"
+
+        openstack server set \
+          --property "exoVolumes::$volume_id={\"name\":\"MyData\"}" \
+          $instance_id
+
+        openstack server add volume \
+          $instance_id \
+          $volume_id
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+        VOLUME_NAME: ${{ steps.define_volume_name.outputs.volume_name }}
+
+    - name: comment (failed to attach volume)
+      if: ${{ steps.attach_volume.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Volume Recreation Results ❌
+
+          Failed to attach volume **${{ steps.define_volume_name.outputs.volume_name }}** to instance **${{ steps.define.outputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: comment (progress)
+      uses: ./.github/actions/comment-progress
+      with:
+        comment-id: ${{ steps.couc_progress.outputs.comment-id }}
+        create_volume: ✅
+        attach_volume: ✅
+        setup_volume: ⏳
+
+    - name: Wait for mount point and setup R environment
+      id: setup_volume
+      shell: bash
+      run: |
+        function check_mountpoint_ready {
+          ssh \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o LogLevel=ERROR \
+            exouser@$INSTANCE_IP \
+            'mountpoint -q /media/volume/MyData'
+        }
+        set +e
+        max_attempts=5
+        for attempt in $(seq 1 $max_attempts); do
+          echo "Checking if mount point is ready ($attempt/$max_attempts)"
+          check_mountpoint_ready
+          if check_mountpoint_ready; then
+            echo "Mount point /media/volume/MyData is ready."
+            break
+          else
+            echo "Mount point not ready. Retrying in 5 seconds..."
+            sleep 5
+          fi
+        done
+        if ! check_mountpoint_ready; then
+          echo "::error ::Mount point /media/volume/MyData not ready after $((max_attempts * 5)) seconds."
+          exit 1
+        fi
+        set -e
+
+        # Create R environment file and directory
+        ssh \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          exouser@$INSTANCE_IP \
+          'echo -e "R_LIBS_SITE=/media/share/MorphoCloudCephShare/R/x86_64-pc-linux-gnu-library/4.4/\nR_LIBS_USER=/media/volume/MyData/R/x86_64-pc-linux-gnu-library/4.4/" > /home/exouser/.Renviron && mkdir -p /media/volume/MyData/R/x86_64-pc-linux-gnu-library/4.4/'
+      env:
+        INSTANCE_IP: ${{ steps.get_instance_ip.outputs.instance_ip }}
+
+    - name: comment (failed to setup volume)
+      if: ${{ steps.setup_volume.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Volume Recreation Results ❌
+
+          Failed to setup volume **${{ steps.define_volume_name.outputs.volume_name }}** for instance **${{ steps.define.outputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Update Request Status Label
+      id: update-request-status-label
+      uses: ./.github/actions/update-request-status-label
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        token: ${{ inputs.token }}
+        instance_name: ${{ steps.define.outputs.instance_name }}
+        issue_number: ${{ inputs.issue_number }}
+
+    - name: comment (failed to update request status label)
+      if:
+        ${{ steps.update-request-status-label.outcome == 'failure' && failure()
+        }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Volume Recreation Results ❌
+
+          Failed to update request status label for instance **${{ steps.define.outputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: comment (progress - completed)
+      uses: ./.github/actions/comment-progress
+      with:
+        comment-id: ${{ steps.couc_progress.outputs.comment-id }}
+        create_volume: ✅
+        attach_volume: ✅
+        setup_volume: ✅
