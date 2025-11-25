@@ -87,7 +87,25 @@ jobs:
                     --body "❌ Failed to delete instance. See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
                   continue
                 fi
-                gh issue edit $issue_number --add-label "volume:expiration-pending"
+
+                # For workshop instances (expiration <= 7 days), delete volume immediately
+                # For regular instances, add volume:expiration-pending label for grace period
+                if [[ "$expiration_days" -le 7 ]]; then
+                  echo "Workshop instance detected. Deleting volume immediately..."
+                  set +e
+                  gh workflow run delete-volume-from-workflow.yml \
+                    -f issue_number=$issue_number \
+                    -f skip_approval_check=true
+                  error_code=$?
+                  set -e
+                  if [[ $error_code -ne 0 ]]; then
+                    echo "::warning ::Failed to run workflow for deleting volume for $instance_name."
+                    gh issue comment "$issue_number" \
+                      --body "❌ Failed to delete volume. See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  fi
+                else
+                  gh issue edit $issue_number --add-label "volume:expiration-pending"
+                fi
 
               elif [[ "$days_until_expiration" -le $EXPIRATION_WARNING_DAYS ]]; then
                 # Skip renewal emails for workshop instances (expiration <= 7 days)
