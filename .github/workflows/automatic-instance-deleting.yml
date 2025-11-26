@@ -90,6 +90,10 @@ jobs:
                     gh issue comment "$issue_number" \
                       --body "❌ Failed to delete volume. See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
                   fi
+
+                  # Wait 2 minutes for volume deletion to complete before deleting instance
+                  echo "Waiting 120 seconds for volume deletion workflow to complete..."
+                  sleep 120
                 fi
 
                 # Delete instance
