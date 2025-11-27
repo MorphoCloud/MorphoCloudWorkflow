@@ -82,7 +82,8 @@ jobs:
                   set +e
                   gh workflow run delete-volume-from-workflow.yml \
                     -f issue_number=$issue_number \
-                    -f skip_approval_check=true
+                    -f skip_approval_check=true \
+                    -f volume_name_suffix=none
                   error_code=$?
                   set -e
                   if [[ $error_code -ne 0 ]]; then
