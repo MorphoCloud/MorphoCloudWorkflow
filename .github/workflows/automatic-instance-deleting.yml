@@ -68,11 +68,15 @@ jobs:
               expiration_days=$(echo "$lifespan_list" | sed -n "$((renewed_count + 1))p")
               expiration_days=${expiration_days:-0}
               expiration_time_epoch=$((created_at_epoch + expiration_days * 86400))
-              days_until_expiration=$(( (expiration_time_epoch - current_time_epoch) / 86400 ))
+              
+              # Calculate time remaining in seconds (not days) for accurate comparison
+              seconds_until_expiration=$((expiration_time_epoch - current_time_epoch))
+              days_until_expiration=$((seconds_until_expiration / 86400))
 
-              echo "Instance: [$instance_name], Created: [$created_at], Lifespan: [$lifespan_days days], Expiration: [$expiration_days days], Days left: [$days_until_expiration]"
+              echo "Instance: [$instance_name], Created: [$created_at], Lifespan: [$lifespan_days days], Expiration: [$expiration_days days], Days left: [$days_until_expiration], Seconds left: [$seconds_until_expiration]"
 
-              if [[ "$days_until_expiration" -le 0 ]]; then
+              # Only delete if expiration time has actually passed (seconds <= 0)
+              if [[ "$seconds_until_expiration" -le 0 ]]; then
                 echo "Instance ${instance_name} has expired. Deleting..."
 
                 # For workshop instances (expiration <= 7 days), delete volume first, then instance
