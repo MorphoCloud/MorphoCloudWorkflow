@@ -37,13 +37,34 @@ jobs:
             while IFS=$'\t' read -r instance_name status task_state; do
               echo "instance_name [$instance_name] status [$status] task_state [$task_state]"
 
-              # Skip the instance if it is not active
-              if [[ "$status" != "ACTIVE" ]]; then
+              # Skip the instance if it is currently undergoing a status update
+              if [[ "$task_state" != "" ]]; then
                 continue
               fi
 
-              # Skip the instance if it is currently undergoing a status update
-              if [[ "$task_state" != "" ]]; then
+              # If instance is SHUTOFF, shelve it immediately
+              if [[ "$status" == "SHUTOFF" ]]; then
+                # Extract the issue number from the instance name
+                issue_number=${instance_name##*-}
+
+                # Validate issue number extraction
+                if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+                  echo "::warning ::Failed to extract valid issue number from instance name [$instance_name]"
+                  continue
+                fi
+
+                echo "Detected SHUTOFF instance [$instance_name] (issue #$issue_number). Shelving immediately to prevent credit usage."
+
+                if ! gh workflow run control-instance-from-workflow.yml \
+                  -f issue_number=$issue_number \
+                  -f command_name=shelve; then
+                  echo "::warning ::Failed to trigger shelve workflow for instance [$instance_name] (issue #$issue_number)"
+                fi
+                continue
+              fi
+
+              # Skip the instance if it is not active
+              if [[ "$status" != "ACTIVE" ]]; then
                 continue
               fi
 
