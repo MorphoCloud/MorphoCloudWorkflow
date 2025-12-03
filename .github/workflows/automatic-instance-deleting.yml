@@ -96,9 +96,20 @@ jobs:
                       --body "❌ Failed to delete volume. See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
                   fi
 
-                  # Wait 2 minutes for volume deletion to complete before deleting instance
-                  echo "Waiting 120 seconds for volume deletion workflow to complete..."
-                  sleep 120
+                  if [[ $error_code -eq 0 ]]; then
+                    # Wait for the workflow run to be registered
+                    sleep 10
+
+                    # Find and watch the triggered run
+                    run_id=$(gh run list --workflow=delete-volume-from-workflow.yml \
+                      --json databaseId,createdAt \
+                      --jq 'sort_by(.createdAt) | reverse | .[0].databaseId')
+
+                    echo "Waiting for volume deletion workflow (run $run_id) to complete..."
+                    if ! gh run watch "$run_id" --exit-status; then
+                      echo "::warning ::Volume deletion workflow failed for $instance_name"
+                    fi
+                  fi
                 fi
 
                 # Delete instance
