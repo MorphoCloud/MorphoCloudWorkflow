@@ -68,7 +68,7 @@ jobs:
               expiration_days=$(echo "$lifespan_list" | sed -n "$((renewed_count + 1))p")
               expiration_days=${expiration_days:-0}
               expiration_time_epoch=$((created_at_epoch + expiration_days * 86400))
-              
+
               # Calculate time remaining in seconds (not days) for accurate comparison
               seconds_until_expiration=$((expiration_time_epoch - current_time_epoch))
               days_until_expiration=$((seconds_until_expiration / 86400))
@@ -83,29 +83,29 @@ jobs:
                 # For regular instances, delete instance and add volume:expiration-pending label for grace period
                 if [[ "$expiration_days" -le 7 ]]; then
                   echo "Workshop instance detected. Deleting volume inline..."
-                  
+
                   # Workshop volumes have no suffix (just "My-Data-NNN")
                   volume_name="My-Data-${issue_number}"
                   echo "Volume name: $volume_name"
-                  
+
                   # Check if volume exists
                   volume_id=$(openstack volume list -f json | \
                     jq --arg volume_name "$volume_name" \
                     -r '.[] | select(.Name == $volume_name) | .ID' | tail -1)
-                  
+
                   if [[ -n "$volume_id" ]]; then
                     echo "Found volume: $volume_id"
-                    
+
                     # Check if volume is attached to instance
                     instance_id=$(openstack server list -f json | \
                       jq --arg instance_name "$instance_name" \
                       -r '.[] | select(.Name == $instance_name) | .ID' | tail -1)
-                    
+
                     if [[ -n "$instance_id" ]]; then
                       is_attached=$(openstack server show "$instance_id" -f json | \
                         jq --arg volume_id "$volume_id" \
                         '[.volumes_attached[]?.id] | index($volume_id) != null')
-                      
+
                       if [[ "$is_attached" == "true" ]]; then
                         echo "Detaching volume from instance..."
                         if ! openstack server remove volume "$instance_id" "$volume_id"; then
@@ -113,7 +113,7 @@ jobs:
                         fi
                       fi
                     fi
-                    
+
                     # Delete the volume
                     echo "Deleting volume..."
                     if openstack volume delete "$volume_id"; then
