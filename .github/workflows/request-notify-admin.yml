@@ -49,7 +49,7 @@ jobs:
           issue_number: ${{ steps.collect_inputs.outputs.issue_number }}
 
       - name: Send mail (approval requested)
-        uses: dawidd6/action-send-mail@6d98ae34d733f9a723a9e04e94f2f24ba05e1402 # v6
+        uses: dawidd6/action-send-mail@6e71c855c9a091d80a519621b9fd3e8d252ca40c # v7
         with:
           server_address: smtp.gmail.com
           server_port: 465
