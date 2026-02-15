@@ -108,7 +108,10 @@ jobs:
 
                     if [[ "$is_attached" == "true" ]]; then
                       echo "Detaching volume from instance..."
-                      if ! openstack server remove volume "$instance_id" "$volume_id"; then
+                      if openstack server remove volume "$instance_id" "$volume_id"; then
+                        echo "Waiting 60 seconds for volume to become available..."
+                        sleep 60
+                      else
                         echo "::warning ::Failed to detach volume $volume_name from $instance_name"
                       fi
                     fi
