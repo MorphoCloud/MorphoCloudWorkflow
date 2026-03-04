@@ -129,13 +129,16 @@ jobs:
               fi
 
               # Derive timeout_hrs from labels like "timeout:24hrs"
-              timeout_hrs="$(
+              if ! timeout_hrs="$(
                 gh issue view "$issue_number" --json labels \
                   --jq '[.labels[].name
                         | select(test("^timeout:[0-9]+hrs$"))
                         | capture(":(?<n>[0-9]+)hrs$").n
                         | tonumber] | max // empty'
-              )"
+              )"; then
+                echo "::warning ::Failed to retrieve labels for issue $issue_number (instance $instance_name). Skipping."
+                continue
+              fi
 
               if [[ -z "$timeout_hrs" ]]; then
                 echo "::warning ::No 'timeout:NNhrs' label found for issue $issue_number (defaulting to 4hrs)"
