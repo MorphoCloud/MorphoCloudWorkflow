@@ -129,6 +129,16 @@ runs:
       env:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
+    - name: Add request:approved label
+      if: ${{ steps.check_auth.outputs.authorized == 'true' }}
+      shell: bash
+      run: |
+        gh issue edit "$ISSUE_NUMBER" --add-label "request:approved"
+      env:
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+
     - name: comment (progress)
       id: couc_progress
       uses: ./.github/actions/comment-progress
