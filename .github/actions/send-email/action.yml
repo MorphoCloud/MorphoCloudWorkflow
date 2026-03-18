@@ -62,7 +62,7 @@ runs:
         secure: true
         username: ${{ inputs.mail_server_username }}
         password: ${{ inputs.mail_server_password }}
-        from: MorphoCloudPortal
+        from: MorphoCloudPortal <morphocloudportal@gmail.com>
         to: ${{ steps.lookup_email.outputs.email }}
         subject:
           "[${{ github.event.repository.name }}] Instance ${{

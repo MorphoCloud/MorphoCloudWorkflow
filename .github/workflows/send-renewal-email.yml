@@ -168,7 +168,7 @@ jobs:
           secure: true
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          from: MorphoCloudPortal
+          from: MorphoCloudPortal <morphocloudportal@gmail.com>
           to: ${{ steps.resolve_email.outputs.email }}
           subject:
             "[${{ github.event.repository.name }}] Instance ${{
@@ -206,7 +206,7 @@ jobs:
           secure: true
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          from: MorphoCloudPortal
+          from: MorphoCloudPortal <morphocloudportal@gmail.com>
           to: ${{ steps.resolve_email.outputs.email }}
           subject:
             "[${{ github.event.repository.name }}] FINAL NOTICE: Instance ${{
