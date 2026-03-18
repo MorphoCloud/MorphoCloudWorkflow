@@ -100,12 +100,4 @@ jobs:
       issue_number: "${{ github.event.issue.number }}"
     secrets: inherit
 
-  call-request-notify-admin:
-    needs: [check-instance-team-membership]
-    if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
-    uses: ./.github/workflows/request-notify-admin.yml
-    with:
-      issue_number: "${{ github.event.issue.number }}"
-    secrets: inherit
+
