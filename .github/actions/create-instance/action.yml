@@ -129,11 +129,19 @@ runs:
       env:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
-    - name: Add request:approved label
+    - name: Add request:approved label and remove stale labels
       if: ${{ steps.check_auth.outputs.authorized == 'true' }}
       shell: bash
       run: |
         gh issue edit "$ISSUE_NUMBER" --add-label "request:approved"
+
+        # Remove stale volume:* and status:* labels left from a previous delete cycle
+        stale_labels=$(gh issue view "$ISSUE_NUMBER" --json labels \
+          --jq '[.labels[].name | select(test("^(volume:|status:)"))] | join(",")')
+        if [[ -n "$stale_labels" ]]; then
+          echo "Removing stale labels: $stale_labels"
+          gh issue edit "$ISSUE_NUMBER" --remove-label "$stale_labels"
+        fi
       env:
         ISSUE_NUMBER: ${{ inputs.issue_number }}
         GH_TOKEN: ${{ inputs.token }}
