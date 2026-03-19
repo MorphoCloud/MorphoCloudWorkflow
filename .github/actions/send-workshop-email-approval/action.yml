@@ -55,6 +55,8 @@ runs:
 
           - To initiate the creation of ${{ steps.extract_workshop.outputs.number_of_instances }} instances expected to be running for ${{ steps.extract_workshop.outputs.duration_days }} days, comment `/create` on the issue.
 
+          > **Tip:** We recommend running `/create` approximately **24 hours before your workshop begins** to ensure all instances are ready in time.
+
           _Only one command should be used per comment._
 
           If you have questions, please contact [morphocloud@outlook.com](mailto:morphocloud@outlook.com).

@@ -113,4 +113,4 @@ jobs:
           body: |
             ### Validation Results
 
-            ✅ Workshop request validated. An administrator will review your request and notify you by email once it has been approved.
+            ✅ Workshop request validated. An administrator will review your request. You will **automatically receive an email** once it has been approved — no further action is needed until then.
