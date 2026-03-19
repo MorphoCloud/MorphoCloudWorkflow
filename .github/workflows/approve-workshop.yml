@@ -128,7 +128,7 @@ jobs:
         uses: ./.github/actions/send-workshop-email-approval
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
+          email_lookup_url: ${{ vars.MORPHOCLOUD_WORKSHOP_EMAIL_LOOKUP_URL }}
           mail_server_username: ${{secrets.MAIL_USERNAME}}
           mail_server_password: ${{secrets.MAIL_PASSWORD}}
           workshop_issue_number: ${{ github.event.issue.number }}
