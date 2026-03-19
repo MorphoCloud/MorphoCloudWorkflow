@@ -33,6 +33,7 @@ on:
         default: false
 permissions:
   issues: write
+  contents: read
   checks: read
 
 jobs:
