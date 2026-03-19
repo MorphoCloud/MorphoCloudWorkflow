@@ -7,11 +7,21 @@ on:
         description: "Issue number"
         required: true
         type: number
+      skip_preamble:
+        description: "Skip validation comment and initial commands (for workshop sub-issues)"
+        required: false
+        default: 'false'
+        type: string
   workflow_call:
     inputs:
       issue_number:
         description: "Issue number"
         required: true
+        type: string
+      skip_preamble:
+        description: "Skip validation comment and initial commands (for workshop sub-issues)"
+        required: false
+        default: 'false'
         type: string
 
 permissions:
@@ -21,18 +31,21 @@ permissions:
 
 jobs:
   call-validate-request:
+    if: ${{ inputs.skip_preamble != 'true' }}
     uses: ./.github/workflows/validate-request.yml
     with:
       issue_number: "${{ inputs.issue_number }}"
     secrets: inherit
 
   call-request-labeler:
+    if: ${{ inputs.skip_preamble != 'true' }}
     uses: ./.github/workflows/request-labeler.yml
     with:
       issue_number: "${{ inputs.issue_number }}"
     secrets: inherit
 
   call-request-initial-comments:
+    if: ${{ inputs.skip_preamble != 'true' }}
     uses: ./.github/workflows/request-initial-comments.yml
     with:
       issue_number: "${{ inputs.issue_number }}"
@@ -44,6 +57,7 @@ jobs:
       - call-validate-request
       - call-request-labeler
       - call-request-initial-comments
+    if: ${{ !failure() && !cancelled() }}
     steps:
       - uses: actions/checkout@v6
 
