@@ -52,25 +52,4 @@ body:
     validations:
       required: true
 
-  - type: input
-    attributes:
-      label: ORCID
-      description: Enter your ORCID iD for identification purposes.
-      placeholder: 0000-0000-0000-0000
-    validations:
-      required: true
 
-  - type: input
-    attributes:
-      label: Email
-      description: Primary email address of the workshop organizer.
-    validations:
-      required: true
-
-  - type: input
-    attributes:
-      label: Confirm Email
-      description:
-        Re-enter the organizer email address to confirm it is correct.
-    validations:
-      required: true
