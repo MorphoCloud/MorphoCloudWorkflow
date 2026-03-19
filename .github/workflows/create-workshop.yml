@@ -178,7 +178,8 @@ jobs:
                 -f "labels[]=request:approved" \
                 -f "labels[]=flavor:$INSTANCE_FLAVOR" \
                 -f "labels[]=$timeout_label" \
-                -f "labels[]=$expiration_label"
+                -f "labels[]=$expiration_label" \
+                -f "assignees[]=$ORGANIZER_USERNAME"
             )
 
             instance_issue_number=$(echo "$instance_issue_json" | jq -r '.number')
@@ -243,3 +244,4 @@ jobs:
           NUMBER_OF_INSTANCES:
             ${{ steps.extract_workshop.outputs.number_of_instances }}
           DURATION_DAYS: ${{ steps.extract_workshop.outputs.duration_days }}
+          ORGANIZER_USERNAME: ${{ github.event.issue.user.login }}
