@@ -42,13 +42,28 @@ body:
     validations:
       required: true
 
+  - type: input
+    attributes:
+      label: Workshop Date(s)
+      description: Start date (and end date if multi-day) of the workshop.
+      placeholder: "e.g., April 15, 2026 or April 15–17, 2026"
+    validations:
+      required: true
+
   - type: textarea
     attributes:
       label: Description
-      description:
-        Describe the workshop content, target audience, and your usage needs for
-        the instances. Approval of the request is contingent upon a valid use
-        case in the domain of 3D digital morphology.
+      description: >
+        Provide details about your workshop. Approval is contingent upon a valid
+        use case in the domain of 3D digital morphology.
+      value: |
+        **Workshop name:** 
+
+        **Target audience:** 
+
+        **Workshop content / goals:** 
+
+        **Software / data to be used:** 
     validations:
       required: true
 

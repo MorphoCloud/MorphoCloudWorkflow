@@ -59,10 +59,10 @@ runs:
 
           _Only one command should be used per comment._
 
-          If you have questions, please contact [morphocloud@outlook.com](mailto:morphocloud@outlook.com).
+          If you have questions, please contact [morphocloudportal@gmail.com](mailto:morphocloudportal@gmail.com).
 
           **Supported Issue Commands:**
 
           _The following commands can be added as comments to issue [${{ github.repository }}#${{ inputs.workshop_issue_number }}](https://github.com/${{ github.repository }}/issues/${{ inputs.workshop_issue_number }}):_
 
-          - `/create`: Initiate the **${{ steps.extract_workshop.outputs.number_of_instances }}** workshop instances
+          - `/create`: Initiate the workshop instances
