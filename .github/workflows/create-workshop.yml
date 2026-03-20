@@ -175,6 +175,7 @@ jobs:
                 -f "title=$issue_title" \
                 -f "body=$issue_body" \
                 -f "labels[]=request-type:instance" \
+                -f "labels[]=instance-request" \
                 -f "labels[]=request:approved" \
                 -f "labels[]=flavor:$INSTANCE_FLAVOR" \
                 -f "labels[]=$timeout_label" \

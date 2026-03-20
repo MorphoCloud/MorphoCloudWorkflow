@@ -4,6 +4,7 @@ title: "Instance: "
 labels:
   - request-type:instance
   - request-creator:user
+  - instance-request
 
 body:
   - type: markdown

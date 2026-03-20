@@ -158,4 +158,127 @@ jobs:
       issue_number: "${{ github.event.issue.number }}"
     secrets: inherit
 
+  # ── Course instance ──────────────────────────────────────────────────────────
+
+  check-course-team-membership:
+    runs-on: ubuntu-latest
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/create-github-app-token@v2.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Extract course team slug
+        id: course_meta
+        shell: bash
+        run: |
+          body=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body')
+          team_slug=$(printf '%s\n' "$body" | \
+            awk '/^### Course Team Slug/{found=1; next} found && /[^[:space:]]/{print; found=0}' | \
+            xargs)
+          echo "team_slug=$team_slug" >> $GITHUB_OUTPUT
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Check course team membership
+        id: check_membership
+        uses: ./.github/actions/check-team-membership
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: ${{ steps.course_meta.outputs.team_slug }}
+          username: ${{ github.event.issue.user.login }}
+
+      - name: Reject non-member
+        if: ${{ steps.check_membership.outputs.is_member != 'true' }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "### Authorization Failed ❌
+
+          @$ISSUE_CREATOR is not a member of course team **$TEAM_SLUG**.
+
+          Please contact your instructor to be added to the course team before creating an instance.
+
+          This issue will be closed."
+
+          gh issue close "$ISSUE_NUMBER"
+          gh issue edit "$ISSUE_NUMBER" --add-label "error:not-authorized"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          TEAM_SLUG: ${{ steps.course_meta.outputs.team_slug }}
+
+      - name: Fail if not authorized
+        if: ${{ steps.check_membership.outputs.is_member != 'true' }}
+        run: |
+          echo "::error ::User ${{ github.event.issue.user.login }} is not a member of course team ${{ steps.course_meta.outputs.team_slug }}"
+          exit 1
+
+      - name: Set course expiration label from team description
+        if: ${{ steps.check_membership.outputs.is_member == 'true' }}
+        shell: bash
+        run: |
+          description=$(gh api "/orgs/$ORG/teams/$TEAM_SLUG" \
+            -H "Authorization: Bearer $APP_TOKEN" \
+            --jq '.description // ""')
+          duration=$(printf '%s\n' "$description" | grep -oE 'duration:[0-9]+d' | head -1)
+          if [[ -n "$duration" ]]; then
+            expiration_label="expiration:${duration#duration:}"
+            gh label create "$expiration_label" \
+              --color "892368" \
+              --description "Instance expires in ${duration#duration:} (24h grace after shelving)" \
+              --force >/dev/null 2>&1 || true
+            gh issue edit "$ISSUE_NUMBER" --add-label "$expiration_label"
+            echo "Set expiration label: $expiration_label"
+          else
+            echo "::warning ::No duration:<N>d found in team description for $TEAM_SLUG; using default expiration labels"
+          fi
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          ORG: ${{ github.repository_owner }}
+          TEAM_SLUG: ${{ steps.course_meta.outputs.team_slug }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+  call-validate-request-course:
+    needs: [check-course-team-membership]
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    uses: ./.github/workflows/validate-request.yml
+    with:
+      issue_number: "${{ github.event.issue.number }}"
+    secrets: inherit
+
+  call-request-labeler-course:
+    needs: [check-course-team-membership]
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    uses: ./.github/workflows/request-labeler.yml
+    with:
+      issue_number: "${{ github.event.issue.number }}"
+    secrets: inherit
+
+  call-request-initial-comments-course:
+    needs: [check-course-team-membership]
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    uses: ./.github/workflows/request-initial-comments.yml
+    with:
+      issue_number: "${{ github.event.issue.number }}"
+      commands_md_path: "course-issue-commands.md"
+    secrets: inherit
+
 
