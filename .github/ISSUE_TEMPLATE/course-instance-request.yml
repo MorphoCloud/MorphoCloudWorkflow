@@ -34,11 +34,3 @@ body:
     validations:
       required: true
 
-  - type: textarea
-    attributes:
-      label: Description
-      description: >
-        Briefly describe the course and how you plan to use the instance
-        (e.g., "MorphoCloud Spring 2025 — 3D morphometrics workshop using SlicerMorph").
-    validations:
-      required: true
