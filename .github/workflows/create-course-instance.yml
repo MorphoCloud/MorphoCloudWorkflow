@@ -107,6 +107,7 @@ jobs:
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
           issue_creator: ${{ github.event.issue.user.login }}
           mail_server_username: ${{ secrets.MAIL_USERNAME }}
           mail_server_password: ${{ secrets.MAIL_PASSWORD }}
