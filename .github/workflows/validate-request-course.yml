@@ -1,0 +1,36 @@
+name: Validate Course Instance Request
+
+on:
+  workflow_call:
+    inputs:
+      issue_number:
+        description: "Issue number"
+        required: true
+        type: string
+
+# Permissions needed for posting comments on issues
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find existing validation comment
+        uses: peter-evans/find-comment@v4
+        id: fc
+        with:
+          issue-number: ${{ inputs.issue_number }}
+          body-includes: "### Validation Results"
+
+      - name: Post validation success comment
+        uses: peter-evans/create-or-update-comment@v5.0.0
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          issue-number: ${{ inputs.issue_number }}
+          edit-mode: replace
+          body: |
+            ### Validation Results
+
+            ✅ Course instance request validated. You may now use `/create` to provision your instance.

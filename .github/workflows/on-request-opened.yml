@@ -266,17 +266,7 @@ jobs:
     if:
       ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
-    uses: ./.github/workflows/validate-request.yml
-    with:
-      issue_number: "${{ github.event.issue.number }}"
-    secrets: inherit
-
-  call-request-labeler-course:
-    needs: [check-course-team-membership]
-    if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
-    uses: ./.github/workflows/request-labeler.yml
+    uses: ./.github/workflows/validate-request-course.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
     secrets: inherit
