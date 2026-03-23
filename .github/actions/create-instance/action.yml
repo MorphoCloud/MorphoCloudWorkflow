@@ -671,6 +671,7 @@ runs:
           exouser@$INSTANCE_IP \
           'bash -s' << 'EOF'
         VOLUME_HOME=/media/volume/MyData/home/exouser
+        set -e
         sudo mkdir -p "$(dirname "$VOLUME_HOME")"
         sudo chown exouser:exouser "$(dirname "$VOLUME_HOME")"
 
