@@ -196,7 +196,9 @@ jobs:
             **⏳ Time is running out! Back up your data now!**
 
       - name: command results comment (failed)
-        if: ${{ (steps.send_email_renewable.outcome == 'failure' || steps.send_email_final.outcome == 'failure') && failure() }}
+        if:
+          ${{ (steps.send_email_renewable.outcome == 'failure' ||
+          steps.send_email_final.outcome == 'failure') && failure() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           issue-number: ${{ inputs.issue_number }}
@@ -206,7 +208,9 @@ jobs:
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: command results comment (success)
-        if: ${{ (steps.send_email_renewable.outcome == 'success' || steps.send_email_final.outcome == 'success') && success() }}
+        if:
+          ${{ (steps.send_email_renewable.outcome == 'success' ||
+          steps.send_email_final.outcome == 'success') && success() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           issue-number: ${{ inputs.issue_number }}
