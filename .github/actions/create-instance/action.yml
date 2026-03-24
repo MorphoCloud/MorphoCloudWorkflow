@@ -673,6 +673,15 @@ runs:
         sudo chmod 700 "$VOLUME_HOME/.ssh"
         sudo chmod 600 "$VOLUME_HOME/.ssh/authorized_keys"
 
+        # Always refresh VNC password from cloud-init (new password generated each provision).
+        # Without this the volume retains the old password and VNC/Guacamole auth fails.
+        if [ -f /home/exouser/.vnc/passwd ]; then
+          sudo mkdir -p "$VOLUME_HOME/.vnc"
+          sudo cp /home/exouser/.vnc/passwd "$VOLUME_HOME/.vnc/passwd"
+          sudo chown exouser:exouser "$VOLUME_HOME/.vnc/passwd"
+          sudo chmod 600 "$VOLUME_HOME/.vnc/passwd"
+        fi
+
         # Redirect ~/.cache to the ephemeral root disk so browser/app caches
         # don't consume the user's persistent volume quota.
         sudo mkdir -p /var/cache/exouser
