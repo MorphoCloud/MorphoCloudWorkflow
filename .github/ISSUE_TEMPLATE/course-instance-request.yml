@@ -1,6 +1,6 @@
 name: Course Instance Request
 description: Issue template to request a cloud instance for a MorphoCloud course or class.
-title: "Course Instance: "
+title: "Course Instance Request"
 labels:
   - request-type:course-instance
   - request-creator:user
@@ -10,7 +10,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        _Enter your full name in the title bar above (e.g., "Course Instance: Jane Doe")._
+        _The title will be automatically replaced with a standard identifier when your request is processed. Avoid including personal information in the title._
 
   - type: input
     id: course-team-slug
