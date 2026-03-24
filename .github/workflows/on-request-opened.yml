@@ -45,3 +45,43 @@ jobs:
     with:
       issue_number: "${{ github.event.issue.number }}"
     secrets: inherit
+
+  rename-issue:
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rename issue with canonical title
+        run: |
+          set -euo pipefail
+
+          # Collect all course labels (morphocloud-course-*)
+          COURSE_LABELS=$(echo '${{ toJSON(github.event.issue.labels.*.name) }}' | \
+            jq -r '.[] | select(startswith("morphocloud-course-"))')
+          COURSE_LABEL_COUNT=$(echo "$COURSE_LABELS" | grep -c . || true)
+
+          if [[ "$COURSE_LABEL_COUNT" -gt 1 ]]; then
+            echo "::warning ::Issue #${ISSUE_NUMBER} has ${COURSE_LABEL_COUNT} course labels — expected at most one. Using the first match."
+          fi
+
+          COURSE_LABEL=$(echo "$COURSE_LABELS" | head -n1)
+
+          if [[ -n "$COURSE_LABEL" ]]; then
+            # Strip the morphocloud-course- prefix for readability
+            COURSE_SLUG="${COURSE_LABEL#morphocloud-course-}"
+            # Validate slug contains only alphanumeric characters and hyphens
+            if [[ ! "$COURSE_SLUG" =~ ^[a-zA-Z0-9-]+$ ]]; then
+              echo "::error ::Course slug '${COURSE_SLUG}' contains unexpected characters. Expected only alphanumeric characters and hyphens."
+              exit 1
+            fi
+            NEW_TITLE="MC-Course-${COURSE_SLUG}-${ISSUE_NUMBER}"
+          else
+            NEW_TITLE="MC-Individual-${ISSUE_NUMBER}"
+          fi
+
+          gh issue edit "$ISSUE_NUMBER" --title "$NEW_TITLE"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}

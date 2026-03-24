@@ -175,6 +175,10 @@ jobs:
             instance_issue_number=$(echo "$instance_issue_json" | jq -r '.number')
             instance_issue_id=$(echo "$instance_issue_json" | jq -r '.id')
 
+            # Rename instance issue with canonical title
+            gh issue edit "$instance_issue_number" \
+              --title "MC-Workshop-${ISSUE_NUMBER}-${instance_issue_number}"
+
             requested_instance_issues+=("$instance_issue_number")
 
             # Get current total before adding
