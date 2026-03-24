@@ -1,5 +1,6 @@
 name: Course Instance Request
-description: Issue template to request a cloud instance for a MorphoCloud course or class.
+description:
+  Issue template to request a cloud instance for a MorphoCloud course or class.
 title: "Course Instance: "
 labels:
   - request-type:course-instance
@@ -17,8 +18,7 @@ body:
     attributes:
       label: Course Team Slug
       description: >
-        The GitHub team slug for your course (provided by your instructor, e.g., `morpho-course-spring-2025`).
+        The GitHub team slug for your course (provided by your instructor, e.g.,
+        `morpho-course-spring-2025`).
     validations:
       required: true
-
-

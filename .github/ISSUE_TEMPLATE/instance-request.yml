@@ -31,8 +31,8 @@ body:
       description:
         Briefly describe what your project is, your usage needs and how you will
         be using the instance. E.g., "I am PhD candidate in XYZ University
-        working on 3D morphometrics of fossil bryozoans. I have microCT scans
-        of 100s specimens, and would like to use SlicerMorph to segment and
-        extract models"._
+        working on 3D morphometrics of fossil bryozoans. I have microCT scans of
+        100s specimens, and would like to use SlicerMorph to segment and extract
+        models"._
     validations:
       required: true

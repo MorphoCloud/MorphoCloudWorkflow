@@ -57,14 +57,12 @@ body:
         Provide details about your workshop. Approval is contingent upon a valid
         use case in the domain of 3D digital morphology.
       value: |
-        **Workshop name:** 
+        **Workshop name:**
 
-        **Target audience:** 
+        **Target audience:**
 
-        **Workshop content / goals:** 
+        **Workshop content / goals:**
 
-        **Software / data to be used:** 
+        **Software / data to be used:**
     validations:
       required: true
-
-

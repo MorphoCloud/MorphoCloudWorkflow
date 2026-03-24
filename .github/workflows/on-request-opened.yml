@@ -223,7 +223,8 @@ jobs:
   check-course-team-membership:
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      ${{ contains(github.event.issue.labels.*.name,
+      'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - uses: actions/checkout@v6
@@ -325,7 +326,8 @@ jobs:
     needs: [check-course-team-membership]
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      ${{ contains(github.event.issue.labels.*.name,
+      'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - name: Check per-user course instance quota
@@ -379,12 +381,14 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_CREATOR: ${{ github.event.issue.user.login }}
           ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
-          MAX_COURSE_PER_USER: ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
+          MAX_COURSE_PER_USER:
+            ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
 
   call-validate-request-course:
     needs: [check-course-team-membership, check-course-instance-quota]
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      ${{ contains(github.event.issue.labels.*.name,
+      'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/validate-request-course.yml
     with:
@@ -394,12 +398,11 @@ jobs:
   call-request-initial-comments-course:
     needs: [check-course-team-membership, check-course-instance-quota]
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      ${{ contains(github.event.issue.labels.*.name,
+      'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/request-initial-comments.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
       commands_md_path: "course-issue-commands.md"
     secrets: inherit
-
-

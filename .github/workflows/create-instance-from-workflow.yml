@@ -8,9 +8,11 @@ on:
         required: true
         type: number
       skip_preamble:
-        description: "Skip validation comment and initial commands (for workshop sub-issues)"
+        description:
+          "Skip validation comment and initial commands (for workshop
+          sub-issues)"
         required: false
-        default: 'false'
+        default: "false"
         type: string
   workflow_call:
     inputs:
@@ -19,9 +21,11 @@ on:
         required: true
         type: string
       skip_preamble:
-        description: "Skip validation comment and initial commands (for workshop sub-issues)"
+        description:
+          "Skip validation comment and initial commands (for workshop
+          sub-issues)"
         required: false
-        default: 'false'
+        default: "false"
         type: string
 
 permissions:

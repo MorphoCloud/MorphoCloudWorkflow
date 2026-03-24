@@ -1,5 +1,7 @@
 name: "Send course instance credentials via email"
-description: "Send instance connection details to a course student via verified email from intake sheet"
+description:
+  "Send instance connection details to a course student via verified email from
+  intake sheet"
 inputs:
   os_cloud:
     description:
@@ -122,4 +124,3 @@ runs:
         INSTANCE_METADATA_OUTCOME: ${{ steps.instance_metadata.outcome }}
         LOOKUP_EMAIL_OUTCOME: ${{ steps.lookup_email.outcome }}
         GUACAMOLE_OUTCOME: ${{ steps.guacamole.outcome }}
-

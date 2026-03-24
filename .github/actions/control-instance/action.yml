@@ -26,7 +26,8 @@ inputs:
     description: "Encryption key to encode and decode the email address"
     required: true
   email_lookup_url:
-    description: "URL of the Apps Script web app for email lookup (individual and course)"
+    description:
+      "URL of the Apps Script web app for email lookup (individual and course)"
     required: true
   mail_server_username:
     description: "mail server username"
@@ -597,7 +598,10 @@ runs:
         instance_issue_number: ${{ inputs.issue_number }}
 
     - name: comment (failed to send email)
-      if: ${{ (steps.send_email.outcome == 'failure' || steps.send_workshop_email.outcome == 'failure' || steps.send_course_email.outcome == 'failure') && failure() }}
+      if:
+        ${{ (steps.send_email.outcome == 'failure' ||
+        steps.send_workshop_email.outcome == 'failure' ||
+        steps.send_course_email.outcome == 'failure') && failure() }}
       uses: peter-evans/create-or-update-comment@v4.0.0
       with:
         issue-number: ${{ inputs.issue_number }}

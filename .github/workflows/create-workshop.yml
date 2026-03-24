@@ -240,7 +240,8 @@ jobs:
           REQUEST_DESCRIPTION: ${{ steps.extract.outputs.description }}
           INSTANCE_FLAVOR: ${{ steps.extract.outputs.instance_flavor }}
           WORKSHOP_EMAIL: ${{ steps.lookup_organizer_email.outputs.email }}
-          WORKSHOP_CONFIRM_EMAIL: ${{ steps.lookup_organizer_email.outputs.email }}
+          WORKSHOP_CONFIRM_EMAIL:
+            ${{ steps.lookup_organizer_email.outputs.email }}
           # Workshop specific fields
           NUMBER_OF_INSTANCES:
             ${{ steps.extract_workshop.outputs.number_of_instances }}

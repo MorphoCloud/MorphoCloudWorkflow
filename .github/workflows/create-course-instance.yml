@@ -9,8 +9,8 @@ jobs:
     runs-on: self-hosted
     if:
       ${{ !github.event.issue.pull_request &&
-      contains(github.event.issue.labels.*.name, 'request-type:course-instance') && (
-      contains(github.event.comment.body, '/create') ) }}
+      contains(github.event.issue.labels.*.name, 'request-type:course-instance')
+      && ( contains(github.event.comment.body, '/create') ) }}
     steps:
       - name: create command
         id: create_command
@@ -164,7 +164,8 @@ jobs:
           ISSUE_CREATOR: ${{ github.event.issue.user.login }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
-          MAX_COURSE_PER_USER: ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
+          MAX_COURSE_PER_USER:
+            ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
           MAX_TOTAL: ${{ vars.MORPHOCLOUD_MAX_TOTAL_INSTANCES }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}

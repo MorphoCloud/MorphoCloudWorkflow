@@ -15,7 +15,8 @@ inputs:
     required: true
 outputs:
   is_member:
-    description: "Set to 'true' if the user is an active member, 'false' otherwise"
+    description:
+      "Set to 'true' if the user is an active member, 'false' otherwise"
     value: ${{ steps.check.outputs.is_member }}
 runs:
   using: "composite"
