@@ -10,16 +10,196 @@ permissions:
   checks: read
 
 jobs:
-  call-validate-request:
-    # This applies to both "request-type:instance" and "request-type:workshop"
+  check-instance-team-membership:
+    runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/create-github-app-token@v2.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Check MorphoCloudUsers team membership
+        id: check_membership
+        uses: ./.github/actions/check-team-membership
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: ${{ vars.MORPHOCLOUD_USERS_TEAM_SLUG }}
+          username: ${{ github.event.issue.user.login }}
+
+      - name: Reject non-member
+        if: ${{ steps.check_membership.outputs.is_member != 'true' }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "### Authorization Failed ❌
+
+          @$ISSUE_CREATOR is not a member of the **$TEAM_SLUG** team.
+
+          To request an instance, please complete the [MorphoCloud intake form](https://forms.gle/morphocloud-intake) first and accept the GitHub organization invitation.
+
+          This issue will be closed."
+
+          gh issue close "$ISSUE_NUMBER"
+          gh issue edit "$ISSUE_NUMBER" --add-label "error:not-authorized"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          TEAM_SLUG: ${{ vars.MORPHOCLOUD_USERS_TEAM_SLUG }}
+
+      - name: Fail if not authorized
+        if: ${{ steps.check_membership.outputs.is_member != 'true' }}
+        run: |
+          echo "::error ::User ${{ github.event.issue.user.login }} is not a member of ${{ vars.MORPHOCLOUD_USERS_TEAM_SLUG }}"
+          exit 1
+
+  check-instance-quota:
+    needs: [check-instance-team-membership]
+    runs-on: ubuntu-latest
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    steps:
+      - name: Check per-user instance quota
+        run: |
+          MAX_PER_USER="${MAX_PER_USER:-2}"
+          # Admin bypass
+          if echo ",$ADMINS," | grep -q ",$ISSUE_CREATOR,"; then
+            echo "Admin $ISSUE_CREATOR — skipping quota check."
+            exit 0
+          fi
+
+          # Count previously-approved open instances for this user.
+          # Exclude issues that have been fully cleaned up (status:deleted + volume:deleted/expiration-pending).
+          # (Current issue won't have request:approved yet so it is not counted here.)
+          ISSUES_JSON=$(gh issue list \
+            --author "$ISSUE_CREATOR" \
+            --label "request-type:instance" \
+            --label "request:approved" \
+            --state open \
+            --limit 100 \
+            --json number,labels)
+
+          ACTIVE_ISSUES=$(echo "$ISSUES_JSON" | jq '[.[] | select(
+            ((.labels | map(.name) | index("status:deleted")) != null and
+             ((.labels | map(.name) | index("volume:deleted")) != null or
+              (.labels | map(.name) | index("volume:expiration-pending")) != null))
+            | not
+          )]')
+          USER_COUNT=$(echo "$ACTIVE_ISSUES" | jq 'length')
+          echo "User $ISSUE_CREATOR has $USER_COUNT approved open instance(s) (limit: $MAX_PER_USER)."
+
+          if [[ "$USER_COUNT" -ge "$MAX_PER_USER" ]]; then
+            ISSUE_LINKS=$(echo "$ACTIVE_ISSUES" | jq -r '[.[] | "#\(.number)"] | join(", ")')
+            gh issue comment "$ISSUE_NUMBER" --body "### Instance Request Rejected ❌
+
+          @${ISSUE_CREATOR} already has **${USER_COUNT}** active instance(s), which is at the per-user limit of **${MAX_PER_USER}**.
+
+          Existing instance(s): ${ISSUE_LINKS}
+
+          Go to one of these issues and type \`/delete_all\` to free your quota before requesting a new one.
+
+          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
+            gh issue close "$ISSUE_NUMBER"
+            gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
+            echo "::error ::User $ISSUE_CREATOR has $USER_COUNT approved instances (limit: $MAX_PER_USER)"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
+          MAX_PER_USER: ${{ vars.MORPHOCLOUD_MAX_INSTANCES_PER_USER }}
+
+  call-validate-request:
+    needs: [check-instance-team-membership, check-instance-quota]
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/validate-request.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
     secrets: inherit
 
+  check-workshop-organizer-membership:
+    runs-on: ubuntu-latest
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/create-github-app-token@v2.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Check MorphoCloudWorkshopOrganizers team membership
+        id: check_membership
+        uses: ./.github/actions/check-team-membership
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: ${{ vars.MORPHOCLOUD_WORKSHOP_ORGANIZERS_TEAM_SLUG }}
+          username: ${{ github.event.issue.user.login }}
+
+      - name: Reject non-member
+        if: ${{ steps.check_membership.outputs.is_member != 'true' }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "### Authorization Failed ❌
+
+          @$ISSUE_CREATOR is not a member of the **$TEAM_SLUG** team.
+
+          To request a workshop, please complete the [MorphoCloud workshop organizer intake form](https://forms.gle/morphocloud-workshop-intake) first and accept the GitHub organization invitation.
+
+          This issue will be closed."
+
+          gh issue close "$ISSUE_NUMBER"
+          gh issue edit "$ISSUE_NUMBER" --add-label "error:not-authorized"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          TEAM_SLUG: ${{ vars.MORPHOCLOUD_WORKSHOP_ORGANIZERS_TEAM_SLUG }}
+
+      - name: Fail if not authorized
+        if: ${{ steps.check_membership.outputs.is_member != 'true' }}
+        run: |
+          echo "::error ::User ${{ github.event.issue.user.login }} is not a member of ${{ vars.MORPHOCLOUD_WORKSHOP_ORGANIZERS_TEAM_SLUG }}"
+          exit 1
+
+  call-validate-request-workshop:
+    needs: [check-workshop-organizer-membership]
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    uses: ./.github/workflows/validate-request.yml
+    with:
+      issue_number: "${{ github.event.issue.number }}"
+    secrets: inherit
+
+  call-request-notify-admin-workshop:
+    needs: [check-workshop-organizer-membership]
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    uses: ./.github/workflows/request-notify-admin-workshop.yml
+    with:
+      issue_number: "${{ github.event.issue.number }}"
+    secrets: inherit
+
   call-request-labeler:
+    needs: [check-instance-team-membership, check-instance-quota]
     if:
       ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
@@ -29,6 +209,7 @@ jobs:
     secrets: inherit
 
   call-request-initial-comments:
+    needs: [check-instance-team-membership, check-instance-quota]
     if:
       ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
@@ -37,51 +218,240 @@ jobs:
       issue_number: "${{ github.event.issue.number }}"
     secrets: inherit
 
-  call-request-notify-admin:
+  # ── Course instance ──────────────────────────────────────────────────────────
+
+  check-course-team-membership:
+    runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
-    uses: ./.github/workflows/request-notify-admin.yml
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/create-github-app-token@v2.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Extract course team slug
+        id: course_meta
+        shell: bash
+        run: |
+          body=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body')
+          team_slug=$(printf '%s\n' "$body" | \
+            awk '/^### Course Team Slug/{found=1; next} found && /[^[:space:]]/{print; found=0}' | \
+            xargs)
+          echo "team_slug=$team_slug" >> $GITHUB_OUTPUT
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Check course team membership
+        id: check_membership
+        uses: ./.github/actions/check-team-membership
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: ${{ steps.course_meta.outputs.team_slug }}
+          username: ${{ github.event.issue.user.login }}
+
+      - name: Reject non-member
+        if: ${{ steps.check_membership.outputs.is_member != 'true' }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "### Authorization Failed ❌
+
+          @$ISSUE_CREATOR is not a member of course team **$TEAM_SLUG**.
+
+          Please contact your instructor to be added to the course team before creating an instance.
+
+          This issue will be closed."
+
+          gh issue close "$ISSUE_NUMBER"
+          gh issue edit "$ISSUE_NUMBER" --add-label "error:not-authorized"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          TEAM_SLUG: ${{ steps.course_meta.outputs.team_slug }}
+
+      - name: Fail if not authorized
+        if: ${{ steps.check_membership.outputs.is_member != 'true' }}
+        run: |
+          echo "::error ::User ${{ github.event.issue.user.login }} is not a member of course team ${{ steps.course_meta.outputs.team_slug }}"
+          exit 1
+
+      - name: Set course expiration and flavor labels from team description
+        if: ${{ steps.check_membership.outputs.is_member == 'true' }}
+        shell: bash
+        run: |
+          description=$(gh api "/orgs/$ORG/teams/$TEAM_SLUG" \
+            -H "Authorization: Bearer $APP_TOKEN" \
+            --jq '.description // ""')
+
+          duration=$(printf '%s\n' "$description" | grep -oE 'duration:[0-9]+d' | head -1)
+          if [[ -n "$duration" ]]; then
+            expiration_label="expiration:${duration#duration:}"
+            gh label create "$expiration_label" \
+              --color "892368" \
+              --description "Instance expires in ${duration#duration:} (24h grace after shelving)" \
+              --force >/dev/null 2>&1 || true
+            gh issue edit "$ISSUE_NUMBER" --add-label "$expiration_label"
+            echo "Set expiration label: $expiration_label"
+          else
+            echo "::warning ::No duration:<N>d found in team description for $TEAM_SLUG; using default expiration labels"
+          fi
+
+          # flavor value in team description is the full form option string, e.g.
+          # "flavor:g4.xl - GPU instance ..."; stop at space or | to get the short name.
+          flavor=$(printf '%s\n' "$description" | grep -oE 'flavor:[^ |]+' | head -1)
+          if [[ -n "$flavor" ]]; then
+            gh issue edit "$ISSUE_NUMBER" --add-label "$flavor"
+            echo "Set flavor label: $flavor"
+          else
+            echo "::warning ::No flavor:<f> found in team description for $TEAM_SLUG; no flavor label applied"
+          fi
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          ORG: ${{ github.repository_owner }}
+          TEAM_SLUG: ${{ steps.course_meta.outputs.team_slug }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+  check-course-instance-quota:
+    needs: [check-course-team-membership]
+    runs-on: ubuntu-latest
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    steps:
+      - name: Check per-user course instance quota
+        run: |
+          MAX_COURSE_PER_USER="${MAX_COURSE_PER_USER:-1}"
+          # Admin bypass
+          if echo ",$ADMINS," | grep -q ",$ISSUE_CREATOR,"; then
+            echo "Admin $ISSUE_CREATOR — skipping quota check."
+            exit 0
+          fi
+
+          # Count previously-approved open course instances for this user.
+          # Exclude issues that have been fully cleaned up (status:deleted + volume:deleted/expiration-pending).
+          # (Current issue won't have request:approved yet so it is not counted here.)
+          ISSUES_JSON=$(gh issue list \
+            --author "$ISSUE_CREATOR" \
+            --label "request-type:course-instance" \
+            --label "request:approved" \
+            --state open \
+            --limit 100 \
+            --json number,labels)
+
+          ACTIVE_ISSUES=$(echo "$ISSUES_JSON" | jq '[.[] | select(
+            ((.labels | map(.name) | index("status:deleted")) != null and
+             ((.labels | map(.name) | index("volume:deleted")) != null or
+              (.labels | map(.name) | index("volume:expiration-pending")) != null))
+            | not
+          )]')
+          USER_COUNT=$(echo "$ACTIVE_ISSUES" | jq 'length')
+          echo "User $ISSUE_CREATOR has $USER_COUNT approved open course instance(s) (limit: $MAX_COURSE_PER_USER)."
+
+          if [[ "$USER_COUNT" -ge "$MAX_COURSE_PER_USER" ]]; then
+            ISSUE_LINKS=$(echo "$ACTIVE_ISSUES" | jq -r '[.[] | "#\(.number)"] | join(", ")')
+            gh issue comment "$ISSUE_NUMBER" --body "### Course Instance Request Rejected ❌
+
+          @${ISSUE_CREATOR} already has **${USER_COUNT}** active course instance(s), which is at the per-user limit of **${MAX_COURSE_PER_USER}**.
+
+          Existing course instance(s): ${ISSUE_LINKS}
+
+          Go to that issue and type \`/delete_all\` to free your quota, or contact your instructor.
+
+          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user course instance limit ($USER_COUNT/$MAX_COURSE_PER_USER)."
+            gh issue close "$ISSUE_NUMBER"
+            gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
+            echo "::error ::User $ISSUE_CREATOR has $USER_COUNT approved course instances (limit: $MAX_COURSE_PER_USER)"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
+          MAX_COURSE_PER_USER: ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
+
+  call-validate-request-course:
+    needs: [check-course-team-membership, check-course-instance-quota]
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    uses: ./.github/workflows/validate-request-course.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
     secrets: inherit
 
-  rename-issue:
+  call-request-initial-comments-course:
+    needs: [check-course-team-membership, check-course-instance-quota]
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    uses: ./.github/workflows/request-initial-comments.yml
+    with:
+      issue_number: "${{ github.event.issue.number }}"
+      commands_md_path: "course-issue-commands.md"
+    secrets: inherit
+
+  rename-instance-issue:
+    needs: [check-instance-team-membership, check-instance-quota]
     if:
       ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     runs-on: ubuntu-latest
     steps:
-      - name: Rename issue with canonical title
+      - name: Rename issue with canonical individual title
         run: |
-          set -euo pipefail
-
-          # Collect all course labels (morphocloud-course-*)
-          COURSE_LABELS=$(echo '${{ toJSON(github.event.issue.labels.*.name) }}' | \
-            jq -r '.[] | select(startswith("morphocloud-course-"))')
-          COURSE_LABEL_COUNT=$(echo "$COURSE_LABELS" | grep -c . || true)
-
-          if [[ "$COURSE_LABEL_COUNT" -gt 1 ]]; then
-            echo "::warning ::Issue #${ISSUE_NUMBER} has ${COURSE_LABEL_COUNT} course labels — expected at most one. Using the first match."
-          fi
-
-          COURSE_LABEL=$(echo "$COURSE_LABELS" | head -n1)
-
-          if [[ -n "$COURSE_LABEL" ]]; then
-            # Strip the morphocloud-course- prefix for readability
-            COURSE_SLUG="${COURSE_LABEL#morphocloud-course-}"
-            # Validate slug contains only alphanumeric characters and hyphens
-            if [[ ! "$COURSE_SLUG" =~ ^[a-zA-Z0-9-]+$ ]]; then
-              echo "::error ::Course slug '${COURSE_SLUG}' contains unexpected characters. Expected only alphanumeric characters and hyphens."
-              exit 1
-            fi
-            NEW_TITLE="MC-Course-${COURSE_SLUG}-${ISSUE_NUMBER}"
-          else
-            NEW_TITLE="MC-Individual-${ISSUE_NUMBER}"
-          fi
-
-          gh issue edit "$ISSUE_NUMBER" --title "$NEW_TITLE"
+          gh issue edit "$ISSUE_NUMBER" --title "MC-Individual-${ISSUE_NUMBER}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+  rename-course-issue:
+    needs: [check-course-team-membership, check-course-instance-quota]
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rename issue with canonical course title
+        run: |
+          set -euo pipefail
+
+          # Read course team slug from issue body
+          body=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body')
+          team_slug=$(printf '%s\n' "$body" | \
+            awk '/^### Course Team Slug/{found=1; next} found && /[^[:space:]]/{print; found=0}' | \
+            xargs)
+
+          if [[ -z "$team_slug" ]]; then
+            echo "::error ::Could not extract Course Team Slug from issue body"
+            exit 1
+          fi
+
+          # Strip the morphocloud-course- prefix for readability
+          course_slug="${team_slug#morphocloud-course-}"
+
+          # Validate slug contains only alphanumeric characters and hyphens
+          if [[ ! "$course_slug" =~ ^[a-zA-Z0-9-]+$ ]]; then
+            echo "::error ::Course slug '${course_slug}' contains unexpected characters. Expected only alphanumeric characters and hyphens."
+            exit 1
+          fi
+
+          gh issue edit "$ISSUE_NUMBER" --title "MC-Course-${course_slug}-${ISSUE_NUMBER}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+
