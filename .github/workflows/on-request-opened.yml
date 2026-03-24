@@ -59,8 +59,58 @@ jobs:
           echo "::error ::User ${{ github.event.issue.user.login }} is not a member of ${{ vars.MORPHOCLOUD_USERS_TEAM_SLUG }}"
           exit 1
 
-  call-validate-request:
+  check-instance-quota:
     needs: [check-instance-team-membership]
+    runs-on: ubuntu-latest
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    steps:
+      - name: Check per-user instance quota
+        run: |
+          MAX_PER_USER="${MAX_PER_USER:-2}"
+          # Admin bypass
+          if echo ",$ADMINS," | grep -q ",$ISSUE_CREATOR,"; then
+            echo "Admin $ISSUE_CREATOR — skipping quota check."
+            exit 0
+          fi
+
+          # Count previously-approved open instances for this user.
+          # (Current issue won't have request:approved yet so it is not counted here.)
+          USER_COUNT=$(gh issue list \
+            --author "$ISSUE_CREATOR" \
+            --label "request-type:instance" \
+            --label "request:approved" \
+            --state open \
+            --limit 100 \
+            --json number \
+            --jq 'length')
+
+          echo "User $ISSUE_CREATOR has $USER_COUNT approved open instance(s) (limit: $MAX_PER_USER)."
+
+          if [[ "$USER_COUNT" -ge "$MAX_PER_USER" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "### Instance Request Rejected ❌
+
+          @${ISSUE_CREATOR} already has **${USER_COUNT}** active instance(s), which is at the per-user limit of **${MAX_PER_USER}**.
+
+          Please \`/shelve\` or \`/delete_all\` an existing instance before requesting a new one.
+
+          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
+            gh issue close "$ISSUE_NUMBER"
+            gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
+            echo "::error ::User $ISSUE_CREATOR has $USER_COUNT approved instances (limit: $MAX_PER_USER)"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
+          MAX_PER_USER: ${{ vars.MORPHOCLOUD_MAX_INSTANCES_PER_USER }}
+
+  call-validate-request:
+    needs: [check-instance-team-membership, check-instance-quota]
     if:
       ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
@@ -139,7 +189,7 @@ jobs:
     secrets: inherit
 
   call-request-labeler:
-    needs: [check-instance-team-membership]
+    needs: [check-instance-team-membership, check-instance-quota]
     if:
       ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
@@ -149,7 +199,7 @@ jobs:
     secrets: inherit
 
   call-request-initial-comments:
-    needs: [check-instance-team-membership]
+    needs: [check-instance-team-membership, check-instance-quota]
     if:
       ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
@@ -261,8 +311,58 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
-  call-validate-request-course:
+  check-course-instance-quota:
     needs: [check-course-team-membership]
+    runs-on: ubuntu-latest
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    steps:
+      - name: Check per-user course instance quota
+        run: |
+          MAX_COURSE_PER_USER="${MAX_COURSE_PER_USER:-1}"
+          # Admin bypass
+          if echo ",$ADMINS," | grep -q ",$ISSUE_CREATOR,"; then
+            echo "Admin $ISSUE_CREATOR — skipping quota check."
+            exit 0
+          fi
+
+          # Count previously-approved open course instances for this user.
+          # (Current issue won't have request:approved yet so it is not counted here.)
+          USER_COUNT=$(gh issue list \
+            --author "$ISSUE_CREATOR" \
+            --label "request-type:course-instance" \
+            --label "request:approved" \
+            --state open \
+            --limit 100 \
+            --json number \
+            --jq 'length')
+
+          echo "User $ISSUE_CREATOR has $USER_COUNT approved open course instance(s) (limit: $MAX_COURSE_PER_USER)."
+
+          if [[ "$USER_COUNT" -ge "$MAX_COURSE_PER_USER" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "### Course Instance Request Rejected ❌
+
+          @${ISSUE_CREATOR} already has **${USER_COUNT}** active course instance(s), which is at the per-user limit of **${MAX_COURSE_PER_USER}**.
+
+          Please \`/delete_all\` your existing course instance or contact your instructor before requesting a new one.
+
+          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user course instance limit ($USER_COUNT/$MAX_COURSE_PER_USER)."
+            gh issue close "$ISSUE_NUMBER"
+            gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
+            echo "::error ::User $ISSUE_CREATOR has $USER_COUNT approved course instances (limit: $MAX_COURSE_PER_USER)"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
+          MAX_COURSE_PER_USER: ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
+
+  call-validate-request-course:
+    needs: [check-course-team-membership, check-course-instance-quota]
     if:
       ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
@@ -272,7 +372,7 @@ jobs:
     secrets: inherit
 
   call-request-initial-comments-course:
-    needs: [check-course-team-membership]
+    needs: [check-course-team-membership, check-course-instance-quota]
     if:
       ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}

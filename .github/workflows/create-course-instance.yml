@@ -90,6 +90,85 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
+      - name: Check course instance quota
+        id: check_quota
+        shell: bash
+        run: |
+          MAX_COURSE_PER_USER="${MAX_COURSE_PER_USER:-1}"
+          MAX_TOTAL="${MAX_TOTAL:-90}"
+          # Admin bypass
+          if echo ",$ADMINS," | grep -q ",$ISSUE_CREATOR,"; then
+            echo "Admin $ISSUE_CREATOR — skipping quota check."
+            exit 0
+          fi
+
+          source ~/venv/bin/activate
+
+          # Fetch all OpenStack instances in one call
+          SERVERS_JSON=$(openstack server list -f json)
+          TOTAL_COUNT=$(echo "$SERVERS_JSON" | jq 'length')
+          OS_NAMES=$(echo "$SERVERS_JSON" | jq -r '.[].Name')
+
+          echo "Total instances in OpenStack: $TOTAL_COUNT (system limit: $MAX_TOTAL)"
+
+          # Global capacity check
+          if [[ "$TOTAL_COUNT" -ge "$MAX_TOTAL" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
+
+          The system has reached its capacity limit of **${MAX_TOTAL}** instances. No new instances can be provisioned at this time.
+
+          Please try again later or contact @MorphoCloud/morphocloud-admins for assistance.
+
+          > @MorphoCloud/morphocloud-admins — ⚠️ System capacity limit reached ($TOTAL_COUNT/$MAX_TOTAL). @${ISSUE_CREATOR} is waiting."
+            gh issue edit "$ISSUE_NUMBER" --add-label "error:system-capacity"
+            echo "::error ::System capacity: $TOTAL_COUNT/$MAX_TOTAL"
+            exit 1
+          fi
+
+          # Per-user check: count user's course issue numbers that have a live OpenStack instance
+          INSTANCE_PREFIX="${INSTANCE_NAME_PREFIX:+${INSTANCE_NAME_PREFIX}_}"
+          ISSUE_NUMBERS=$(gh issue list \
+            --author "$ISSUE_CREATOR" \
+            --label "request-type:course-instance" \
+            --state open \
+            --limit 100 \
+            --json number \
+            --jq '.[].number' | grep -v "^${ISSUE_NUMBER}$" || true)
+
+          USER_COUNT=0
+          while IFS= read -r NUM; do
+            [[ -z "$NUM" ]] && continue
+            INSTANCE_NAME="${INSTANCE_PREFIX}instance-${NUM}"
+            if echo "$OS_NAMES" | grep -qx "$INSTANCE_NAME"; then
+              ((USER_COUNT++))
+            fi
+          done <<< "$ISSUE_NUMBERS"
+
+          echo "User $ISSUE_CREATOR has $USER_COUNT active course OpenStack instance(s) (limit: $MAX_COURSE_PER_USER)"
+
+          if [[ "$USER_COUNT" -ge "$MAX_COURSE_PER_USER" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
+
+          @${ISSUE_CREATOR} already has **${USER_COUNT}** active course instance(s), which is at the per-user limit of **${MAX_COURSE_PER_USER}**.
+
+          Please \`/delete_all\` your existing course instance or contact your instructor before creating a new one.
+
+          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user course instance limit ($USER_COUNT/$MAX_COURSE_PER_USER)."
+            gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
+            echo "::error ::User $ISSUE_CREATOR has $USER_COUNT/$MAX_COURSE_PER_USER course instances"
+            exit 1
+          fi
+        env:
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          INSTANCE_NAME_PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
+          MAX_COURSE_PER_USER: ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
+          MAX_TOTAL: ${{ vars.MORPHOCLOUD_MAX_TOTAL_INSTANCES }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
       - name: Create instance
         id: provision
         uses: ./.github/actions/create-instance
