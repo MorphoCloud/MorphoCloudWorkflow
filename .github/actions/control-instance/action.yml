@@ -552,7 +552,8 @@ runs:
     - name: Send email (individual)
       id: send_email
       if:
-        ${{ steps.check_type.outputs.is_course != 'true' &&
+        ${{ steps.check_type.outcome == 'success' &&
+        steps.check_type.outputs.is_course != 'true' &&
         steps.check_type.outputs.is_workshop != 'true' }}
       uses: ./.github/actions/send-email
       with:
@@ -568,7 +569,8 @@ runs:
     - name: Send email (workshop)
       id: send_workshop_email
       if:
-        ${{ steps.check_type.outputs.is_course != 'true' &&
+        ${{ steps.check_type.outcome == 'success' &&
+        steps.check_type.outputs.is_course != 'true' &&
         steps.check_type.outputs.is_workshop == 'true' }}
       uses: ./.github/actions/workshop-send-email
       with:
@@ -582,7 +584,7 @@ runs:
 
     - name: Send email (course)
       id: send_course_email
-      if: ${{ steps.check_type.outputs.is_course == 'true' }}
+      if: ${{ steps.check_type.outcome == 'success' && steps.check_type.outputs.is_course == 'true' }}
       uses: ./.github/actions/course-send-email
       with:
         os_cloud: ${{ inputs.os_cloud }}
