@@ -25,6 +25,9 @@ inputs:
   string_encryption_key:
     description: "Encryption key to encode and decode the email address"
     required: true
+  email_lookup_url:
+    description: "URL of the Apps Script web app for email lookup (individual and course)"
+    required: true
   mail_server_username:
     description: "mail server username"
     required: true
@@ -525,12 +528,51 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-    - name: Send email
+    - name: Determine issue type
+      id: check_type
+      if:
+        ${{ steps.check_instance.outputs.exists == 'true' && success() &&
+        inputs.command_name == 'unshelve' }}
+      shell: bash
+      run: |
+        is_course=${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') }}
+        echo "is_course=$is_course" >> $GITHUB_OUTPUT
+        # Workshop sub-issues: expiration <= 7 days
+        expiration_days=$(gh issue view "$ISSUE_NUMBER" --json labels \
+          --jq '[.labels[].name | select(. | startswith("expiration:")) | split(":")[1] | sub("d$"; "") | tonumber][0] // 999')
+        if (( $(echo "$expiration_days <= 7" | bc -l) )); then
+          is_workshop="true"
+        else
+          is_workshop="false"
+        fi
+        echo "is_workshop=$is_workshop" >> $GITHUB_OUTPUT
+      env:
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+
+    - name: Send email (individual)
       id: send_email
       if:
-        ${{ steps.check_instance.outputs.exists == 'true' && success()  &&
-        inputs.command_name == 'unshelve' }}
+        ${{ steps.check_type.outputs.is_course != 'true' &&
+        steps.check_type.outputs.is_workshop != 'true' }}
       uses: ./.github/actions/send-email
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        token: ${{ inputs.token }}
+        email_lookup_url: ${{ inputs.email_lookup_url }}
+        issue_creator: ${{ github.event.issue.user.login }}
+        mail_server_username: ${{ inputs.mail_server_username }}
+        mail_server_password: ${{ inputs.mail_server_password }}
+        instance_name: ${{ steps.define.outputs.instance_name }}
+        instance_issue_number: ${{ inputs.issue_number }}
+
+    - name: Send email (workshop)
+      id: send_workshop_email
+      if:
+        ${{ steps.check_type.outputs.is_course != 'true' &&
+        steps.check_type.outputs.is_workshop == 'true' }}
+      uses: ./.github/actions/workshop-send-email
       with:
         os_cloud: ${{ inputs.os_cloud }}
         token: ${{ inputs.token }}
@@ -540,15 +582,29 @@ runs:
         instance_name: ${{ steps.define.outputs.instance_name }}
         instance_issue_number: ${{ inputs.issue_number }}
 
+    - name: Send email (course)
+      id: send_course_email
+      if: ${{ steps.check_type.outputs.is_course == 'true' }}
+      uses: ./.github/actions/course-send-email
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        token: ${{ inputs.token }}
+        issue_creator: ${{ github.event.issue.user.login }}
+        mail_server_username: ${{ inputs.mail_server_username }}
+        mail_server_password: ${{ inputs.mail_server_password }}
+        email_lookup_url: ${{ inputs.email_lookup_url }}
+        instance_name: ${{ steps.define.outputs.instance_name }}
+        instance_issue_number: ${{ inputs.issue_number }}
+
     - name: comment (failed to send email)
-      if: ${{ steps.send_email.outcome == 'failure' && failure() }}
+      if: ${{ (steps.send_email.outcome == 'failure' || steps.send_workshop_email.outcome == 'failure' || steps.send_course_email.outcome == 'failure') && failure() }}
       uses: peter-evans/create-or-update-comment@v4.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
           ### Command Results ❌
 
-          Failed to send connection email for instance **${{ steps.define.outputs.instance_name }}**. ${{ steps.send_email.outputs.error_message }}
+          Failed to send connection email for instance **${{ steps.define.outputs.instance_name }}**. ${{ steps.send_email.outputs.error_message }}${{ steps.send_workshop_email.outputs.error_message }}${{ steps.send_course_email.outputs.error_message }}
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
