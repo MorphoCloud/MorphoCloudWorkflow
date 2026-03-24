@@ -402,4 +402,40 @@ jobs:
       commands_md_path: "course-issue-commands.md"
     secrets: inherit
 
+  rename-instance-issue:
+    needs: [check-instance-team-membership, check-instance-quota]
+    runs-on: ubuntu-latest
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    steps:
+      - name: Rename issue to canonical title
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --title "MC-Individual-${ISSUE_NUMBER}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+  rename-course-issue:
+    needs: [check-course-team-membership, check-course-instance-quota]
+    runs-on: ubuntu-latest
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    steps:
+      - name: Extract course slug and rename issue
+        run: |
+          body=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body')
+          team_slug=$(printf '%s\n' "$body" | \
+            awk '/^### Course Team Slug/{found=1; next} found && /[^[:space:]]/{print; found=0}' | \
+            xargs)
+          # Strip morphocloud-course- prefix for readability
+          short_slug="${team_slug#morphocloud-course-}"
+          gh issue edit "$ISSUE_NUMBER" --title "MC-Course-${short_slug}-${ISSUE_NUMBER}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+
 
