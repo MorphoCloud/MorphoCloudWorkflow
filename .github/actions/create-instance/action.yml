@@ -87,7 +87,7 @@ runs:
             --jq '[.labels[].name | select(. | startswith("flavor:")) | split(":")[1]][0]'
         )
         echo "instance_flavor=$instance_flavor" >> $GITHUB_OUTPUT
-        
+
         # Check if this is a workshop instance by checking expiration time (7 days or less)
         expiration_days=$(
           gh issue view $ISSUE_NUMBER \
@@ -280,7 +280,7 @@ runs:
         source ~/venv/bin/activate
 
         echo "Waiting for instance to reach stable state..."
-        
+
         max_wait_time=60  # Wait up to 60 seconds for status to stabilize
         wait_interval=3
         total_wait_time=0
@@ -288,19 +288,19 @@ runs:
         while [ $total_wait_time -lt $max_wait_time ]; do
             instance_json=$(openstack server show "$INSTANCE_NAME" -f json)
             status=$(echo "$instance_json" | jq -r '.status')
-            
+
             echo "Current status: $status (waited ${total_wait_time}s)"
-            
+
             # Check if reached a stable state (ACTIVE or ERROR)
             if [[ "$status" == "ACTIVE" || "$status" == "ERROR" ]]; then
                 echo "Instance reached stable state: $status"
                 break
             fi
-            
+
             sleep $wait_interval
             total_wait_time=$((total_wait_time + wait_interval))
         done
-        
+
         echo "final_status=$status" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
@@ -315,17 +315,17 @@ runs:
 
         # Get instance details
         instance_json=$(openstack server show "$INSTANCE_NAME" -f json)
-        
+
         status=$(echo "$instance_json" | jq -r '.status')
         host=$(echo "$instance_json" | jq -r '.["OS-EXT-SRV-ATTR:host"]')
         host_id=$(echo "$instance_json" | jq -r '.hostId')
         addresses=$(echo "$instance_json" | jq -r '.addresses')
-        
+
         echo "status: $status"
         echo "host: $host"
         echo "hostId: $host_id"
         echo "addresses: $addresses"
-        
+
         # Check if this is a capacity error
         # host can be null, "null", or "None" - all indicate no host assigned
         # addresses can be {} or "" when empty
@@ -358,7 +358,7 @@ runs:
       shell: bash
       run: |
         source ~/venv/bin/activate
-        
+
         echo "Deleting failed instance due to capacity error"
         openstack server delete "$INSTANCE_NAME" || echo "Failed to delete instance, it may not exist"
       env:
@@ -375,7 +375,9 @@ runs:
         INSTANCE_FLAVOR: ${{ steps.labels.outputs.instance_flavor }}
 
     - name: Ensure instance is ACTIVE before continuing
-      if: ${{ steps.check_capacity_error.outputs.capacity_error != 'true' && steps.wait_instance_state.outputs.final_status != 'ACTIVE' }}
+      if:
+        ${{ steps.check_capacity_error.outputs.capacity_error != 'true' &&
+        steps.wait_instance_state.outputs.final_status != 'ACTIVE' }}
       shell: bash
       run: |
         echo "::error ::Instance failed to reach ACTIVE state. Current status: $CURRENT_STATUS"
@@ -384,7 +386,12 @@ runs:
         CURRENT_STATUS: ${{ steps.wait_instance_state.outputs.final_status }}
 
     - name: comment (instance creation failed)
-      if: ${{ (steps.create_instance.outcome == 'failure' || steps.wait_instance_state.outcome == 'failure' || steps.check_capacity_error.outputs.capacity_error != 'true') && failure() && steps.check_capacity_error.outputs.capacity_error != 'true' }}
+      if:
+        ${{ (steps.create_instance.outcome == 'failure' ||
+        steps.wait_instance_state.outcome == 'failure' ||
+        steps.check_capacity_error.outputs.capacity_error != 'true') &&
+        failure() && steps.check_capacity_error.outputs.capacity_error != 'true'
+        }}
       uses: peter-evans/create-or-update-comment@v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
@@ -800,7 +807,9 @@ runs:
 
     - name: Send mail
       id: send_email
-      if: ${{ steps.instance_poll.outputs.status == 'complete' && steps.labels.outputs.is_workshop == 'false' }}
+      if:
+        ${{ steps.instance_poll.outputs.status == 'complete' &&
+        steps.labels.outputs.is_workshop == 'false' }}
       uses: ./.github/actions/send-email
       with:
         os_cloud: ${{ inputs.os_cloud }}
@@ -813,7 +822,9 @@ runs:
 
     - name: Send workshop mail
       id: send_workshop_email
-      if: ${{ steps.instance_poll.outputs.status == 'complete' && steps.labels.outputs.is_workshop == 'true' }}
+      if:
+        ${{ steps.instance_poll.outputs.status == 'complete' &&
+        steps.labels.outputs.is_workshop == 'true' }}
       uses: ./.github/actions/workshop-send-email
       with:
         os_cloud: ${{ inputs.os_cloud }}

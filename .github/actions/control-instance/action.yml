@@ -348,13 +348,13 @@ runs:
                 host=$(echo "$instance_json" | jq -r '.["OS-EXT-SRV-ATTR:host"]')
                 host_id=$(echo "$instance_json" | jq -r '.hostId')
                 addresses=$(echo "$instance_json" | jq -r '.addresses')
-                
+
                 echo ""
                 echo "Detected ERROR status. Checking capacity error conditions..."
                 echo "host: $host"
                 echo "hostId: $host_id"
                 echo "addresses: $addresses"
-                
+
                 # host can be null, "null", or "None" - all indicate no host assigned
                 # addresses can be {} or "" when empty
                 if [[ ( "$host" == "null" || "$host" == "None" || "$host" == "" ) && "$host_id" == "" && ( "$addresses" == "{}" || "$addresses" == "" ) ]]; then
@@ -388,7 +388,9 @@ runs:
         COMMAND_NAME: ${{ inputs.command_name }}
 
     - name: comment (maximum wait time exceeded)
-      if: ${{ steps.instance_poll.outcome == 'failure' && failure() && steps.instance_poll.outputs.capacity_error != 'true' }}
+      if:
+        ${{ steps.instance_poll.outcome == 'failure' && failure() &&
+        steps.instance_poll.outputs.capacity_error != 'true' }}
       uses: peter-evans/create-or-update-comment@v4.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
@@ -405,10 +407,10 @@ runs:
       shell: bash
       run: |
         source ~/venv/bin/activate
-        
+
         # Try to get flavor from instance
         flavor=$(openstack server show "$INSTANCE_NAME" -f json | jq -r '.flavor' 2>/dev/null || echo "")
-        
+
         # If not available from instance, try to get from issue labels
         if [[ -z "$flavor" || "$flavor" == "null" ]]; then
           flavor=$(
@@ -417,7 +419,7 @@ runs:
               --jq '[.labels[].name | select(. | startswith("flavor:")) | split(":")[1]][0]'
           )
         fi
-        
+
         echo "flavor=$flavor" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
@@ -445,7 +447,7 @@ runs:
       shell: bash
       run: |
         source ~/venv/bin/activate
-        
+
         echo "Deleting failed instance due to capacity error"
         openstack server delete "$INSTANCE_NAME" || echo "Failed to delete instance, it may not exist"
       env:
