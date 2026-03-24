@@ -76,24 +76,34 @@ jobs:
           fi
 
           # Count previously-approved open instances for this user.
+          # Exclude issues that have been fully cleaned up (status:deleted + volume:deleted/expiration-pending).
           # (Current issue won't have request:approved yet so it is not counted here.)
-          USER_COUNT=$(gh issue list \
+          ISSUES_JSON=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:instance" \
             --label "request:approved" \
             --state open \
             --limit 100 \
-            --json number \
-            --jq 'length')
+            --json number,labels)
 
+          ACTIVE_ISSUES=$(echo "$ISSUES_JSON" | jq '[.[] | select(
+            ((.labels | map(.name) | index("status:deleted")) != null and
+             ((.labels | map(.name) | index("volume:deleted")) != null or
+              (.labels | map(.name) | index("volume:expiration-pending")) != null))
+            | not
+          )]')
+          USER_COUNT=$(echo "$ACTIVE_ISSUES" | jq 'length')
           echo "User $ISSUE_CREATOR has $USER_COUNT approved open instance(s) (limit: $MAX_PER_USER)."
 
           if [[ "$USER_COUNT" -ge "$MAX_PER_USER" ]]; then
+            ISSUE_LINKS=$(echo "$ACTIVE_ISSUES" | jq -r '[.[] | "#\(.number)"] | join(", ")')
             gh issue comment "$ISSUE_NUMBER" --body "### Instance Request Rejected ❌
 
           @${ISSUE_CREATOR} already has **${USER_COUNT}** active instance(s), which is at the per-user limit of **${MAX_PER_USER}**.
 
-          Please \`/shelve\` or \`/delete_all\` an existing instance before requesting a new one.
+          Existing instance(s): ${ISSUE_LINKS}
+
+          Go to one of these issues and type \`/delete_all\` to free your quota before requesting a new one.
 
           > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
             gh issue close "$ISSUE_NUMBER"
@@ -328,24 +338,34 @@ jobs:
           fi
 
           # Count previously-approved open course instances for this user.
+          # Exclude issues that have been fully cleaned up (status:deleted + volume:deleted/expiration-pending).
           # (Current issue won't have request:approved yet so it is not counted here.)
-          USER_COUNT=$(gh issue list \
+          ISSUES_JSON=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:course-instance" \
             --label "request:approved" \
             --state open \
             --limit 100 \
-            --json number \
-            --jq 'length')
+            --json number,labels)
 
+          ACTIVE_ISSUES=$(echo "$ISSUES_JSON" | jq '[.[] | select(
+            ((.labels | map(.name) | index("status:deleted")) != null and
+             ((.labels | map(.name) | index("volume:deleted")) != null or
+              (.labels | map(.name) | index("volume:expiration-pending")) != null))
+            | not
+          )]')
+          USER_COUNT=$(echo "$ACTIVE_ISSUES" | jq 'length')
           echo "User $ISSUE_CREATOR has $USER_COUNT approved open course instance(s) (limit: $MAX_COURSE_PER_USER)."
 
           if [[ "$USER_COUNT" -ge "$MAX_COURSE_PER_USER" ]]; then
+            ISSUE_LINKS=$(echo "$ACTIVE_ISSUES" | jq -r '[.[] | "#\(.number)"] | join(", ")')
             gh issue comment "$ISSUE_NUMBER" --body "### Course Instance Request Rejected ❌
 
           @${ISSUE_CREATOR} already has **${USER_COUNT}** active course instance(s), which is at the per-user limit of **${MAX_COURSE_PER_USER}**.
 
-          Please \`/delete_all\` your existing course instance or contact your instructor before requesting a new one.
+          Existing course instance(s): ${ISSUE_LINKS}
+
+          Go to that issue and type \`/delete_all\` to free your quota, or contact your instructor.
 
           > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user course instance limit ($USER_COUNT/$MAX_COURSE_PER_USER)."
             gh issue close "$ISSUE_NUMBER"
