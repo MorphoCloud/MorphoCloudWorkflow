@@ -25,10 +25,6 @@ inputs:
   string_encryption_key:
     description: "Encryption key to encode and decode the email address"
     required: true
-  email_lookup_url:
-    description:
-      "URL of the Apps Script web app for email lookup (individual and course)"
-    required: true
   mail_server_username:
     description: "mail server username"
     required: true
@@ -243,7 +239,7 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-    - name: Release any stuck floating IP from instance port
+    - name: Release stuck floating IP from port before unshelve
       if:
         ${{ steps.check_instance.outputs.exists == 'true' && inputs.command_name
         == 'unshelve' }}
@@ -286,47 +282,7 @@ runs:
     - name: Retrieve or create a floating IP
       if:
         ${{ steps.check_instance.outputs.exists == 'true' && inputs.command_name
-        == 'unlease any stuck floating IP from instance port
-      if:
-        ${{ steps.check_instance.outputs.exists == 'true' && inputs.command_name
-        == 'unshelve' }}
-      id: release_stuck_ip
-      shell: bash
-      run: |
-        source ~/venv/bin/activate
-
-        # SHELVED_OFFLOADED instances have empty addresses in 'openstack server show',
-        # but their Neutron port persists. A previously failed unshelve can leave a
-        # floating IP stuck on that port, causing the subsequent 'associate_ip' step
-        # to fail. Release any such stuck IP unconditionally before proceeding.
-
-        port_id=$(openstack port list --server "$INSTANCE_NAME" -f json | jq -r '.[0].ID // ""')
-        echo "port_id [$port_id]"
-
-        if [[ -z "$port_id" ]]; then
-          echo "No port found for instance, skipping."
-          exit 0
-        fi
-
-        floating_ip_uuid=$(
-          openstack floating ip list -f json | \
-          jq -r --arg port "$port_id" \
-          'map(select(.Port == $port)) | if length > 0 then .[0].ID else "" end'
-        )
-        echo "floating_ip_uuid [$floating_ip_uuid]"
-
-        if [[ -z "$floating_ip_uuid" ]]; then
-          echo "No floating IP attached to port, nothing to release."
-          exit 0
-        fi
-
-        echo "Releasing stuck floating IP $floating_ip_uuid from port $port_id"
-        openstack floating ip unset --port "$floating_ip_uuid"
-      env:
-        OS_CLOUD: ${{ inputs.os_cloud }}
-        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
-
-    - name: Reshelve' && steps.check_instance_has_ip.outputs.has_ip_assigned ==
+        == 'unshelve' && steps.check_instance_has_ip.outputs.has_ip_assigned ==
         'false' }}
       id: ip_create
       uses: ./.github/actions/create-ip
@@ -471,105 +427,10 @@ runs:
         EXPECTED_STATUS: ${{ steps.expected_status.outputs.value }}
         COMMAND_NAME: ${{ inputs.command_name }}
 
-    - name: Check Grafana capacity on unshelve timeout
-      id: check_capacity_timeout
-      if:
-        ${{ steps.instance_poll.outcome == 'failure' && failure() &&
-        inputs.command_name == 'unshelve' }}
-      continue-on-error: true
-      shell: bash
-      run: |
-        # Extract flavor from issue labels
-        flavor=$(
-          gh issue view "$ISSUE_NUMBER" \
-            --json labels \
-            --jq '[.labels[].name | select(. | startswith("flavor:")) | split(":")[1]][0]'
-        )
-        echo "flavor [$flavor]"
-        echo "flavor=$flavor" >> $GITHUB_OUTPUT
-
-        # Map flavor to Grafana panel ID and refId
-        # Panel 9:  CPU/Memory (r3.*, m3.*)
-        # Panel 10: A100 GPU   (g3.*)
-        # Panel 11: L40S GPU   (g4.*)
-        # Panel 12: H100 GPU   (g5.*)
-        case "$flavor" in
-          r3.large)  panel_id=9;  refId="D" ;;
-          r3.xl)     panel_id=9;  refId="E" ;;
-          m3.3xl)    panel_id=9;  refId="F" ;;
-          g3.medium) panel_id=10; refId="H" ;;
-          g3.large)  panel_id=10; refId="A" ;;
-          g3.xl)     panel_id=10; refId="G" ;;
-          g3.2xl)    panel_id=10; refId="B" ;;
-          g3.4xl)    panel_id=10; refId="O" ;;
-          g4.xl)     panel_id=11; refId="J" ;;
-          g4.2xl)    panel_id=11; refId="K" ;;
-          g4.4xl)    panel_id=11; refId="L" ;;
-          g5.xl)     panel_id=12; refId="M" ;;
-          g5.2xl)    panel_id=12; refId="N" ;;
-          g5.4xl)    panel_id=12; refId="O" ;;
-          *)
-            echo "Unknown flavor '$flavor', skipping Grafana check"
-            echo "capacity_hint=unknown" >> $GITHUB_OUTPUT
-            exit 0
-            ;;
-        esac
-
-        # Query Grafana public dashboard API (no authentication required)
-        grafana_uid="b39f9f91452949389a4d333c3f451eac"
-        grafana_count=$(
-          curl -s --max-time 10 \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -d "{\"queries\":[{\"refId\":\"${refId}\",\"panelId\":${panel_id}}],\"from\":\"now-2m\",\"to\":\"now\"}" \
-            "https://grafana.jetstream-cloud.org/api/public/dashboards/${grafana_uid}/panels/${panel_id}/query" | \
-          jq -r --arg refId "$refId" '.results[$refId].frames[0].data.values[-1][-1] // "null"' 2>/dev/null \
-          || echo "unknown"
-        )
-        echo "grafana_count [$grafana_count]"
-        echo "grafana_count=$grafana_count" >> $GITHUB_OUTPUT
-
-        # Treat count <= 3 as "low": metric is imprecise but near-zero strongly
-        # suggests capacity exhaustion. Count above 3 is treated as "normal"
-        # and the generic timeout message is used instead.
-        if [[ "$grafana_count" =~ ^[0-9]+$ ]] && (( grafana_count <= 3 )); then
-          capacity_hint="low"
-        elif [[ "$grafana_count" =~ ^[0-9]+$ ]]; then
-          capacity_hint="normal"
-        else
-          capacity_hint="unknown"
-        fi
-        echo "capacity_hint [$capacity_hint]"
-        echo "capacity_hint=$capacity_hint" >> $GITHUB_OUTPUT
-      env:
-        GH_TOKEN: ${{ inputs.token }}
-        GH_REPO: ${{ github.repository }}
-        ISSUE_NUMBER: ${{ inputs.issue_number }}
-
-    - name: comment (unshelve timeout - possible capacity issue)
-      if:
-        ${{ steps.check_capacity_timeout.outputs.capacity_hint == 'low' &&
-        failure() }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
-      with:
-        issue-number: ${{ inputs.issue_number }}
-        body: |
-          ### Command Results ❌
-
-          The `/unshelve` command timed out waiting for **${{ steps.define.outputs.instance_name }}** to become active.
-
-          JS2 currently reports low availability for **${{ steps.check_capacity_timeout.outputs.flavor }}** (≈${{ steps.check_capacity_timeout.outputs.grafana_count }} slot(s)). This suggests that capacity may be temporarily exhausted.
-
-          Please check current resource availability and try again later:
-          https://grafana.jetstream-cloud.org/public-dashboards/b39f9f91452949389a4d333c3f451eac
-
-          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
     - name: comment (maximum wait time exceeded)
       if:
         ${{ steps.instance_poll.outcome == 'failure' && failure() &&
-        steps.instance_poll.outputs.capacity_error != 'true' &&
-        steps.check_capacity_timeout.outputs.capacity_hint != 'low' }}
+        steps.instance_poll.outputs.capacity_error != 'true' }}
       uses: peter-evans/create-or-update-comment@v4.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
@@ -704,53 +565,12 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-    - name: Determine issue type
-      id: check_type
-      if:
-        ${{ steps.check_instance.outputs.exists == 'true' && success() &&
-        inputs.command_name == 'unshelve' }}
-      shell: bash
-      run: |
-        is_course=${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') }}
-        echo "is_course=$is_course" >> $GITHUB_OUTPUT
-        # Workshop sub-issues: expiration <= 7 days
-        expiration_days=$(gh issue view "$ISSUE_NUMBER" --json labels \
-          --jq '[.labels[].name | select(. | startswith("expiration:")) | split(":")[1] | sub("d$"; "") | tonumber][0] // 999')
-        if (( $(echo "$expiration_days <= 7" | bc -l) )); then
-          is_workshop="true"
-        else
-          is_workshop="false"
-        fi
-        echo "is_workshop=$is_workshop" >> $GITHUB_OUTPUT
-      env:
-        ISSUE_NUMBER: ${{ inputs.issue_number }}
-        GH_TOKEN: ${{ inputs.token }}
-        GH_REPO: ${{ github.repository }}
-
-    - name: Send email (individual)
+    - name: Send email
       id: send_email
       if:
-        ${{ steps.check_type.outcome == 'success' &&
-        steps.check_type.outputs.is_course != 'true' &&
-        steps.check_type.outputs.is_workshop != 'true' }}
+        ${{ steps.check_instance.outputs.exists == 'true' && success()  &&
+        inputs.command_name == 'unshelve' }}
       uses: ./.github/actions/send-email
-      with:
-        os_cloud: ${{ inputs.os_cloud }}
-        token: ${{ inputs.token }}
-        email_lookup_url: ${{ inputs.email_lookup_url }}
-        issue_creator: ${{ github.event.issue.user.login }}
-        mail_server_username: ${{ inputs.mail_server_username }}
-        mail_server_password: ${{ inputs.mail_server_password }}
-        instance_name: ${{ steps.define.outputs.instance_name }}
-        instance_issue_number: ${{ inputs.issue_number }}
-
-    - name: Send email (workshop)
-      id: send_workshop_email
-      if:
-        ${{ steps.check_type.outcome == 'success' &&
-        steps.check_type.outputs.is_course != 'true' &&
-        steps.check_type.outputs.is_workshop == 'true' }}
-      uses: ./.github/actions/workshop-send-email
       with:
         os_cloud: ${{ inputs.os_cloud }}
         token: ${{ inputs.token }}
@@ -760,34 +580,15 @@ runs:
         instance_name: ${{ steps.define.outputs.instance_name }}
         instance_issue_number: ${{ inputs.issue_number }}
 
-    - name: Send email (course)
-      id: send_course_email
-      if:
-        ${{ steps.check_type.outcome == 'success' &&
-        steps.check_type.outputs.is_course == 'true' }}
-      uses: ./.github/actions/course-send-email
-      with:
-        os_cloud: ${{ inputs.os_cloud }}
-        token: ${{ inputs.token }}
-        issue_creator: ${{ github.event.issue.user.login }}
-        mail_server_username: ${{ inputs.mail_server_username }}
-        mail_server_password: ${{ inputs.mail_server_password }}
-        email_lookup_url: ${{ inputs.email_lookup_url }}
-        instance_name: ${{ steps.define.outputs.instance_name }}
-        instance_issue_number: ${{ inputs.issue_number }}
-
     - name: comment (failed to send email)
-      if:
-        ${{ (steps.send_email.outcome == 'failure' ||
-        steps.send_workshop_email.outcome == 'failure' ||
-        steps.send_course_email.outcome == 'failure') && failure() }}
+      if: ${{ steps.send_email.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@v4.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
           ### Command Results ❌
 
-          Failed to send connection email for instance **${{ steps.define.outputs.instance_name }}**. ${{ steps.send_email.outputs.error_message }}${{ steps.send_workshop_email.outputs.error_message }}${{ steps.send_course_email.outputs.error_message }}
+          Failed to send connection email for instance **${{ steps.define.outputs.instance_name }}**. ${{ steps.send_email.outputs.error_message }}
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
