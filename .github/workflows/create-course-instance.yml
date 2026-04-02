@@ -9,8 +9,8 @@ jobs:
     runs-on: self-hosted
     if:
       ${{ !github.event.issue.pull_request &&
-      contains(github.event.issue.labels.*.name, 'request-type:course-instance') && (
-      contains(github.event.comment.body, '/create') ) }}
+      contains(github.event.issue.labels.*.name, 'request-type:course-instance')
+      && ( contains(github.event.comment.body, '/create') ) }}
     steps:
       - name: create command
         id: create_command
@@ -127,13 +127,47 @@ jobs:
 
           # Per-user check: count user's course issue numbers that have a live OpenStack instance
           INSTANCE_PREFIX="${INSTANCE_NAME_PREFIX:+${INSTANCE_NAME_PREFIX}_}"
-          ISSUE_NUMBERS=$(gh issue list \
+          COURSE_NUMS=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:course-instance" \
             --state open \
             --limit 100 \
             --json number \
             --jq '.[].number' | grep -v "^${ISSUE_NUMBER}$" || true)
+
+          COURSE_COUNT=0
+          while IFS= read -r NUM; do
+            [[ -z "$NUM" ]] && continue
+            INSTANCE_NAME="${INSTANCE_PREFIX}instance-${NUM}"
+            if echo "$OS_NAMES" | grep -qx "$INSTANCE_NAME"; then
+              ((COURSE_COUNT++))
+            fi
+          done <<< "$COURSE_NUMS"
+
+          echo "User $ISSUE_CREATOR has $COURSE_COUNT active course OpenStack instance(s) (limit: $MAX_COURSE_PER_USER)"
+
+          if [[ "$COURSE_COUNT" -ge "$MAX_COURSE_PER_USER" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
+
+          @${ISSUE_CREATOR} already has **${COURSE_COUNT}** active course instance(s), which is at the per-user limit of **${MAX_COURSE_PER_USER}**.
+
+          Please \`/delete_all\` your existing course instance or contact your instructor before creating a new one.
+
+          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user course instance limit ($COURSE_COUNT/$MAX_COURSE_PER_USER)."
+            gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
+            echo "::error ::User $ISSUE_CREATOR has $COURSE_COUNT/$MAX_COURSE_PER_USER course instances"
+            exit 1
+          fi
+
+          # Global cap: also count individual instances — no user may exceed MAX_PER_USER total across all types.
+          INDIV_NUMS=$(gh issue list \
+            --author "$ISSUE_CREATOR" \
+            --label "request-type:instance" \
+            --state open \
+            --limit 100 \
+            --json number \
+            --jq '.[].number' | grep -v "^${ISSUE_NUMBER}$" || true)
+          ALL_NUMS=$(printf "%s\n%s" "$COURSE_NUMS" "$INDIV_NUMS" | grep -v '^$' || true)
 
           USER_COUNT=0
           while IFS= read -r NUM; do
@@ -142,20 +176,20 @@ jobs:
             if echo "$OS_NAMES" | grep -qx "$INSTANCE_NAME"; then
               ((USER_COUNT++))
             fi
-          done <<< "$ISSUE_NUMBERS"
+          done <<< "$ALL_NUMS"
 
-          echo "User $ISSUE_CREATOR has $USER_COUNT active course OpenStack instance(s) (limit: $MAX_COURSE_PER_USER)"
+          echo "User $ISSUE_CREATOR has $USER_COUNT active OpenStack instance(s) across all types (global limit: $MAX_PER_USER)"
 
-          if [[ "$USER_COUNT" -ge "$MAX_COURSE_PER_USER" ]]; then
+          if [[ "$USER_COUNT" -ge "$MAX_PER_USER" ]]; then
             gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
 
-          @${ISSUE_CREATOR} already has **${USER_COUNT}** active course instance(s), which is at the per-user limit of **${MAX_COURSE_PER_USER}**.
+          @${ISSUE_CREATOR} has **${USER_COUNT}** active instance(s) across all types, which is at the global per-user limit of **${MAX_PER_USER}**.
 
-          Please \`/delete_all\` your existing course instance or contact your instructor before creating a new one.
+          Please \`/shelve\` or \`/delete_all\` an existing instance before creating a new one.
 
-          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user course instance limit ($USER_COUNT/$MAX_COURSE_PER_USER)."
+          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the global per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
             gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
-            echo "::error ::User $ISSUE_CREATOR has $USER_COUNT/$MAX_COURSE_PER_USER course instances"
+            echo "::error ::User $ISSUE_CREATOR has $USER_COUNT/$MAX_PER_USER instances across all types"
             exit 1
           fi
         env:
@@ -164,7 +198,9 @@ jobs:
           ISSUE_CREATOR: ${{ github.event.issue.user.login }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
-          MAX_COURSE_PER_USER: ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
+          MAX_COURSE_PER_USER:
+            ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
+          MAX_PER_USER: ${{ vars.MORPHOCLOUD_MAX_INSTANCES_PER_USER }}
           MAX_TOTAL: ${{ vars.MORPHOCLOUD_MAX_TOTAL_INSTANCES }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}

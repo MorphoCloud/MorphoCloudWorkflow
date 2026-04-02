@@ -75,25 +75,33 @@ jobs:
             exit 0
           fi
 
-          # Count previously-approved open instances for this user.
+          # Count ALL previously-approved open instances for this user (individual + course).
           # Exclude issues that have been fully cleaned up (status:deleted + volume:deleted/expiration-pending).
           # (Current issue won't have request:approved yet so it is not counted here.)
-          ISSUES_JSON=$(gh issue list \
+          INDIV_JSON=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:instance" \
             --label "request:approved" \
             --state open \
             --limit 100 \
             --json number,labels)
+          COURSE_JSON=$(gh issue list \
+            --author "$ISSUE_CREATOR" \
+            --label "request-type:course-instance" \
+            --label "request:approved" \
+            --state open \
+            --limit 100 \
+            --json number,labels)
+          ALL_JSON=$(jq -n --argjson a "$INDIV_JSON" --argjson b "$COURSE_JSON" '$a + $b')
 
-          ACTIVE_ISSUES=$(echo "$ISSUES_JSON" | jq '[.[] | select(
+          ACTIVE_ISSUES=$(echo "$ALL_JSON" | jq '[.[] | select(
             ((.labels | map(.name) | index("status:deleted")) != null and
              ((.labels | map(.name) | index("volume:deleted")) != null or
               (.labels | map(.name) | index("volume:expiration-pending")) != null))
             | not
           )]')
           USER_COUNT=$(echo "$ACTIVE_ISSUES" | jq 'length')
-          echo "User $ISSUE_CREATOR has $USER_COUNT approved open instance(s) (limit: $MAX_PER_USER)."
+          echo "User $ISSUE_CREATOR has $USER_COUNT approved open instance(s) across all types (limit: $MAX_PER_USER)."
 
           if [[ "$USER_COUNT" -ge "$MAX_PER_USER" ]]; then
             ISSUE_LINKS=$(echo "$ACTIVE_ISSUES" | jq -r '[.[] | "#\(.number)"] | join(", ")')
@@ -223,7 +231,8 @@ jobs:
   check-course-team-membership:
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      ${{ contains(github.event.issue.labels.*.name,
+      'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - uses: actions/checkout@v6
@@ -325,7 +334,8 @@ jobs:
     needs: [check-course-team-membership]
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      ${{ contains(github.event.issue.labels.*.name,
+      'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - name: Check per-user course instance quota
@@ -373,18 +383,56 @@ jobs:
             echo "::error ::User $ISSUE_CREATOR has $USER_COUNT approved course instances (limit: $MAX_COURSE_PER_USER)"
             exit 1
           fi
+
+          # Global cap: also count individual instances — no user may exceed MAX_PER_USER total across all types.
+          INDIV_JSON=$(gh issue list \
+            --author "$ISSUE_CREATOR" \
+            --label "request-type:instance" \
+            --label "request:approved" \
+            --state open \
+            --limit 100 \
+            --json number,labels)
+          ALL_JSON=$(jq -n --argjson a "$INDIV_JSON" --argjson b "$ISSUES_JSON" '$a + $b')
+          TOTAL_ACTIVE=$(echo "$ALL_JSON" | jq '[.[] | select(
+            ((.labels | map(.name) | index("status:deleted")) != null and
+             ((.labels | map(.name) | index("volume:deleted")) != null or
+              (.labels | map(.name) | index("volume:expiration-pending")) != null))
+            | not
+          )]')
+          TOTAL_COUNT=$(echo "$TOTAL_ACTIVE" | jq 'length')
+          echo "User $ISSUE_CREATOR has $TOTAL_COUNT approved open instance(s) across all types (global limit: $MAX_PER_USER)."
+
+          if [[ "$TOTAL_COUNT" -ge "$MAX_PER_USER" ]]; then
+            ISSUE_LINKS=$(echo "$TOTAL_ACTIVE" | jq -r '[.[] | "#\(.number)"] | join(", ")')
+            gh issue comment "$ISSUE_NUMBER" --body "### Course Instance Request Rejected ❌
+
+          @${ISSUE_CREATOR} has **${TOTAL_COUNT}** active instance(s) across all types, which is at the global per-user limit of **${MAX_PER_USER}**.
+
+          Existing instance(s): ${ISSUE_LINKS}
+
+          Go to one of these issues and type \`/delete_all\` to free your quota before requesting a new one.
+
+          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the global per-user instance limit ($TOTAL_COUNT/$MAX_PER_USER)."
+            gh issue close "$ISSUE_NUMBER"
+            gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
+            echo "::error ::User $ISSUE_CREATOR has $TOTAL_COUNT approved instances across all types (global limit: $MAX_PER_USER)"
+            exit 1
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_CREATOR: ${{ github.event.issue.user.login }}
           ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
-          MAX_COURSE_PER_USER: ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
+          MAX_COURSE_PER_USER:
+            ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
+          MAX_PER_USER: ${{ vars.MORPHOCLOUD_MAX_INSTANCES_PER_USER }}
 
   call-validate-request-course:
     needs: [check-course-team-membership, check-course-instance-quota]
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      ${{ contains(github.event.issue.labels.*.name,
+      'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/validate-request-course.yml
     with:
@@ -394,7 +442,8 @@ jobs:
   call-request-initial-comments-course:
     needs: [check-course-team-membership, check-course-instance-quota]
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      ${{ contains(github.event.issue.labels.*.name,
+      'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/request-initial-comments.yml
     with:
@@ -421,7 +470,8 @@ jobs:
     needs: [check-course-team-membership, check-course-instance-quota]
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:course-instance') &&
+      ${{ contains(github.event.issue.labels.*.name,
+      'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - name: Extract course slug and rename issue
@@ -437,5 +487,3 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-
-

@@ -104,15 +104,23 @@ jobs:
             exit 1
           fi
 
-          # Per-user check: count user's issue numbers that have a live OpenStack instance
+          # Per-user check: count user's issue numbers (individual + course) that have a live OpenStack instance
           INSTANCE_PREFIX="${INSTANCE_NAME_PREFIX:+${INSTANCE_NAME_PREFIX}_}"
-          ISSUE_NUMBERS=$(gh issue list \
+          INDIV_NUMS=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:instance" \
             --state open \
             --limit 100 \
             --json number \
             --jq '.[].number' | grep -v "^${ISSUE_NUMBER}$" || true)
+          COURSE_NUMS=$(gh issue list \
+            --author "$ISSUE_CREATOR" \
+            --label "request-type:course-instance" \
+            --state open \
+            --limit 100 \
+            --json number \
+            --jq '.[].number' | grep -v "^${ISSUE_NUMBER}$" || true)
+          ISSUE_NUMBERS=$(printf "%s\n%s" "$INDIV_NUMS" "$COURSE_NUMS" | grep -v '^$' || true)
 
           USER_COUNT=0
           while IFS= read -r NUM; do
@@ -123,7 +131,7 @@ jobs:
             fi
           done <<< "$ISSUE_NUMBERS"
 
-          echo "User $ISSUE_CREATOR has $USER_COUNT active OpenStack instance(s) (limit: $MAX_PER_USER)"
+          echo "User $ISSUE_CREATOR has $USER_COUNT active OpenStack instance(s) across all types (limit: $MAX_PER_USER)"
 
           if [[ "$USER_COUNT" -ge "$MAX_PER_USER" ]]; then
             gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
