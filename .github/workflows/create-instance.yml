@@ -104,32 +104,39 @@ jobs:
             exit 1
           fi
 
-          # Per-user check: count user's issue numbers (individual + course) that have a live OpenStack instance
+          # Per-user check: count user's issue numbers (individual + course, open AND closed)
+          # that have a live OpenStack instance or volume — catches manually-closed issues with orphaned resources.
           INSTANCE_PREFIX="${INSTANCE_NAME_PREFIX:+${INSTANCE_NAME_PREFIX}_}"
+          OS_VOLUME_NAMES=$(openstack volume list -f json | jq -r '.[].Name')
           INDIV_NUMS=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:instance" \
-            --state open \
-            --limit 100 \
+            --state all \
+            --limit 200 \
             --json number \
             --jq '.[].number' | grep -v "^${ISSUE_NUMBER}$" || true)
           COURSE_NUMS=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:course-instance" \
-            --state open \
-            --limit 100 \
+            --state all \
+            --limit 200 \
             --json number \
             --jq '.[].number' | grep -v "^${ISSUE_NUMBER}$" || true)
           ISSUE_NUMBERS=$(printf "%s\n%s" "$INDIV_NUMS" "$COURSE_NUMS" | grep -v '^$' || true)
 
           USER_COUNT=0
+          OCCUPIED_ISSUES=""
           while IFS= read -r NUM; do
             [[ -z "$NUM" ]] && continue
             INSTANCE_NAME="${INSTANCE_PREFIX}instance-${NUM}"
-            if echo "$OS_NAMES" | grep -qx "$INSTANCE_NAME"; then
-              ((USER_COUNT++))
+            VOLUME_NAME="My-Data-${NUM}"
+            if echo "$OS_NAMES" | grep -qx "$INSTANCE_NAME" || \
+               echo "$OS_VOLUME_NAMES" | grep -qE "^${VOLUME_NAME}(-.*)?$"; then
+              (( ++USER_COUNT ))
+              OCCUPIED_ISSUES="${OCCUPIED_ISSUES} #${NUM}"
             fi
           done <<< "$ISSUE_NUMBERS"
+          OCCUPIED_ISSUES=$(echo "$OCCUPIED_ISSUES" | xargs | tr ' ' ', ')
 
           echo "User $ISSUE_CREATOR has $USER_COUNT active OpenStack instance(s) across all types (limit: $MAX_PER_USER)"
 
@@ -138,7 +145,9 @@ jobs:
 
           @${ISSUE_CREATOR} already has **${USER_COUNT}** active instance(s), which is at the per-user limit of **${MAX_PER_USER}**.
 
-          Please \`/shelve\` or \`/delete_all\` an existing instance before creating a new one.
+          Existing instance(s) found in OpenStack: ${OCCUPIED_ISSUES}
+
+          Go to one of those issues and type \`/delete_all\` to free your quota before creating a new one.
 
           > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
             gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"

@@ -75,48 +75,40 @@ jobs:
             exit 0
           fi
 
-          # Count ALL previously-approved open instances for this user (individual + course).
-          # Exclude issues that have been fully cleaned up (status:deleted + volume:deleted/expiration-pending).
-          # (Current issue won't have request:approved yet so it is not counted here.)
+          # Count open instance request issues for this user (individual + course), excluding the current one.
+          # Simple open-issue count: if the user already has MAX_PER_USER open requests, reject immediately.
+          # No OpenStack access needed — Layer 2 (at /create time) does the authoritative resource check.
           INDIV_JSON=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:instance" \
-            --label "request:approved" \
             --state open \
-            --limit 100 \
-            --json number,labels)
+            --limit 200 \
+            --json number)
           COURSE_JSON=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:course-instance" \
-            --label "request:approved" \
             --state open \
-            --limit 100 \
-            --json number,labels)
+            --limit 200 \
+            --json number)
           ALL_JSON=$(jq -n --argjson a "$INDIV_JSON" --argjson b "$COURSE_JSON" '$a + $b')
 
-          ACTIVE_ISSUES=$(echo "$ALL_JSON" | jq '[.[] | select(
-            ((.labels | map(.name) | index("status:deleted")) != null and
-             ((.labels | map(.name) | index("volume:deleted")) != null or
-              (.labels | map(.name) | index("volume:expiration-pending")) != null))
-            | not
-          )]')
-          USER_COUNT=$(echo "$ACTIVE_ISSUES" | jq 'length')
-          echo "User $ISSUE_CREATOR has $USER_COUNT approved open instance(s) across all types (limit: $MAX_PER_USER)."
+          # Exclude the current issue (just opened, already in the list)
+          EXISTING=$(echo "$ALL_JSON" | jq --argjson cur "$ISSUE_NUMBER" '[.[] | select(.number != $cur)]')
+          USER_COUNT=$(echo "$EXISTING" | jq 'length')
+          echo "User $ISSUE_CREATOR already has $USER_COUNT open instance request(s) (limit: $MAX_PER_USER)."
 
           if [[ "$USER_COUNT" -ge "$MAX_PER_USER" ]]; then
-            ISSUE_LINKS=$(echo "$ACTIVE_ISSUES" | jq -r '[.[] | "#\(.number)"] | join(", ")')
+            ISSUE_LINKS=$(echo "$EXISTING" | jq -r '[.[] | "#\(.number)"] | join(", ")')
             gh issue comment "$ISSUE_NUMBER" --body "### Instance Request Rejected ❌
 
-          @${ISSUE_CREATOR} already has **${USER_COUNT}** active instance(s), which is at the per-user limit of **${MAX_PER_USER}**.
+          @${ISSUE_CREATOR} already has **${USER_COUNT}** open instance request(s) (${ISSUE_LINKS}), which is the maximum of **${MAX_PER_USER}**.
 
-          Existing instance(s): ${ISSUE_LINKS}
+          You already have open requests — please use one of those existing issues. If your instance resources have been deleted, you can run \`/create\` directly in an existing issue to get a new instance.
 
-          Go to one of these issues and type \`/delete_all\` to free your quota before requesting a new one.
-
-          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
+          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the open-issue limit ($USER_COUNT/$MAX_PER_USER)."
             gh issue close "$ISSUE_NUMBER"
             gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
-            echo "::error ::User $ISSUE_CREATOR has $USER_COUNT approved instances (limit: $MAX_PER_USER)"
+            echo "::error ::User $ISSUE_CREATOR has $USER_COUNT open instance requests (limit: $MAX_PER_USER)"
             exit 1
           fi
         env:
@@ -341,81 +333,63 @@ jobs:
       - name: Check per-user course instance quota
         run: |
           MAX_COURSE_PER_USER="${MAX_COURSE_PER_USER:-1}"
+          MAX_PER_USER="${MAX_PER_USER:-2}"
           # Admin bypass
           if echo ",$ADMINS," | grep -q ",$ISSUE_CREATOR,"; then
             echo "Admin $ISSUE_CREATOR — skipping quota check."
             exit 0
           fi
 
-          # Count previously-approved open course instances for this user.
-          # Exclude issues that have been fully cleaned up (status:deleted + volume:deleted/expiration-pending).
-          # (Current issue won't have request:approved yet so it is not counted here.)
-          ISSUES_JSON=$(gh issue list \
+          # Count open course instance request issues, excluding the current one.
+          COURSE_JSON=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:course-instance" \
-            --label "request:approved" \
             --state open \
-            --limit 100 \
-            --json number,labels)
+            --limit 200 \
+            --json number)
+          EXISTING_COURSE=$(echo "$COURSE_JSON" | jq --argjson cur "$ISSUE_NUMBER" '[.[] | select(.number != $cur)]')
+          COURSE_COUNT=$(echo "$EXISTING_COURSE" | jq 'length')
+          echo "User $ISSUE_CREATOR already has $COURSE_COUNT open course instance request(s) (limit: $MAX_COURSE_PER_USER)."
 
-          ACTIVE_ISSUES=$(echo "$ISSUES_JSON" | jq '[.[] | select(
-            ((.labels | map(.name) | index("status:deleted")) != null and
-             ((.labels | map(.name) | index("volume:deleted")) != null or
-              (.labels | map(.name) | index("volume:expiration-pending")) != null))
-            | not
-          )]')
-          USER_COUNT=$(echo "$ACTIVE_ISSUES" | jq 'length')
-          echo "User $ISSUE_CREATOR has $USER_COUNT approved open course instance(s) (limit: $MAX_COURSE_PER_USER)."
-
-          if [[ "$USER_COUNT" -ge "$MAX_COURSE_PER_USER" ]]; then
-            ISSUE_LINKS=$(echo "$ACTIVE_ISSUES" | jq -r '[.[] | "#\(.number)"] | join(", ")')
+          if [[ "$COURSE_COUNT" -ge "$MAX_COURSE_PER_USER" ]]; then
+            ISSUE_LINKS=$(echo "$EXISTING_COURSE" | jq -r '[.[] | "#\(.number)"] | join(", ")')
             gh issue comment "$ISSUE_NUMBER" --body "### Course Instance Request Rejected ❌
 
-          @${ISSUE_CREATOR} already has **${USER_COUNT}** active course instance(s), which is at the per-user limit of **${MAX_COURSE_PER_USER}**.
+          @${ISSUE_CREATOR} already has **${COURSE_COUNT}** open course instance request(s) (${ISSUE_LINKS}), which is the maximum of **${MAX_COURSE_PER_USER}**.
 
-          Existing course instance(s): ${ISSUE_LINKS}
+          You already have an open course request — please use that existing issue. If your instance resources have been deleted, you can run \`/create\` directly in the existing issue to get a new instance.
 
-          Go to that issue and type \`/delete_all\` to free your quota, or contact your instructor.
-
-          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user course instance limit ($USER_COUNT/$MAX_COURSE_PER_USER)."
+          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the open course-issue limit ($COURSE_COUNT/$MAX_COURSE_PER_USER)."
             gh issue close "$ISSUE_NUMBER"
             gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
-            echo "::error ::User $ISSUE_CREATOR has $USER_COUNT approved course instances (limit: $MAX_COURSE_PER_USER)"
+            echo "::error ::User $ISSUE_CREATOR has $COURSE_COUNT open course instance requests (limit: $MAX_COURSE_PER_USER)"
             exit 1
           fi
 
-          # Global cap: also count individual instances — no user may exceed MAX_PER_USER total across all types.
+          # Global cap: count all open instance request issues (course + individual) against MAX_PER_USER.
           INDIV_JSON=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:instance" \
-            --label "request:approved" \
             --state open \
-            --limit 100 \
-            --json number,labels)
-          ALL_JSON=$(jq -n --argjson a "$INDIV_JSON" --argjson b "$ISSUES_JSON" '$a + $b')
-          TOTAL_ACTIVE=$(echo "$ALL_JSON" | jq '[.[] | select(
-            ((.labels | map(.name) | index("status:deleted")) != null and
-             ((.labels | map(.name) | index("volume:deleted")) != null or
-              (.labels | map(.name) | index("volume:expiration-pending")) != null))
-            | not
-          )]')
-          TOTAL_COUNT=$(echo "$TOTAL_ACTIVE" | jq 'length')
-          echo "User $ISSUE_CREATOR has $TOTAL_COUNT approved open instance(s) across all types (global limit: $MAX_PER_USER)."
+            --limit 200 \
+            --json number)
+          ALL_JSON=$(jq -n --argjson a "$COURSE_JSON" --argjson b "$INDIV_JSON" '$a + $b')
+          EXISTING_ALL=$(echo "$ALL_JSON" | jq --argjson cur "$ISSUE_NUMBER" '[.[] | select(.number != $cur)]')
+          TOTAL_COUNT=$(echo "$EXISTING_ALL" | jq 'length')
+          echo "User $ISSUE_CREATOR already has $TOTAL_COUNT open instance request(s) across all types (global limit: $MAX_PER_USER)."
 
           if [[ "$TOTAL_COUNT" -ge "$MAX_PER_USER" ]]; then
-            ISSUE_LINKS=$(echo "$TOTAL_ACTIVE" | jq -r '[.[] | "#\(.number)"] | join(", ")')
+            ISSUE_LINKS=$(echo "$EXISTING_ALL" | jq -r '[.[] | "#\(.number)"] | join(", ")')
             gh issue comment "$ISSUE_NUMBER" --body "### Course Instance Request Rejected ❌
 
-          @${ISSUE_CREATOR} has **${TOTAL_COUNT}** active instance(s) across all types, which is at the global per-user limit of **${MAX_PER_USER}**.
+          @${ISSUE_CREATOR} already has **${TOTAL_COUNT}** open instance request(s) across all types (${ISSUE_LINKS}), which is the global maximum of **${MAX_PER_USER}**.
 
-          Existing instance(s): ${ISSUE_LINKS}
+          You already have open requests — please use one of those existing issues. If your instance resources have been deleted, you can run \`/create\` directly in an existing issue to get a new instance.
 
-          Go to one of these issues and type \`/delete_all\` to free your quota before requesting a new one.
-
-          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the global per-user instance limit ($TOTAL_COUNT/$MAX_PER_USER)."
+          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the global open-issue limit ($TOTAL_COUNT/$MAX_PER_USER)."
             gh issue close "$ISSUE_NUMBER"
             gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
-            echo "::error ::User $ISSUE_CREATOR has $TOTAL_COUNT approved instances across all types (global limit: $MAX_PER_USER)"
+            echo "::error ::User $ISSUE_CREATOR has $TOTAL_COUNT open instance requests across all types (global limit: $MAX_PER_USER)"
             exit 1
           fi
         env:

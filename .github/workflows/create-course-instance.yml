@@ -125,24 +125,31 @@ jobs:
             exit 1
           fi
 
-          # Per-user check: count user's course issue numbers that have a live OpenStack instance
+          # Per-user check: count user's course issue numbers (open AND closed) that have a live OpenStack
+          # instance or volume — catches manually-closed issues with orphaned resources.
           INSTANCE_PREFIX="${INSTANCE_NAME_PREFIX:+${INSTANCE_NAME_PREFIX}_}"
+          OS_VOLUME_NAMES=$(openstack volume list -f json | jq -r '.[].Name')
           COURSE_NUMS=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:course-instance" \
-            --state open \
-            --limit 100 \
+            --state all \
+            --limit 200 \
             --json number \
             --jq '.[].number' | grep -v "^${ISSUE_NUMBER}$" || true)
 
           COURSE_COUNT=0
+          OCCUPIED_COURSE_ISSUES=""
           while IFS= read -r NUM; do
             [[ -z "$NUM" ]] && continue
             INSTANCE_NAME="${INSTANCE_PREFIX}instance-${NUM}"
-            if echo "$OS_NAMES" | grep -qx "$INSTANCE_NAME"; then
+            VOLUME_NAME="My-Data-${NUM}"
+            if echo "$OS_NAMES" | grep -qx "$INSTANCE_NAME" || \
+               echo "$OS_VOLUME_NAMES" | grep -qE "^${VOLUME_NAME}(-.*)?$"; then
               ((COURSE_COUNT++))
+              OCCUPIED_COURSE_ISSUES="${OCCUPIED_COURSE_ISSUES} #${NUM}"
             fi
           done <<< "$COURSE_NUMS"
+          OCCUPIED_COURSE_ISSUES=$(echo "$OCCUPIED_COURSE_ISSUES" | xargs | tr ' ' ', ')
 
           echo "User $ISSUE_CREATOR has $COURSE_COUNT active course OpenStack instance(s) (limit: $MAX_COURSE_PER_USER)"
 
@@ -151,7 +158,9 @@ jobs:
 
           @${ISSUE_CREATOR} already has **${COURSE_COUNT}** active course instance(s), which is at the per-user limit of **${MAX_COURSE_PER_USER}**.
 
-          Please \`/delete_all\` your existing course instance or contact your instructor before creating a new one.
+          Existing course instance(s) found in OpenStack: ${OCCUPIED_COURSE_ISSUES}
+
+          Go to that issue and type \`/delete_all\` to free your quota, or contact your instructor.
 
           > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user course instance limit ($COURSE_COUNT/$MAX_COURSE_PER_USER)."
             gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
@@ -159,24 +168,29 @@ jobs:
             exit 1
           fi
 
-          # Global cap: also count individual instances — no user may exceed MAX_PER_USER total across all types.
+          # Global cap: also count individual instances (open AND closed) — no user may exceed MAX_PER_USER total.
           INDIV_NUMS=$(gh issue list \
             --author "$ISSUE_CREATOR" \
             --label "request-type:instance" \
-            --state open \
-            --limit 100 \
+            --state all \
+            --limit 200 \
             --json number \
             --jq '.[].number' | grep -v "^${ISSUE_NUMBER}$" || true)
           ALL_NUMS=$(printf "%s\n%s" "$COURSE_NUMS" "$INDIV_NUMS" | grep -v '^$' || true)
 
           USER_COUNT=0
+          OCCUPIED_ALL_ISSUES=""
           while IFS= read -r NUM; do
             [[ -z "$NUM" ]] && continue
             INSTANCE_NAME="${INSTANCE_PREFIX}instance-${NUM}"
-            if echo "$OS_NAMES" | grep -qx "$INSTANCE_NAME"; then
-              ((USER_COUNT++))
+            VOLUME_NAME="My-Data-${NUM}"
+            if echo "$OS_NAMES" | grep -qx "$INSTANCE_NAME" || \
+               echo "$OS_VOLUME_NAMES" | grep -qE "^${VOLUME_NAME}(-.*)?$"; then
+              (( ++USER_COUNT ))
+              OCCUPIED_ALL_ISSUES="${OCCUPIED_ALL_ISSUES} #${NUM}"
             fi
           done <<< "$ALL_NUMS"
+          OCCUPIED_ALL_ISSUES=$(echo "$OCCUPIED_ALL_ISSUES" | xargs | tr ' ' ', ')
 
           echo "User $ISSUE_CREATOR has $USER_COUNT active OpenStack instance(s) across all types (global limit: $MAX_PER_USER)"
 
@@ -185,7 +199,9 @@ jobs:
 
           @${ISSUE_CREATOR} has **${USER_COUNT}** active instance(s) across all types, which is at the global per-user limit of **${MAX_PER_USER}**.
 
-          Please \`/shelve\` or \`/delete_all\` an existing instance before creating a new one.
+          Existing instance(s) found in OpenStack: ${OCCUPIED_ALL_ISSUES}
+
+          Go to one of those issues and type \`/delete_all\` to free your quota before creating a new one.
 
           > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the global per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
             gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
