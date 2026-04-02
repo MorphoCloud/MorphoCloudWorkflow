@@ -65,7 +65,6 @@ jobs:
           {"name": "timeout:4hrs", "color": "5319E7", "description": "Duration in hours after which the instance will be stopped"},
           {"name": "volume:deleted", "color": "0E8CDB", "description": "The volume has been permanently deleted after the grace period."},
           {"name": "volume:expiration-pending", "color": "0E8CDB", "description": "The volume is detached and will be deleted after the grace period."},
-          {"name": "error:quota-exceeded", "color": "B60205", "description": "Instance request rejected: per-user instance limit reached"},
           {"name": "error:system-capacity", "color": "B60205", "description": "Instance request rejected: system capacity limit reached"}
         ]
     steps:

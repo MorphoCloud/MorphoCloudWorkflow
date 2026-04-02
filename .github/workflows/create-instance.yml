@@ -150,7 +150,6 @@ jobs:
           Go to one of those issues and type \`/delete_all\` to free your quota before creating a new one.
 
           > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
-            gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
             echo "::error ::User $ISSUE_CREATOR has $USER_COUNT/$MAX_PER_USER instances"
             exit 1
           fi

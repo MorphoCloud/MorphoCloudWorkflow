@@ -107,7 +107,6 @@ jobs:
 
           > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the open-issue limit ($USER_COUNT/$MAX_PER_USER)."
             gh issue close "$ISSUE_NUMBER"
-            gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
             echo "::error ::User $ISSUE_CREATOR has $USER_COUNT open instance requests (limit: $MAX_PER_USER)"
             exit 1
           fi
@@ -361,7 +360,6 @@ jobs:
 
           > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the open course-issue limit ($COURSE_COUNT/$MAX_COURSE_PER_USER)."
             gh issue close "$ISSUE_NUMBER"
-            gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
             echo "::error ::User $ISSUE_CREATOR has $COURSE_COUNT open course instance requests (limit: $MAX_COURSE_PER_USER)"
             exit 1
           fi
@@ -388,7 +386,6 @@ jobs:
 
           > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the global open-issue limit ($TOTAL_COUNT/$MAX_PER_USER)."
             gh issue close "$ISSUE_NUMBER"
-            gh issue edit "$ISSUE_NUMBER" --add-label "error:quota-exceeded"
             echo "::error ::User $ISSUE_CREATOR has $TOTAL_COUNT open instance requests across all types (global limit: $MAX_PER_USER)"
             exit 1
           fi
