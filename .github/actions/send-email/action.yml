@@ -91,7 +91,7 @@ runs:
           - To delete an instance and/or its volume, use the `/delete_instance`, `/delete_volume`, or `/delete_all` commands.
           - Commands should be added as comments to issue [${{ github.repository }}#${{ inputs.instance_issue_number }}](https://github.com/${{ github.repository }}/issues/${{ inputs.instance_issue_number }})
 
-          If you have questions, please contact [morphocloud@outlook.com](mailto:morphocloud@outlook.com).
+          If you have questions, please contact [portal@morphocloud.org](mailto:portal@morphocloud.org).
 
           **Connection Methods:**
 
