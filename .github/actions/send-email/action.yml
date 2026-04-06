@@ -57,12 +57,12 @@ runs:
     - name: Send mail
       uses: dawidd6/action-send-mail@62a2d05b79935ad4fb90ce9079928099579c14ac # v9
       with:
-        server_address: smtp.gmail.com
-        server_port: 465
-        secure: true
+        server_address: webhost.dynadot.com
+        server_port: 587
+        secure: false
         username: ${{ inputs.mail_server_username }}
         password: ${{ inputs.mail_server_password }}
-        from: MorphoCloudPortal <morphocloudportal@gmail.com>
+        from: MorphoCloudPortal <no-reply@morphocloud.org>
         to: ${{ steps.lookup_email.outputs.email }}
         subject:
           "[${{ github.event.repository.name }}] Instance ${{

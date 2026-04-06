@@ -37,12 +37,12 @@ runs:
     - name: Send approval mail
       uses: dawidd6/action-send-mail@62a2d05b79935ad4fb90ce9079928099579c14ac # v9
       with:
-        server_address: smtp.gmail.com
-        server_port: 465
-        secure: true
+        server_address: webhost.dynadot.com
+        server_port: 587
+        secure: false
         username: ${{ inputs.mail_server_username }}
         password: ${{ inputs.mail_server_password }}
-        from: MorphoCloudPortal <morphocloudportal@gmail.com>
+        from: MorphoCloudPortal <no-reply@morphocloud.org>
         to: ${{ steps.lookup_email.outputs.email }}
         subject:
           "[${{ github.event.repository.name }}] Approval granted for workshop
@@ -59,7 +59,7 @@ runs:
 
           _Only one command should be used per comment._
 
-          If you have questions, please contact [morphocloudportal@gmail.com](mailto:morphocloudportal@gmail.com).
+          If you have questions, please contact [portal@morphocloud.org](mailto:portal@morphocloud.org).
 
           **Supported Issue Commands:**
 

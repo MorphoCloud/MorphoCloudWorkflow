@@ -164,12 +164,12 @@ jobs:
         if: ${{ steps.check_renewal.outputs.renewal_available == 'true' }}
         uses: dawidd6/action-send-mail@62a2d05b79935ad4fb90ce9079928099579c14ac # v9
         with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
+          server_address: webhost.dynadot.com
+          server_port: 587
+          secure: false
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          from: MorphoCloudPortal <morphocloudportal@gmail.com>
+          from: MorphoCloudPortal <no-reply@morphocloud.org>
           to: ${{ steps.resolve_email.outputs.email }}
           subject:
             "[${{ github.event.repository.name }}] Instance ${{
@@ -202,12 +202,12 @@ jobs:
         if: ${{ steps.check_renewal.outputs.renewal_available == 'false' }}
         uses: dawidd6/action-send-mail@62a2d05b79935ad4fb90ce9079928099579c14ac # v9
         with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
+          server_address: webhost.dynadot.com
+          server_port: 587
+          secure: false
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          from: MorphoCloudPortal <morphocloudportal@gmail.com>
+          from: MorphoCloudPortal <no-reply@morphocloud.org>
           to: ${{ steps.resolve_email.outputs.email }}
           subject:
             "[${{ github.event.repository.name }}] FINAL NOTICE: Instance ${{
@@ -238,7 +238,9 @@ jobs:
             **⏳ Time is running out! Back up your data now!**
 
       - name: command results comment (failed)
-        if: ${{ (steps.send_email_renewable.outcome == 'failure' || steps.send_email_final.outcome == 'failure') && failure() }}
+        if:
+          ${{ (steps.send_email_renewable.outcome == 'failure' ||
+          steps.send_email_final.outcome == 'failure') && failure() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           issue-number: ${{ inputs.issue_number }}
@@ -248,7 +250,9 @@ jobs:
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: command results comment (success)
-        if: ${{ (steps.send_email_renewable.outcome == 'success' || steps.send_email_final.outcome == 'success') && success() }}
+        if:
+          ${{ (steps.send_email_renewable.outcome == 'success' ||
+          steps.send_email_final.outcome == 'success') && success() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           issue-number: ${{ inputs.issue_number }}

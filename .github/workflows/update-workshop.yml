@@ -191,12 +191,12 @@ jobs:
         if: ${{ steps.readiness.outputs.ready == 'true' }}
         uses: dawidd6/action-send-mail@62a2d05b79935ad4fb90ce9079928099579c14ac # v9
         with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
+          server_address: webhost.dynadot.com
+          server_port: 587
+          secure: false
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          from: MorphoCloudPortal <morphocloudportal@gmail.com>
+          from: MorphoCloudPortal <no-reply@morphocloud.org>
           to: ${{ steps.decode_email.outputs.output_string }}
           subject:
             "[${{ github.event.repository.name }}] Workshop #${{

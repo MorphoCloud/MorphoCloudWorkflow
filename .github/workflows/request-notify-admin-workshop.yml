@@ -40,12 +40,12 @@ jobs:
       - name: Send mail (workshop approval requested)
         uses: dawidd6/action-send-mail@6d98ae34d733f9a723a9e04e94f2f24ba05e1402 # v6
         with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
+          server_address: webhost.dynadot.com
+          server_port: 587
+          secure: false
           username: ${{secrets.MAIL_USERNAME}}
           password: ${{secrets.MAIL_PASSWORD}}
-          from: MorphoCloudPortal <morphocloudportal@gmail.com>
+          from: MorphoCloudPortal <no-reply@morphocloud.org>
           to: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
           subject:
             "[${{ github.event.repository.name }}] Workshop approval requested
