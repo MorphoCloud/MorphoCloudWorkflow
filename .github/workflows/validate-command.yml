@@ -95,6 +95,7 @@ jobs:
             "/shelve"
             "/unshelve"
             "/email"
+            "/instructor_access"
             "/delete_instance"
             "/delete_volume"
             "/delete_all"

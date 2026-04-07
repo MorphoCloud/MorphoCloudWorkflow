@@ -9,6 +9,7 @@ may be entered per comment._
 | `/unshelve`        | Unshelve the instance.                                      | Issue creator, Admin |
 | `/email`           | Send email to _Issue creator_ with connection URL.          | Issue creator, Admin |
 | `/create`          | Create the instance and associated volume.                  | Issue creator, Admin |
+| `/instructor_access` | Unshelve the instance (if needed) and send credentials to the instructor's registered email. | Course team maintainer, Admin |
 | `/delete_instance` | Delete the instance.                                        | Issue creator, Admin |
 | `/delete_volume`   | Delete the volume.                                          | Issue creator, Admin |
 | `/delete_all`      | Delete the instance and volume.                             | Issue creator, Admin |
