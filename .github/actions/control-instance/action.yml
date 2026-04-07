@@ -430,8 +430,98 @@ runs:
         EXPECTED_STATUS: ${{ steps.expected_status.outputs.value }}
         COMMAND_NAME: ${{ inputs.command_name }}
 
+    - name: Check Grafana capacity on unshelve timeout
+      id: check_capacity_timeout
+      if: ${{ steps.instance_poll.outcome == 'failure' && failure() && inputs.command_name == 'unshelve' }}
+      continue-on-error: true
+      shell: bash
+      run: |
+        # Extract flavor from issue labels
+        flavor=$(
+          gh issue view "$ISSUE_NUMBER" \
+            --json labels \
+            --jq '[.labels[].name | select(. | startswith("flavor:")) | split(":")[1]][0]'
+        )
+        echo "flavor [$flavor]"
+        echo "flavor=$flavor" >> $GITHUB_OUTPUT
+
+        # Map flavor to Grafana panel ID and refId
+        # Panel 9:  CPU/Memory (r3.*, m3.*)
+        # Panel 10: A100 GPU   (g3.*)
+        # Panel 11: L40S GPU   (g4.*)
+        # Panel 12: H100 GPU   (g5.*)
+        case "$flavor" in
+          r3.large)  panel_id=9;  refId="D" ;;
+          r3.xl)     panel_id=9;  refId="E" ;;
+          m3.3xl)    panel_id=9;  refId="F" ;;
+          g3.medium) panel_id=10; refId="H" ;;
+          g3.large)  panel_id=10; refId="A" ;;
+          g3.xl)     panel_id=10; refId="G" ;;
+          g3.2xl)    panel_id=10; refId="B" ;;
+          g3.4xl)    panel_id=10; refId="O" ;;
+          g4.xl)     panel_id=11; refId="J" ;;
+          g4.2xl)    panel_id=11; refId="K" ;;
+          g4.4xl)    panel_id=11; refId="L" ;;
+          g5.xl)     panel_id=12; refId="M" ;;
+          g5.2xl)    panel_id=12; refId="N" ;;
+          g5.4xl)    panel_id=12; refId="O" ;;
+          *)
+            echo "Unknown flavor '$flavor', skipping Grafana check"
+            echo "capacity_hint=unknown" >> $GITHUB_OUTPUT
+            exit 0
+            ;;
+        esac
+
+        # Query Grafana public dashboard API (no authentication required)
+        grafana_uid="b39f9f91452949389a4d333c3f451eac"
+        grafana_count=$(
+          curl -s --max-time 10 \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"queries\":[{\"refId\":\"${refId}\",\"panelId\":${panel_id}}],\"from\":\"now-2m\",\"to\":\"now\"}" \
+            "https://grafana.jetstream-cloud.org/api/public/dashboards/${grafana_uid}/panels/${panel_id}/query" | \
+          jq -r --arg refId "$refId" '.results[$refId].frames[0].data.values[-1][-1] // "null"' 2>/dev/null \
+          || echo "unknown"
+        )
+        echo "grafana_count [$grafana_count]"
+        echo "grafana_count=$grafana_count" >> $GITHUB_OUTPUT
+
+        # Treat count <= 3 as "low": metric is imprecise but near-zero strongly
+        # suggests capacity exhaustion. Count above 3 is treated as "normal"
+        # and the generic timeout message is used instead.
+        if [[ "$grafana_count" =~ ^[0-9]+$ ]] && (( grafana_count <= 3 )); then
+          capacity_hint="low"
+        elif [[ "$grafana_count" =~ ^[0-9]+$ ]]; then
+          capacity_hint="normal"
+        else
+          capacity_hint="unknown"
+        fi
+        echo "capacity_hint [$capacity_hint]"
+        echo "capacity_hint=$capacity_hint" >> $GITHUB_OUTPUT
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+
+    - name: comment (unshelve timeout - possible capacity issue)
+      if: ${{ steps.check_capacity_timeout.outputs.capacity_hint == 'low' && failure() }}
+      uses: peter-evans/create-or-update-comment@v4.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Command Results ❌
+
+          The `/unshelve` command timed out waiting for **${{ steps.define.outputs.instance_name }}** to become active.
+
+          JS2 currently reports low availability for **${{ steps.check_capacity_timeout.outputs.flavor }}** (≈${{ steps.check_capacity_timeout.outputs.grafana_count }} slot(s)). This suggests that capacity may be temporarily exhausted.
+
+          Please check current resource availability and try again later:
+          https://grafana.jetstream-cloud.org/public-dashboards/b39f9f91452949389a4d333c3f451eac
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
     - name: comment (maximum wait time exceeded)
-      if: ${{ steps.instance_poll.outcome == 'failure' && failure() && steps.instance_poll.outputs.capacity_error != 'true' }}
+      if: ${{ steps.instance_poll.outcome == 'failure' && failure() && steps.instance_poll.outputs.capacity_error != 'true' && steps.check_capacity_timeout.outputs.capacity_hint != 'low' }}
       uses: peter-evans/create-or-update-comment@v4.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
