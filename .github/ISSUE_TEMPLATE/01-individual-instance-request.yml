@@ -1,6 +1,6 @@
-name: Instance Request
+name: Individual Instance Request
 description: Issue template to request an individual cloud instance.
-title: "Instance Request"
+title: "Individual Instance Request"
 labels:
   - request-type:instance
   - request-creator:user
