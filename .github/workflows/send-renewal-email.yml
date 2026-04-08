@@ -73,7 +73,7 @@ jobs:
         uses: ./.github/actions/lookup-email
         with:
           lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
-          username: ${{ steps.issue_meta.outputs.author }}
+          github_username: ${{ steps.issue_meta.outputs.author }}
 
       # --- Workshop path: extract email from issue body ---
       - name: Extract fields (workshop)
