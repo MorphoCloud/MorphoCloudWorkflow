@@ -29,37 +29,22 @@ runs:
           exit 0
         }
 
-        JS2_OUTAGES=$(echo "$RESPONSE" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-outages = []
-for item in data.get('results', []):
-    for res in item.get('AffectedResources', []):
-        rid = str(res.get('ResourceID', ''))
-        if 'jetstream2' in rid.lower():
-            outages.append({
-                'subject': item.get('Subject', '(no title)'),
-                'type': item.get('OutageType', ''),
-                'end': item.get('OutageEnd') or '',
-            })
-            break
-print(json.dumps(outages))
-")
-
-        COUNT=$(echo "$JS2_OUTAGES" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
+        COUNT=$(echo "$RESPONSE" | jq '[
+          .results[]
+          | select(any(.AffectedResources[]?; .ResourceID // "" | ascii_downcase | contains("jetstream2")))
+        ] | length')
 
         if [[ "$COUNT" -gt 0 ]]; then
           echo "outage_detected=true" >> $GITHUB_OUTPUT
 
-          OUTAGE_LINES=$(echo "$JS2_OUTAGES" | python3 -c "
-import json, sys
-outages = json.load(sys.stdin)
-lines = []
-for o in outages:
-    end_str = f\" — expected end: {o['end']} UTC\" if o['end'] else ''
-    lines.append(f\"- **{o['subject']}** ({o['type']} outage){end_str}\")
-print('\n'.join(lines))
-")
+          OUTAGE_LINES=$(echo "$RESPONSE" | jq -r '
+            .results[]
+            | select(any(.AffectedResources[]?; .ResourceID // "" | ascii_downcase | contains("jetstream2")))
+            | "- **\(.Subject)** (\(.OutageType // "unknown") outage)\(
+                if (.OutageEnd != null and .OutageEnd != "")
+                then " — expected end: \(.OutageEnd) UTC"
+                else "" end)"
+          ')
 
           gh issue comment "$ISSUE_NUMBER" --body "### ⚠️ Jetstream2 Outage Detected
 
