@@ -1,9 +1,9 @@
 name: "Check Jetstream2 Status"
 description: >
-  Check for active Jetstream2 outages via the ACCESS Operations API.
-  If an outage is found, posts a warning comment on the issue and sets
-  the outage_detected output to 'true'. Fails gracefully if the API is
-  unreachable (does not block the operation).
+  Check for active Jetstream2 outages via the ACCESS Operations API. If an
+  outage is found, posts a warning comment on the issue and sets the
+  outage_detected output to 'true'. Fails gracefully if the API is unreachable
+  (does not block the operation).
 inputs:
   token:
     description: "GitHub token for posting issue comments"
@@ -13,7 +13,8 @@ inputs:
     required: true
 outputs:
   outage_detected:
-    description: "'true' if an active Jetstream2 outage was detected, 'false' otherwise"
+    description:
+      "'true' if an active Jetstream2 outage was detected, 'false' otherwise"
     value: ${{ steps.check.outputs.outage_detected }}
 runs:
   using: "composite"
@@ -40,19 +41,13 @@ runs:
           OUTAGE_LINES=$(echo "$RESPONSE" | jq -r '
             .results[]
             | select(any(.AffectedResources[]?; .ResourceID // "" | ascii_downcase | contains("jetstream2")))
-            | "- **\(.Subject)** (\(.OutageType // "unknown") outage)\(
-                if (.OutageEnd != null and .OutageEnd != "")
-                then " — expected end: \(.OutageEnd) UTC"
-                else "" end)"
+            | "- **\(.Subject)** (\(.OutageType // "unknown") outage)\(if (.OutageEnd != null and .OutageEnd != "") then " — expected end: \(.OutageEnd) UTC" else "" end)"
           ')
 
-          gh issue comment "$ISSUE_NUMBER" --body "### ⚠️ Jetstream2 Outage Detected
-
-An active Jetstream2 outage has been reported by [ACCESS-CI System Status](https://operations.access-ci.org/news). Your operation may fail or be delayed.
-
-${OUTAGE_LINES}
-
-The operation will proceed — you may need to retry once the outage is resolved. Contact @MorphoCloud/morphocloud-admins if you need assistance."
+          printf '### ⚠️ Jetstream2 Outage Detected\n\nAn active Jetstream2 outage has been reported by [ACCESS-CI System Status](https://operations.access-ci.org/news). Your operation may fail or be delayed.\n\n%s\n\nThe operation will proceed — you may need to retry once the outage is resolved. Contact @MorphoCloud/morphocloud-admins for assistance.' \
+            "$OUTAGE_LINES" > /tmp/js2_outage_body.txt
+          gh issue comment "$ISSUE_NUMBER" --body-file /tmp/js2_outage_body.txt
+          rm -f /tmp/js2_outage_body.txt
         else
           echo "outage_detected=false" >> $GITHUB_OUTPUT
         fi
