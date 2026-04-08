@@ -219,6 +219,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
+      - name: Check JS2 status
+        id: js2_status
+        uses: ./.github/actions/check-js2-status
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue_number: ${{ github.event.issue.number }}
+
       - name: Create instance
         id: provision
         uses: ./.github/actions/create-instance
