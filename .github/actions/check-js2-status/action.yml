@@ -41,10 +41,10 @@ runs:
           OUTAGE_LINES=$(echo "$RESPONSE" | jq -r '
             .results[]
             | select(any(.AffectedResources[]?; .ResourceID // "" | ascii_downcase | contains("jetstream2")))
-            | "- **\(.Subject)** (\(.OutageType // "unknown") outage)\(if (.OutageEnd != null and .OutageEnd != "") then " — expected end: \(.OutageEnd) UTC" else "" end)"
+            | "> - **\(.Subject)** (\(.OutageType // "unknown") outage)\(if (.OutageEnd != null and .OutageEnd != "") then " — expected end: \(.OutageEnd) UTC" else "" end)"
           ')
 
-          printf '### ⚠️ Jetstream2 Outage Detected\n\nAn active Jetstream2 outage has been reported by [ACCESS-CI System Status](https://operations.access-ci.org/news). Your operation may fail or be delayed.\n\n%s\n\nThe operation will proceed — you may need to retry once the outage is resolved. Contact @MorphoCloud/morphocloud-admins for assistance.' \
+          printf '### ⚠️ Jetstream2 Outage Detected\n\nAn active Jetstream2 outage has been reported by [ACCESS-CI System Status](https://operations.access-ci.org/news).\n\n%s\n\n**This is a warning — the operation will proceed**, but it may fail or be delayed. Check the comments below to see success or failure. If it has failed, you may need to retry once the outage is resolved.' \
             "$OUTAGE_LINES" > /tmp/js2_outage_body.txt
           gh issue comment "$ISSUE_NUMBER" --body-file /tmp/js2_outage_body.txt
           rm -f /tmp/js2_outage_body.txt
