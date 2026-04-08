@@ -96,7 +96,7 @@ runs:
           **Connection Methods:**
 
           - TurboVNC: `${{ steps.instance_metadata.outputs.instance_ip }}:1`
-          - Web connect: ${{ steps.guacamole.outputs.connection_url }}
+          - Web connect: [${{ steps.guacamole.outputs.connection_url }}](${{ steps.guacamole.outputs.connection_url }})
           - SSH: `ssh exouser@${{ steps.instance_metadata.outputs.instance_ip }}`
 
           **Credentials:**
