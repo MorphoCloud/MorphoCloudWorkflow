@@ -1,0 +1,21 @@
+# students.txt — Course enrollment list for MC-* repos
+#
+# Add one GitHub username per line.
+# Lines starting with # and blank lines are ignored.
+# Usernames are case-insensitive.
+#
+# To trigger enrollment:
+#   - Push changes to this file on the main branch (automatic), OR
+#   - Go to Actions → Enroll Students → Run workflow (manual / dry run)
+#
+# What happens on enrollment:
+#   - If the student is already in the MorphoCloud org → added to the course team immediately
+#   - If the student is not yet in the org → a GitHub org invitation is sent;
+#     the student must accept it before they can open instance requests
+#
+# Students already enrolled are skipped (idempotent).
+#
+# Example:
+#   jdoe-uw
+#   alicejones
+#   bob99
