@@ -38,7 +38,11 @@ jobs:
         if: ${{ steps.email_command.outputs.continue == 'true' }}
         uses: ./.github/actions/check-instance-exists
         with:
-          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          os_application_credential_id:
+            ${{ secrets.OS_APPLICATION_CREDENTIAL_ID }}
+          os_application_credential_secret:
+            ${{ secrets.OS_APPLICATION_CREDENTIAL_SECRET }}
+          os_auth_url: ${{ vars.OS_AUTH_URL }}
           instance_name: ${{ steps.define.outputs.instance_name }}
 
       - name: command results comment (Instance does not exist)
@@ -77,10 +81,16 @@ jobs:
 
       - name: Send mail (individual)
         id: send_email
-        if: ${{ steps.check_type.outputs.is_course != 'true' && steps.check_type.outputs.is_workshop != 'true' }}
+        if:
+          ${{ steps.check_type.outputs.is_course != 'true' &&
+          steps.check_type.outputs.is_workshop != 'true' }}
         uses: ./.github/actions/send-email
         with:
-          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          os_application_credential_id:
+            ${{ secrets.OS_APPLICATION_CREDENTIAL_ID }}
+          os_application_credential_secret:
+            ${{ secrets.OS_APPLICATION_CREDENTIAL_SECRET }}
+          os_auth_url: ${{ vars.OS_AUTH_URL }}
           token: ${{ secrets.GITHUB_TOKEN }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
           issue_creator: ${{ github.event.issue.user.login }}
@@ -91,10 +101,16 @@ jobs:
 
       - name: Send mail (workshop)
         id: send_workshop_email
-        if: ${{ steps.check_type.outputs.is_course != 'true' && steps.check_type.outputs.is_workshop == 'true' }}
+        if:
+          ${{ steps.check_type.outputs.is_course != 'true' &&
+          steps.check_type.outputs.is_workshop == 'true' }}
         uses: ./.github/actions/workshop-send-email
         with:
-          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          os_application_credential_id:
+            ${{ secrets.OS_APPLICATION_CREDENTIAL_ID }}
+          os_application_credential_secret:
+            ${{ secrets.OS_APPLICATION_CREDENTIAL_SECRET }}
+          os_auth_url: ${{ vars.OS_AUTH_URL }}
           token: ${{ secrets.GITHUB_TOKEN }}
           string_encryption_key: ${{ secrets.STRING_ENCRYPTION_KEY }}
           mail_server_username: ${{ secrets.MAIL_USERNAME }}
@@ -107,7 +123,11 @@ jobs:
         if: ${{ steps.check_type.outputs.is_course == 'true' }}
         uses: ./.github/actions/course-send-email
         with:
-          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          os_application_credential_id:
+            ${{ secrets.OS_APPLICATION_CREDENTIAL_ID }}
+          os_application_credential_secret:
+            ${{ secrets.OS_APPLICATION_CREDENTIAL_SECRET }}
+          os_auth_url: ${{ vars.OS_AUTH_URL }}
           token: ${{ secrets.GITHUB_TOKEN }}
           issue_creator: ${{ github.event.issue.user.login }}
           mail_server_username: ${{ secrets.MAIL_USERNAME }}
@@ -117,7 +137,10 @@ jobs:
           instance_issue_number: ${{ github.event.issue.number }}
 
       - name: command results comment (failed)
-        if: ${{ (steps.send_email.outcome == 'failure' || steps.send_workshop_email.outcome == 'failure' || steps.send_course_email.outcome == 'failure') && failure() }}
+        if:
+          ${{ (steps.send_email.outcome == 'failure' ||
+          steps.send_workshop_email.outcome == 'failure' ||
+          steps.send_course_email.outcome == 'failure') && failure() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}
@@ -129,7 +152,10 @@ jobs:
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: command results comment (success)
-        if: ${{ (steps.send_email.outcome == 'success' || steps.send_workshop_email.outcome == 'success' || steps.send_course_email.outcome == 'success') && success() }}
+        if:
+          ${{ (steps.send_email.outcome == 'success' ||
+          steps.send_workshop_email.outcome == 'success' ||
+          steps.send_course_email.outcome == 'success') && success() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}

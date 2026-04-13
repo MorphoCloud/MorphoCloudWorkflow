@@ -107,7 +107,11 @@ jobs:
         if: ${{ steps.command.outputs.continue == 'true' }}
         uses: ./.github/actions/control-instance
         with:
-          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          os_application_credential_id:
+            ${{ secrets.OS_APPLICATION_CREDENTIAL_ID }}
+          os_application_credential_secret:
+            ${{ secrets.OS_APPLICATION_CREDENTIAL_SECRET }}
+          os_auth_url: ${{ vars.OS_AUTH_URL }}
           issue_number: ${{ github.event.issue.number }}
           command_name: ${{ steps.command.outputs.command_name }}
           instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}

@@ -7,7 +7,21 @@ inputs:
     description:
       "Name of the OpenStack cloud allocation to select openstack auth settings
       defined in '.config/openstack/clouds.yaml'"
-    required: true
+    required: false
+  os_application_credential_id:
+    description: "OpenStack application credential ID (alternative to os_cloud)"
+  os_application_credential_secret:
+    description:
+      "OpenStack application credential secret (alternative to os_cloud)"
+  os_auth_url:
+    description:
+      "OpenStack identity endpoint URL (required when using app credentials)"
+  os_identity_api_version:
+    description: "OpenStack identity API version"
+    default: "3"
+  os_auth_type:
+    description: "OpenStack auth type"
+    default: "v3applicationcredential"
   token:
     description: "GITHUB_TOKEN or repo scoped PAT"
     required: true
@@ -41,6 +55,12 @@ runs:
       uses: ./.github/actions/retrieve-metadata
       with:
         os_cloud: ${{ inputs.os_cloud }}
+        os_application_credential_id: ${{ inputs.os_application_credential_id }}
+        os_application_credential_secret:
+          ${{ inputs.os_application_credential_secret }}
+        os_auth_url: ${{ inputs.os_auth_url }}
+        os_identity_api_version: ${{ inputs.os_identity_api_version }}
+        os_auth_type: ${{ inputs.os_auth_type }}
         instance_name: ${{ inputs.instance_name }}
 
     - name: Look up email via Apps Script
