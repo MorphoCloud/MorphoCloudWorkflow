@@ -12,3 +12,12 @@ body:
     attributes:
       value: |
         _The title will be automatically replaced with a standard identifier when your request is processed. Avoid including personal information in the title._
+
+  - type: checkboxes
+    attributes:
+      label: Confirmation
+      options:
+        - label:
+            I am enrolled in this course and I am requesting a cloud computing
+            instance.
+          required: true
