@@ -29,15 +29,9 @@ jobs:
         id: course_meta
         shell: bash
         run: |
-          body=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body')
-          team_slug=$(printf '%s\n' "$body" | \
-            awk '/^### Course Team Slug/{found=1; next} found && /[^[:space:]]/{print; found=0}' | \
-            xargs)
-          echo "team_slug=$team_slug" >> $GITHUB_OUTPUT
+          echo "team_slug=$COURSE_TEAM_SLUG" >> $GITHUB_OUTPUT
         env:
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
+          COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
 
       - name: Check course team membership
         id: check_membership
@@ -223,14 +217,11 @@ jobs:
     steps:
       - name: Extract course slug and rename issue
         run: |
-          body=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body')
-          team_slug=$(printf '%s\n' "$body" | \
-            awk '/^### Course Team Slug/{found=1; next} found && /[^[:space:]]/{print; found=0}' | \
-            xargs)
-          # Strip morphocloud-course- prefix for readability
-          short_slug="${team_slug#morphocloud-course-}"
+          # Strip mc- prefix for readability (COURSE_TEAM_SLUG e.g. mc-uw-bio388l)
+          short_slug="${COURSE_TEAM_SLUG#mc-}"
           gh issue edit "$ISSUE_NUMBER" --title "MC-Course-${short_slug}-${ISSUE_NUMBER}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
