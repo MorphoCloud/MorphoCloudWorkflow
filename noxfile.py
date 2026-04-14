@@ -190,6 +190,7 @@ See https://github.com/{org}/{project}/compare/{before}...{after}
 
 @nox.session
 def vendorize(session: nox.Session) -> None:
+    """Vendorize into MorphoCloudInstances / MorphoCloudInstancesTest (individual + workshop)."""
     _vendorize(
         session,
         [
@@ -197,10 +198,62 @@ def vendorize(session: nox.Session) -> None:
             ".pre-commit-config.yaml",
             "issue-commands.md",
             "workshop-issue-commands.md",
+            "course-issue-commands.md",
             "cloud-config",
             "scripts/list-instance-credentials.sh",
         ],
-        [".github/dependabot.yml"],
+        [
+            ".github/dependabot.yml",
+            # Course-only issue template — students open issues in MC-* repos, not here
+            ".github/ISSUE_TEMPLATE/02-course-instance-request.yml",
+            # Course-only workflows — not needed in the individual/workshop repo
+            ".github/workflows/on-course-request-opened.yml",
+            ".github/workflows/validate-command-course.yml",
+            ".github/workflows/validate-request-course.yml",
+            ".github/workflows/create-course-instance.yml",
+            ".github/workflows/instructor-access.yml",
+            ".github/workflows/enroll-students.yml",
+        ],
+    )
+
+
+@nox.session(name="vendorize-course")
+def vendorize_course(session: nox.Session) -> None:
+    """Vendorize into MC-* course repos (course instances only)."""
+    _vendorize(
+        session,
+        [
+            ".github",
+            ".pre-commit-config.yaml",
+            "course-issue-commands.md",
+            "cloud-config",
+            "scripts/list-instance-credentials.sh",
+        ],
+        [
+            ".github/dependabot.yml",
+            # Individual/workshop issue templates — not relevant in course repos
+            ".github/ISSUE_TEMPLATE/01-individual-instance-request.yml",
+            ".github/ISSUE_TEMPLATE/03-workshop-request.yml",
+            # Individual/workshop-only workflows
+            ".github/workflows/on-instance-request-opened.yml",
+            ".github/workflows/validate-command-instance.yml",
+            ".github/workflows/validate-command-workshop.yml",
+            ".github/workflows/create-instance.yml",
+            ".github/workflows/create-workshop.yml",
+            ".github/workflows/approve-workshop.yml",
+            ".github/workflows/update-workshop.yml",
+            ".github/workflows/test-workshop-deletion.yml",
+            ".github/workflows/request-notify-admin.yml",
+            ".github/workflows/request-notify-admin-workshop.yml",
+            ".github/workflows/send-email.yml",
+            ".github/workflows/update-renew-label.yml",
+            ".github/workflows/send-renewal-email.yml",
+            ".github/workflows/validate-request.yml",
+            ".github/workflows/request-labeler.yml",
+            ".github/workflows/update-issue.yml",
+            ".github/workflows/update-issue-from-workflow.yml",
+            ".github/workflows/retrieve-emails.yml",
+        ],
     )
 
 

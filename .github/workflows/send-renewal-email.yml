@@ -21,8 +21,26 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Skip if course instance
+        id: skip_check
+        shell: bash
+        run: |
+          IS_COURSE=$(gh issue view "$ISSUE_NUMBER" --json labels \
+            --jq '[.labels[].name] | index("request-type:course-instance") != null')
+          if [[ "$IS_COURSE" == "true" ]]; then
+            echo "Course instances are not renewable. Skipping renewal email."
+            echo "is_course=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_course=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
       - name: Define instance name
         id: define
+        if: ${{ steps.skip_check.outputs.is_course != 'true' }}
         uses: ./.github/actions/define-instance-name
         with:
           prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
@@ -30,13 +48,16 @@ jobs:
 
       - name: Check instance exists
         id: check_instance
+        if: ${{ steps.skip_check.outputs.is_course != 'true' }}
         uses: ./.github/actions/check-instance-exists
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           instance_name: ${{ steps.define.outputs.instance_name }}
 
       - name: command results comment (Instance does not exist)
-        if: ${{ steps.check_instance.outputs.exists == 'false' }}
+        if:
+          ${{ steps.skip_check.outputs.is_course != 'true' &&
+          steps.check_instance.outputs.exists == 'false' }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
           issue-number: ${{ inputs.issue_number }}
@@ -47,6 +68,7 @@ jobs:
 
       - name: Define volume name
         id: define_volume_name
+        if: ${{ steps.skip_check.outputs.is_course != 'true' }}
         uses: ./.github/actions/define-volume-name
         with:
           issue_number: ${{ inputs.issue_number }}
@@ -54,6 +76,7 @@ jobs:
 
       - name: Get issue metadata
         id: issue_meta
+        if: ${{ steps.skip_check.outputs.is_course != 'true' }}
         shell: bash
         run: |
           ISSUE_JSON=$(gh issue view "$ISSUE_NUMBER" --json labels,author)
@@ -69,7 +92,9 @@ jobs:
       # --- Individual path: look up email from Apps Script ---
       - name: Look up email (individual)
         id: lookup_email
-        if: ${{ steps.issue_meta.outputs.is_workshop != 'true' }}
+        if:
+          ${{ steps.skip_check.outputs.is_course != 'true' &&
+          steps.issue_meta.outputs.is_workshop != 'true' }}
         uses: ./.github/actions/lookup-email
         with:
           lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
@@ -78,7 +103,9 @@ jobs:
       # --- Workshop path: extract email from issue body ---
       - name: Extract fields (workshop)
         id: extract
-        if: ${{ steps.issue_meta.outputs.is_workshop == 'true' }}
+        if:
+          ${{ steps.skip_check.outputs.is_course != 'true' &&
+          steps.issue_meta.outputs.is_workshop == 'true' }}
         uses: ./.github/actions/extract-issue-fields
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -87,7 +114,9 @@ jobs:
 
       - name: Check if email is encoded (workshop)
         id: check_email_encryption
-        if: ${{ steps.issue_meta.outputs.is_workshop == 'true' }}
+        if:
+          ${{ steps.skip_check.outputs.is_course != 'true' &&
+          steps.issue_meta.outputs.is_workshop == 'true' }}
         shell: bash
         run: |
           if [[ "$EMAIL" != *"@"* ]]; then
@@ -101,7 +130,9 @@ jobs:
 
       - name: Decode email (workshop)
         id: decode_email
-        if: ${{ steps.issue_meta.outputs.is_workshop == 'true' }}
+        if:
+          ${{ steps.skip_check.outputs.is_course != 'true' &&
+          steps.issue_meta.outputs.is_workshop == 'true' }}
         uses: ./.github/actions/encode-decode-string
         with:
           input_string: ${{ steps.extract.outputs.email }}
@@ -111,6 +142,7 @@ jobs:
 
       - name: Resolve email
         id: resolve_email
+        if: ${{ steps.skip_check.outputs.is_course != 'true' }}
         shell: bash
         run: |
           if [[ "$IS_WORKSHOP" == "true" ]]; then
@@ -125,6 +157,7 @@ jobs:
 
       - name: Check renewal availability
         id: check_renewal
+        if: ${{ steps.skip_check.outputs.is_course != 'true' }}
         shell: bash
         run: |
           # Retrieve issue labels
@@ -161,7 +194,9 @@ jobs:
 
       - name: Send renewal email (renewal available)
         id: send_email_renewable
-        if: ${{ steps.check_renewal.outputs.renewal_available == 'true' }}
+        if:
+          ${{ steps.skip_check.outputs.is_course != 'true' &&
+          steps.check_renewal.outputs.renewal_available == 'true' }}
         uses: dawidd6/action-send-mail@62a2d05b79935ad4fb90ce9079928099579c14ac # v9
         with:
           server_address: webhost.dynadot.com
@@ -199,7 +234,9 @@ jobs:
 
       - name: Send final expiration email (no renewal available)
         id: send_email_final
-        if: ${{ steps.check_renewal.outputs.renewal_available == 'false' }}
+        if:
+          ${{ steps.skip_check.outputs.is_course != 'true' &&
+          steps.check_renewal.outputs.renewal_available == 'false' }}
         uses: dawidd6/action-send-mail@62a2d05b79935ad4fb90ce9079928099579c14ac # v9
         with:
           server_address: webhost.dynadot.com
@@ -239,7 +276,8 @@ jobs:
 
       - name: command results comment (failed)
         if:
-          ${{ (steps.send_email_renewable.outcome == 'failure' ||
+          ${{ steps.skip_check.outputs.is_course != 'true' &&
+          (steps.send_email_renewable.outcome == 'failure' ||
           steps.send_email_final.outcome == 'failure') && failure() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
@@ -251,7 +289,8 @@ jobs:
 
       - name: command results comment (success)
         if:
-          ${{ (steps.send_email_renewable.outcome == 'success' ||
+          ${{ steps.skip_check.outputs.is_course != 'true' &&
+          (steps.send_email_renewable.outcome == 'success' ||
           steps.send_email_final.outcome == 'success') && success() }}
         uses: peter-evans/create-or-update-comment@v5.0.0
         with:
