@@ -19,12 +19,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/create-github-app-token@v2.2.0
-        id: app-token
-        with:
-          app-id: ${{ vars.MORPHOCLOUD_COURSES_APP_ID }}
-          private-key: ${{ secrets.MORPHOCLOUD_COURSES_APP_PRIVATE_KEY }}
-
       - name: Extract course team slug
         id: course_meta
         shell: bash
@@ -37,7 +31,7 @@ jobs:
         id: check_membership
         uses: ./.github/actions/check-team-membership
         with:
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           org: ${{ github.repository_owner }}
           team_slug: ${{ steps.course_meta.outputs.team_slug }}
           username: ${{ github.event.issue.user.login }}
@@ -99,7 +93,7 @@ jobs:
             echo "::warning ::No flavor:<f> found in team description for $TEAM_SLUG; no flavor label applied"
           fi
         env:
-          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ORG: ${{ github.repository_owner }}
           TEAM_SLUG: ${{ steps.course_meta.outputs.team_slug }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
