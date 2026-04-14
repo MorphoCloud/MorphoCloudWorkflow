@@ -33,26 +33,13 @@ jobs:
           app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
           private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
 
-      - name: Extract course team slug
+      - name: Set course team slug from repo variable
         id: course_meta
         shell: bash
         run: |
-          body=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body')
-          team_slug=$(printf '%s\n' "$body" | \
-            awk '/^### Course Team Slug/{found=1; next} found && /[^[:space:]]/{print; found=0}' | \
-            xargs)
-          if [[ -z "$team_slug" ]]; then
-            gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
-
-          Failed to extract course team slug from the issue body. Please ensure the **Course Team Slug** field is filled in."
-            echo "::error ::Could not extract course team slug from issue body"
-            exit 1
-          fi
-          echo "team_slug=$team_slug" >> $GITHUB_OUTPUT
+          echo "team_slug=$COURSE_TEAM_SLUG" >> $GITHUB_OUTPUT
         env:
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
+          COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
 
       - name: Check authorization (course team membership)
         id: check_auth
