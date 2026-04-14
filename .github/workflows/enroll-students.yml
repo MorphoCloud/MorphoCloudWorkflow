@@ -4,9 +4,9 @@
 #
 # Triggered by:
 #   - Push to students.txt on main (automatic enrollment on file update)
-#   - Manual workflow_dispatch (with optional dry-run mode)
+#   - Manual workflow_dispatch (with usernames input or students.txt fallback)
 #
-# What it does for each username in students.txt:
+# What it does for each username:
 #   1. Verifies the GitHub user exists
 #   2. Skips if already a member of this course team
 #   3. If already in the MorphoCloud org → adds directly to team (immediate)
@@ -31,6 +31,13 @@ on:
     paths: [students.txt]
   workflow_dispatch:
     inputs:
+      usernames:
+        description:
+          "Comma-separated GitHub usernames to enroll (e.g. st1,st2,st3). If
+          blank, falls back to students.txt."
+        required: false
+        type: string
+        default: ""
       dry_run:
         description: "Dry run — show what would happen without making changes"
         required: false
@@ -52,6 +59,7 @@ jobs:
           ENROLLMENT_SECRET: ${{ secrets.ENROLLMENT_WEBHOOK_SECRET }}
           TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          USERNAMES_INPUT: ${{ inputs.usernames || '' }}
         run: |
           set -euo pipefail
 
@@ -64,8 +72,15 @@ jobs:
             exit 1
           fi
 
-          # Parse students.txt: strip comments, blank lines, carriage returns
-          mapfile -t USERNAMES < <(grep -v '^\s*#' students.txt | grep -v '^\s*$' | tr -d ' \r')
+          # Use usernames input if provided, else fall back to students.txt
+          if [[ -n "$USERNAMES_INPUT" ]]; then
+            mapfile -t USERNAMES < <(echo "$USERNAMES_INPUT" | tr ',' '\n' | tr -d ' \r' | grep -v '^$')
+          elif [[ -f students.txt ]]; then
+            mapfile -t USERNAMES < <(grep -v '^\s*#' students.txt | grep -v '^\s*$' | tr -d ' \r')
+          else
+            echo "No usernames provided and students.txt not found — nothing to do."
+            exit 0
+          fi
 
           if [[ ${#USERNAMES[@]} -eq 0 ]]; then
             echo "No usernames found in students.txt — nothing to do."
