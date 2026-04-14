@@ -5,21 +5,7 @@ inputs:
     description:
       "Name of the OpenStack cloud allocation to select openstack auth settings
       defined in '.config/openstack/clouds.yaml'"
-    required: false
-  os_application_credential_id:
-    description: "OpenStack application credential ID (alternative to os_cloud)"
-  os_application_credential_secret:
-    description:
-      "OpenStack application credential secret (alternative to os_cloud)"
-  os_auth_url:
-    description:
-      "OpenStack identity endpoint URL (required when using app credentials)"
-  os_identity_api_version:
-    description: "OpenStack identity API version"
-    default: "3"
-  os_auth_type:
-    description: "OpenStack auth type"
-    default: "v3applicationcredential"
+    required: true
   token:
     description: "GITHUB_TOKEN or repo scoped PAT"
     required: true
@@ -88,12 +74,6 @@ runs:
       uses: ./.github/actions/check-volume-exists
       with:
         os_cloud: ${{ inputs.os_cloud }}
-        os_application_credential_id: ${{ inputs.os_application_credential_id }}
-        os_application_credential_secret:
-          ${{ inputs.os_application_credential_secret }}
-        os_auth_url: ${{ inputs.os_auth_url }}
-        os_identity_api_version: ${{ inputs.os_identity_api_version }}
-        os_auth_type: ${{ inputs.os_auth_type }}
         volume_name: ${{ steps.define_volume_name.outputs.volume_name }}
 
     - name: comment (volume does not exist)
@@ -111,12 +91,6 @@ runs:
       uses: ./.github/actions/check-instance-exists
       with:
         os_cloud: ${{ inputs.os_cloud }}
-        os_application_credential_id: ${{ inputs.os_application_credential_id }}
-        os_application_credential_secret:
-          ${{ inputs.os_application_credential_secret }}
-        os_auth_url: ${{ inputs.os_auth_url }}
-        os_identity_api_version: ${{ inputs.os_identity_api_version }}
-        os_auth_type: ${{ inputs.os_auth_type }}
         instance_name: ${{ steps.define.outputs.instance_name }}
 
     - name: Check volume is attached
@@ -151,12 +125,6 @@ runs:
         echo "is_attached=$is_attached" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         VOLUME_NAME: ${{ steps.define_volume_name.outputs.volume_name }}
 
@@ -203,12 +171,6 @@ runs:
         fi
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         VOLUME_NAME: ${{ steps.define_volume_name.outputs.volume_name }}
 
@@ -244,12 +206,6 @@ runs:
         gh issue edit $ISSUE_NUMBER --add-label "volume:deleted" --remove-label "volume:expiration-pending"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         GH_TOKEN: ${{ inputs.token }}
         GH_REPO: ${{ github.repository }}
         ISSUE_NUMBER: ${{ inputs.issue_number }}

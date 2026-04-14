@@ -5,21 +5,7 @@ inputs:
     description:
       "Name of the OpenStack cloud allocation to select openstack auth settings
       defined in '.config/openstack/clouds.yaml'"
-    required: false
-  os_application_credential_id:
-    description: "OpenStack application credential ID (alternative to os_cloud)"
-  os_application_credential_secret:
-    description:
-      "OpenStack application credential secret (alternative to os_cloud)"
-  os_auth_url:
-    description:
-      "OpenStack identity endpoint URL (required when using app credentials)"
-  os_identity_api_version:
-    description: "OpenStack identity API version"
-    default: "3"
-  os_auth_type:
-    description: "OpenStack auth type"
-    default: "v3applicationcredential"
+    required: true
   issue_number:
     description: "Issue number"
     required: true
@@ -123,12 +109,6 @@ runs:
       uses: ./.github/actions/check-instance-exists
       with:
         os_cloud: ${{ inputs.os_cloud }}
-        os_application_credential_id: ${{ inputs.os_application_credential_id }}
-        os_application_credential_secret:
-          ${{ inputs.os_application_credential_secret }}
-        os_auth_url: ${{ inputs.os_auth_url }}
-        os_identity_api_version: ${{ inputs.os_identity_api_version }}
-        os_auth_type: ${{ inputs.os_auth_type }}
         instance_name: ${{ steps.define.outputs.instance_name }}
 
     - name: command results comment (Instance does not exist)
@@ -159,12 +139,6 @@ runs:
         fi
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (server action already in progress)
@@ -254,12 +228,6 @@ runs:
         echo "has_ip_assigned=$has_ip_assigned" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (failed to check instance IP)
@@ -313,12 +281,6 @@ runs:
         openstack floating ip unset --port "$floating_ip_uuid"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: Retrieve or create a floating IP
@@ -330,12 +292,6 @@ runs:
       uses: ./.github/actions/create-ip
       with:
         os_cloud: ${{ inputs.os_cloud }}
-        os_application_credential_id: ${{ inputs.os_application_credential_id }}
-        os_application_credential_secret:
-          ${{ inputs.os_application_credential_secret }}
-        os_auth_url: ${{ inputs.os_auth_url }}
-        os_identity_api_version: ${{ inputs.os_identity_api_version }}
-        os_auth_type: ${{ inputs.os_auth_type }}
         preferred_ip_address:
           ${{ steps.check_instance_has_ip.outputs.instance_ip }}
 
@@ -365,12 +321,6 @@ runs:
         openstack server add floating ip "$INSTANCE_NAME" "$FLOATING_IP_ADDRESS"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         FLOATING_IP_ADDRESS: ${{ steps.ip_create.outputs.floating_ip_address }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
@@ -397,12 +347,6 @@ runs:
         openstack server $COMMAND_NAME "$INSTANCE_NAME"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         COMMAND_NAME: ${{ inputs.command_name }}
 
@@ -483,12 +427,6 @@ runs:
         echo "capacity_error=$capacity_error" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         EXPECTED_STATUS: ${{ steps.expected_status.outputs.value }}
         COMMAND_NAME: ${{ inputs.command_name }}
@@ -624,12 +562,6 @@ runs:
         echo "flavor=$flavor" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         GH_TOKEN: ${{ inputs.token }}
         GH_REPO: ${{ github.repository }}
@@ -659,12 +591,6 @@ runs:
         openstack server delete "$INSTANCE_NAME" || echo "Failed to delete instance, it may not exist"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: Exit on capacity error
@@ -689,12 +615,6 @@ runs:
         openstack server remove floating ip "$INSTANCE_NAME" "$FLOATING_IP_ADDRESS"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         FLOATING_IP_ADDRESS:
           ${{ steps.check_instance_has_ip.outputs.instance_ip }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
@@ -730,12 +650,6 @@ runs:
         openstack server set --property "exoClientUuid=$exoClientUuid" $INSTANCE_NAME
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (failed to set instance properties)
@@ -782,12 +696,6 @@ runs:
       uses: ./.github/actions/send-email
       with:
         os_cloud: ${{ inputs.os_cloud }}
-        os_application_credential_id: ${{ inputs.os_application_credential_id }}
-        os_application_credential_secret:
-          ${{ inputs.os_application_credential_secret }}
-        os_auth_url: ${{ inputs.os_auth_url }}
-        os_identity_api_version: ${{ inputs.os_identity_api_version }}
-        os_auth_type: ${{ inputs.os_auth_type }}
         token: ${{ inputs.token }}
         email_lookup_url: ${{ inputs.email_lookup_url }}
         issue_creator: ${{ github.event.issue.user.login }}
@@ -805,12 +713,6 @@ runs:
       uses: ./.github/actions/workshop-send-email
       with:
         os_cloud: ${{ inputs.os_cloud }}
-        os_application_credential_id: ${{ inputs.os_application_credential_id }}
-        os_application_credential_secret:
-          ${{ inputs.os_application_credential_secret }}
-        os_auth_url: ${{ inputs.os_auth_url }}
-        os_identity_api_version: ${{ inputs.os_identity_api_version }}
-        os_auth_type: ${{ inputs.os_auth_type }}
         token: ${{ inputs.token }}
         string_encryption_key: ${{ inputs.string_encryption_key }}
         mail_server_username: ${{ inputs.mail_server_username }}
@@ -826,12 +728,6 @@ runs:
       uses: ./.github/actions/course-send-email
       with:
         os_cloud: ${{ inputs.os_cloud }}
-        os_application_credential_id: ${{ inputs.os_application_credential_id }}
-        os_application_credential_secret:
-          ${{ inputs.os_application_credential_secret }}
-        os_auth_url: ${{ inputs.os_auth_url }}
-        os_identity_api_version: ${{ inputs.os_identity_api_version }}
-        os_auth_type: ${{ inputs.os_auth_type }}
         token: ${{ inputs.token }}
         issue_creator: ${{ github.event.issue.user.login }}
         mail_server_username: ${{ inputs.mail_server_username }}
@@ -881,12 +777,6 @@ runs:
       uses: ./.github/actions/update-request-status-label
       with:
         os_cloud: ${{ inputs.os_cloud }}
-        os_application_credential_id: ${{ inputs.os_application_credential_id }}
-        os_application_credential_secret:
-          ${{ inputs.os_application_credential_secret }}
-        os_auth_url: ${{ inputs.os_auth_url }}
-        os_identity_api_version: ${{ inputs.os_identity_api_version }}
-        os_auth_type: ${{ inputs.os_auth_type }}
         token: ${{ inputs.token }}
         issue_number: ${{ inputs.issue_number }}
         instance_name: ${{ steps.define.outputs.instance_name }}

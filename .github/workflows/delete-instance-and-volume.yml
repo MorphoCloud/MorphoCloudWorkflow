@@ -34,11 +34,7 @@ jobs:
           'true' }}
         uses: ./.github/actions/delete-volume
         with:
-          os_application_credential_id:
-            ${{ secrets.OS_APPLICATION_CREDENTIAL_ID }}
-          os_application_credential_secret:
-            ${{ secrets.OS_APPLICATION_CREDENTIAL_SECRET }}
-          os_auth_url: ${{ vars.OS_AUTH_URL }}
+          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           token: ${{ secrets.GITHUB_TOKEN }}
           issue_number: ${{ github.event.issue.number }}
           instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
@@ -51,11 +47,7 @@ jobs:
           'true' }}
         uses: ./.github/actions/control-instance
         with:
-          os_application_credential_id:
-            ${{ secrets.OS_APPLICATION_CREDENTIAL_ID }}
-          os_application_credential_secret:
-            ${{ secrets.OS_APPLICATION_CREDENTIAL_SECRET }}
-          os_auth_url: ${{ vars.OS_AUTH_URL }}
+          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           issue_number: ${{ github.event.issue.number }}
           command_name: "delete"
           instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}

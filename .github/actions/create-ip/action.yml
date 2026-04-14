@@ -5,21 +5,7 @@ inputs:
     description:
       "Name of the OpenStack cloud allocation to select openstack auth settings
       defined in '.config/openstack/clouds.yaml'"
-    required: false
-  os_application_credential_id:
-    description: "OpenStack application credential ID (alternative to os_cloud)"
-  os_application_credential_secret:
-    description:
-      "OpenStack application credential secret (alternative to os_cloud)"
-  os_auth_url:
-    description:
-      "OpenStack identity endpoint URL (required when using app credentials)"
-  os_identity_api_version:
-    description: "OpenStack identity API version"
-    default: "3"
-  os_auth_type:
-    description: "OpenStack auth type"
-    default: "v3applicationcredential"
+    required: true
   preferred_ip_address:
     description: "If already created and unassigned, IP address to return"
 outputs:
@@ -59,12 +45,6 @@ runs:
         echo "floating_ip_uuid=$floating_ip_uuid" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
 
     - name: "Create floating IP"
       if: ${{ steps.ip_retrieve_unassigned.outputs.floating_ip_address == '' }}
@@ -92,12 +72,6 @@ runs:
         echo "floating_ip_address=$floating_ip_address" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
 
     - name: "Define output"
       id: define_output

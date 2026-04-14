@@ -144,13 +144,7 @@ jobs:
             exit 1
           fi
         env:
-          OS_APPLICATION_CREDENTIAL_ID:
-            ${{ secrets.OS_APPLICATION_CREDENTIAL_ID }}
-          OS_APPLICATION_CREDENTIAL_SECRET:
-            ${{ secrets.OS_APPLICATION_CREDENTIAL_SECRET }}
-          OS_AUTH_URL: ${{ vars.OS_AUTH_URL }}
-          OS_IDENTITY_API_VERSION: "3"
-          OS_AUTH_TYPE: "v3applicationcredential"
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           INSTANCE_NAME_PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
           ISSUE_CREATOR: ${{ github.event.issue.user.login }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -173,11 +167,7 @@ jobs:
         id: provision
         uses: ./.github/actions/create-instance
         with:
-          os_application_credential_id:
-            ${{ secrets.OS_APPLICATION_CREDENTIAL_ID }}
-          os_application_credential_secret:
-            ${{ secrets.OS_APPLICATION_CREDENTIAL_SECRET }}
-          os_auth_url: ${{ vars.OS_AUTH_URL }}
+          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           issue_number: ${{ github.event.issue.number }}
           instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
           volume_name_suffix: ${{ vars.VOLUME_NAME_SUFFIX }}
@@ -188,11 +178,7 @@ jobs:
         if: ${{ steps.provision.outputs.setup_status == 'complete' }}
         uses: ./.github/actions/course-send-email
         with:
-          os_application_credential_id:
-            ${{ secrets.OS_APPLICATION_CREDENTIAL_ID }}
-          os_application_credential_secret:
-            ${{ secrets.OS_APPLICATION_CREDENTIAL_SECRET }}
-          os_auth_url: ${{ vars.OS_AUTH_URL }}
+          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           token: ${{ secrets.GITHUB_TOKEN }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
           issue_creator: ${{ github.event.issue.user.login }}

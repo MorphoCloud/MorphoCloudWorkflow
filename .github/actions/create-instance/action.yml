@@ -5,24 +5,7 @@ inputs:
     description:
       "Name of the OpenStack cloud allocation to select openstack auth settings
       defined in '.config/openstack/clouds.yaml'"
-    required: false
-  os_application_credential_id:
-    description: "OpenStack application credential ID (alternative to os_cloud)"
-  os_application_credential_secret:
-    description:
-      "OpenStack application credential secret (alternative to os_cloud)"
-  os_auth_url:
-    description:
-      "OpenStack identity endpoint URL (required when using app credentials)"
-  os_identity_api_version:
-    description: "OpenStack identity API version"
-    default: "3"
-  os_auth_type:
-    description: "OpenStack auth type"
-    default: "v3applicationcredential"
-  exosphere_creator_username:
-    description: "Exosphere creator username set as instance property"
-    default: "jfillionrobin@access-ci.org"
+    required: true
   issue_number:
     description: "Issue number"
     required: true
@@ -106,12 +89,6 @@ runs:
       uses: ./.github/actions/check-instance-exists
       with:
         os_cloud: ${{ inputs.os_cloud }}
-        os_application_credential_id: ${{ inputs.os_application_credential_id }}
-        os_application_credential_secret:
-          ${{ inputs.os_application_credential_secret }}
-        os_auth_url: ${{ inputs.os_auth_url }}
-        os_identity_api_version: ${{ inputs.os_identity_api_version }}
-        os_auth_type: ${{ inputs.os_auth_type }}
         instance_name: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (Instance already created)
@@ -140,12 +117,6 @@ runs:
       uses: ./.github/actions/create-ip
       with:
         os_cloud: ${{ inputs.os_cloud }}
-        os_application_credential_id: ${{ inputs.os_application_credential_id }}
-        os_application_credential_secret:
-          ${{ inputs.os_application_credential_secret }}
-        os_auth_url: ${{ inputs.os_auth_url }}
-        os_identity_api_version: ${{ inputs.os_identity_api_version }}
-        os_auth_type: ${{ inputs.os_auth_type }}
 
     - name: comment (floating IP creation failed)
       if: ${{ steps.ip_create.outcome == 'failure' && failure() }}
@@ -183,12 +154,6 @@ runs:
       uses: ./.github/actions/check-volume-exists
       with:
         os_cloud: ${{ inputs.os_cloud }}
-        os_application_credential_id: ${{ inputs.os_application_credential_id }}
-        os_application_credential_secret:
-          ${{ inputs.os_application_credential_secret }}
-        os_auth_url: ${{ inputs.os_auth_url }}
-        os_identity_api_version: ${{ inputs.os_identity_api_version }}
-        os_auth_type: ${{ inputs.os_auth_type }}
         volume_name: ${{ steps.define_volume_name.outputs.volume_name }}
 
     - name: comment (volume already exists)
@@ -211,12 +176,6 @@ runs:
         openstack volume create --size 100 "${VOLUME_NAME}"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         VOLUME_NAME: ${{ steps.define_volume_name.outputs.volume_name }}
 
     - name: comment (failed to create volume)
@@ -272,10 +231,11 @@ runs:
           --security-group "exosphere" \
           --flavor $INSTANCE_FLAVOR \
           --image "Featured-Ubuntu22" \
+          --key-name "jcfr" \
           --property "exoGuac={\"v\":1,\"ssh\":true,\"vnc\":true}" \
           --property "exoClientUuid=$exoClientUuid" \
           --property "exoServerVersion=$exoServerVersion" \
-          --property "exoCreatorUsername=$EXOSPHERE_CREATOR_USERNAME" \
+          --property "exoCreatorUsername=jfillionrobin@access-ci.org" \
           --property "exoFloatingIpOption=useFloatingIp" \
           --property "exoFloatingIpReuseOption=$FLOATING_IP_UUID" \
           --property "exoSetup={\"status\":\"waiting\",\"epoch\":null}" \
@@ -288,16 +248,9 @@ runs:
 
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         INSTANCE_FLAVOR: ${{ steps.labels.outputs.instance_flavor }}
         FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
-        EXOSPHERE_CREATOR_USERNAME: ${{ inputs.exosphere_creator_username }}
 
     - name: Wait for instance to reach stable state
       id: wait_instance_state
@@ -330,12 +283,6 @@ runs:
         echo "final_status=$status" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: Check for capacity error
@@ -369,12 +316,6 @@ runs:
         fi
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (no capacity available)
@@ -401,12 +342,6 @@ runs:
         openstack server delete "$INSTANCE_NAME" || echo "Failed to delete instance, it may not exist"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: Exit on capacity error
@@ -477,12 +412,6 @@ runs:
         fi
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         FLOATING_IP_ADDRESS: ${{ steps.ip_create.outputs.floating_ip_address }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
@@ -564,12 +493,6 @@ runs:
         echo "status=$status" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (maximum wait time exceeded)
@@ -650,12 +573,6 @@ runs:
           $volume_id
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        OS_APPLICATION_CREDENTIAL_ID: ${{ inputs.os_application_credential_id }}
-        OS_APPLICATION_CREDENTIAL_SECRET:
-          ${{ inputs.os_application_credential_secret }}
-        OS_AUTH_URL: ${{ inputs.os_auth_url }}
-        OS_IDENTITY_API_VERSION: ${{ inputs.os_identity_api_version }}
-        OS_AUTH_TYPE: ${{ inputs.os_auth_type }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         VOLUME_NAME: ${{ steps.define_volume_name.outputs.volume_name }}
 
