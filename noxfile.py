@@ -68,8 +68,24 @@ def _patch_files(target_dir: Path) -> None:
     )
 
 
+def _patch_files_course(target_dir: Path) -> None:
+    _patch_files(target_dir)
+    # Course repos don't have admin keypairs registered in their allocations.
+    # Remove --key-name from openstack server create — SSH access is via the
+    # runner's injected public key in cloud-config only.
+    action_file = target_dir / ".github/actions/create-instance/action.yml"
+    content = action_file.read_text()
+    content = re.sub(
+        r"^[ \t]+--key-name \"[^\"]*\" \\\n", "", content, flags=re.MULTILINE
+    )
+    action_file.write_text(content)
+
+
 def _vendorize(
-    session: nox.Session, paths: list[str], exclude_paths: Optional[list[str]] = None
+    session: nox.Session,
+    paths: list[str],
+    exclude_paths: Optional[list[str]] = None,
+    patch_fn=None,
 ) -> None:
     """
     Vendorize files into a directory. Directory must exist.
@@ -110,7 +126,10 @@ def _vendorize(
         session.log(f"Copying file {relative_path}")
         shutil.copy2(src_file, target_file)
 
-    _patch_files(target_dir)
+    if patch_fn is None:
+        _patch_files(target_dir)
+    else:
+        patch_fn(target_dir)
 
     if args.commit:
         org = "MorphoCloud"
@@ -250,6 +269,7 @@ def vendorize_course(session: nox.Session) -> None:
             # Deprecated
             ".github/workflows/instructor-access.yml",
         ],
+        patch_fn=_patch_files_course,
     )
 
 

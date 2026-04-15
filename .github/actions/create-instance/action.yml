@@ -234,7 +234,7 @@ runs:
           --security-group "exosphere" \
           --flavor $INSTANCE_FLAVOR \
           --image "Featured-Ubuntu22" \
-          --key-name "jcfr" \
+          --key-name "murat-key" \
           --property "exoGuac={\"v\":1,\"ssh\":true,\"vnc\":true}" \
           --property "exoClientUuid=$exoClientUuid" \
           --property "exoServerVersion=$exoServerVersion" \
