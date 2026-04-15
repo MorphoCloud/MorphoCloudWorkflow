@@ -114,5 +114,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           string_encryption_key: ${{ secrets.STRING_ENCRYPTION_KEY }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
+          issue_creator: ${{ github.event.issue.user.login }}
+          roster_sheet_id: ${{ vars.MORPHOCLOUD_STUDENT_ROSTER_SHEET_ID }}
           mail_server_username: ${{secrets.MAIL_USERNAME}}
           mail_server_password: ${{secrets.MAIL_PASSWORD}}
