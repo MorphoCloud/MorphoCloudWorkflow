@@ -110,7 +110,7 @@ jobs:
             --argjson usernames "$USERNAMES_JSON" \
             '{team_slug: $team_slug, usernames: $usernames}')
 
-          RESPONSE=$(curl -s -L -X POST \
+          RESPONSE=$(curl -s -L \
             "${ENROLLMENT_URL}?action=enroll-course" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
