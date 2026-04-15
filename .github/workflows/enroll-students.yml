@@ -103,8 +103,8 @@ jobs:
             --argjson usernames "$USERNAMES_JSON" \
             '{secret: $secret, team_slug: $team_slug, usernames: $usernames}')
 
-          # POST to Apps Script enrollment endpoint
-          RESPONSE=$(curl -s -X POST \
+          # POST to Apps Script enrollment endpoint (-L follows redirects, Apps Script returns 302)
+          RESPONSE=$(curl -s -L -X POST \
             "${ENROLLMENT_URL}?action=enroll-course" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD")
