@@ -223,6 +223,9 @@ runs:
         # See "currentExoServerVersion" in exosphere/src/Types/Server.elm
         exoServerVersion=6
 
+        # Inject the runner's SSH public key into cloud-config
+        sed -i "s|{runner-ssh-public-key}|$(cat ~/.ssh/id_ed25519.pub)|g" ./cloud-config
+
         # Update INSTANCE_FAVOR placeholder to ensure current value is passed to ansible
         sed -i 's/INSTANCE_FLAVOR/$INSTANCE_FLAVOR/g' ./cloud-config
 
