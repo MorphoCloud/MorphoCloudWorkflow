@@ -22,9 +22,6 @@ inputs:
   token:
     description: "GITHUB_TOKEN or repo scoped PAT"
     required: true
-  string_encryption_key:
-    description: "Encryption key to encode and decode the email address"
-    required: true
   mail_server_username:
     description: "mail server username"
     required: true
@@ -644,9 +641,6 @@ runs:
         command_name: "unapprove"
         instance_name_prefix: ${{ inputs.instance_name_prefix }}
         token: ${{ inputs.token }}
-        string_encryption_key: ${{ inputs.string_encryption_key }}
-        mail_server_username: ${{ inputs.mail_server_username }}
-        mail_server_password: ${{ inputs.mail_server_password }}
 
     - name: Update Request Status Label
       uses: ./.github/actions/update-request-status-label

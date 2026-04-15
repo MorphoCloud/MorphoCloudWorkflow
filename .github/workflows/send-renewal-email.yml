@@ -100,45 +100,16 @@ jobs:
           lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
           github_username: ${{ steps.issue_meta.outputs.author }}
 
-      # --- Workshop path: extract email from issue body ---
-      - name: Extract fields (workshop)
-        id: extract
+      # --- Workshop path: look up email from Apps Script ---
+      - name: Look up email (workshop)
+        id: lookup_email_workshop
         if:
           ${{ steps.skip_check.outputs.is_course != 'true' &&
           steps.issue_meta.outputs.is_workshop == 'true' }}
-        uses: ./.github/actions/extract-issue-fields
+        uses: ./.github/actions/lookup-email
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          issue_number: ${{ inputs.issue_number }}
-
-      - name: Check if email is encoded (workshop)
-        id: check_email_encryption
-        if:
-          ${{ steps.skip_check.outputs.is_course != 'true' &&
-          steps.issue_meta.outputs.is_workshop == 'true' }}
-        shell: bash
-        run: |
-          if [[ "$EMAIL" != *"@"* ]]; then
-            encoded="true"
-          else
-            encoded="false"
-          fi
-          echo "encoded=$encoded" >> $GITHUB_OUTPUT
-        env:
-          EMAIL: ${{ steps.extract.outputs.email }}
-
-      - name: Decode email (workshop)
-        id: decode_email
-        if:
-          ${{ steps.skip_check.outputs.is_course != 'true' &&
-          steps.issue_meta.outputs.is_workshop == 'true' }}
-        uses: ./.github/actions/encode-decode-string
-        with:
-          input_string: ${{ steps.extract.outputs.email }}
-          encryption_key: ${{ secrets.STRING_ENCRYPTION_KEY }}
-          operation: "decode"
-          skip: ${{ steps.check_email_encryption.outputs.encoded == 'false' }}
+          lookup_url: ${{ vars.MORPHOCLOUD_WORKSHOP_EMAIL_LOOKUP_URL }}
+          github_username: ${{ steps.issue_meta.outputs.author }}
 
       - name: Resolve email
         id: resolve_email
@@ -152,7 +123,7 @@ jobs:
           fi
         env:
           IS_WORKSHOP: ${{ steps.issue_meta.outputs.is_workshop }}
-          WORKSHOP_EMAIL: ${{ steps.decode_email.outputs.output_string }}
+          WORKSHOP_EMAIL: ${{ steps.lookup_email_workshop.outputs.email }}
           INDIVIDUAL_EMAIL: ${{ steps.lookup_email.outputs.email }}
 
       - name: Check renewal availability

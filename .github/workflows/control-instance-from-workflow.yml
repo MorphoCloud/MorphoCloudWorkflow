@@ -75,7 +75,6 @@ jobs:
           unapprove_after_delete: ${{ inputs.unapprove_after_delete }}
           instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          string_encryption_key: ${{ secrets.STRING_ENCRYPTION_KEY }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
           issue_creator: ${{ inputs.issue_creator }}
           roster_sheet_id: ${{ inputs.roster_sheet_id }}

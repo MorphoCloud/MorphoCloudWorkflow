@@ -8,9 +8,11 @@ on:
         required: true
         type: number
       skip_preamble:
-        description: "Skip validation comment and initial commands (for workshop sub-issues)"
+        description:
+          "Skip validation comment and initial commands (for workshop
+          sub-issues)"
         required: false
-        default: 'false'
+        default: "false"
         type: string
   workflow_call:
     inputs:
@@ -19,9 +21,11 @@ on:
         required: true
         type: string
       skip_preamble:
-        description: "Skip validation comment and initial commands (for workshop sub-issues)"
+        description:
+          "Skip validation comment and initial commands (for workshop
+          sub-issues)"
         required: false
-        default: 'false'
+        default: "false"
         type: string
 
 permissions:
@@ -109,6 +113,18 @@ jobs:
           volume_name_suffix: ${{ vars.VOLUME_NAME_PREFIX }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Get workshop organizer
+        id: workshop_org
+        if: ${{ steps.provision.outputs.setup_status == 'complete' }}
+        shell: bash
+        run: |
+          ASSIGNEE=$(gh issue view "$ISSUE_NUMBER" --json assignees --jq '.assignees[0].login')
+          echo "username=$ASSIGNEE" >> $GITHUB_OUTPUT
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
       - name: Send workshop email
         id: send_email
         if: ${{ steps.provision.outputs.setup_status == 'complete' }}
@@ -116,7 +132,8 @@ jobs:
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          string_encryption_key: ${{ secrets.STRING_ENCRYPTION_KEY }}
+          email_lookup_url: ${{ vars.MORPHOCLOUD_WORKSHOP_EMAIL_LOOKUP_URL }}
+          github_username: ${{ steps.workshop_org.outputs.username }}
           mail_server_username: ${{ secrets.MAIL_USERNAME }}
           mail_server_password: ${{ secrets.MAIL_PASSWORD }}
           instance_name: ${{ steps.provision.outputs.instance_name }}

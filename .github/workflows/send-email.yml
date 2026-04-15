@@ -91,6 +91,24 @@ jobs:
           instance_name: ${{ steps.define.outputs.instance_name }}
           instance_issue_number: ${{ github.event.issue.number }}
 
+      - name: Get workshop organizer
+        id: workshop_org
+        if:
+          ${{ steps.check_type.outputs.is_course != 'true' &&
+          steps.check_type.outputs.is_workshop == 'true' }}
+        shell: bash
+        run: |
+          ASSIGNEE=$(gh issue view "$ISSUE_NUMBER" --json assignees --jq '.assignees[0].login')
+          if [[ -z "$ASSIGNEE" ]]; then
+            echo "::error ::No assignee found on workshop sub-issue #$ISSUE_NUMBER"
+            exit 1
+          fi
+          echo "username=$ASSIGNEE" >> $GITHUB_OUTPUT
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
       - name: Send mail (workshop)
         id: send_workshop_email
         if:
@@ -100,7 +118,8 @@ jobs:
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          string_encryption_key: ${{ secrets.STRING_ENCRYPTION_KEY }}
+          email_lookup_url: ${{ vars.MORPHOCLOUD_WORKSHOP_EMAIL_LOOKUP_URL }}
+          github_username: ${{ steps.workshop_org.outputs.username }}
           mail_server_username: ${{ secrets.MAIL_USERNAME }}
           mail_server_password: ${{ secrets.MAIL_PASSWORD }}
           instance_name: ${{ steps.define.outputs.instance_name }}

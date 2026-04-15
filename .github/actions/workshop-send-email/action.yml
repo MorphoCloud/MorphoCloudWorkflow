@@ -23,8 +23,11 @@ inputs:
   token:
     description: "GITHUB_TOKEN or repo scoped PAT"
     required: true
-  string_encryption_key:
-    description: "Encryption key to encode and decode the email address"
+  email_lookup_url:
+    description: "Base URL of the Apps Script web app for workshop email lookup"
+    required: true
+  github_username:
+    description: "GitHub username of the workshop organizer"
     required: true
   mail_server_username:
     description: "mail server username"
@@ -45,13 +48,12 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Extract fields
-      id: extract
-      uses: ./.github/actions/extract-issue-fields
+    - name: Look up organizer email
+      id: lookup_email
+      uses: ./.github/actions/lookup-email
       with:
-        token: ${{ inputs.token }}
-        repository: ${{ github.repository }}
-        issue_number: ${{ inputs.instance_issue_number }}
+        lookup_url: ${{ inputs.email_lookup_url }}
+        github_username: ${{ inputs.github_username }}
 
     - name: Retrieve metadata
       id: instance_metadata
@@ -72,28 +74,6 @@ runs:
       with:
         instance_ip: ${{ steps.instance_metadata.outputs.instance_ip }}
 
-    - name: Check if email is encoded
-      id: check_email_encryption
-      shell: bash
-      run: |
-        if [[ "$EMAIL" != *"@"* ]]; then
-          encoded="true"
-        else
-          encoded="false"
-        fi
-        echo "encoded=$encoded" >> $GITHUB_OUTPUT
-      env:
-        EMAIL: ${{ steps.extract.outputs.email }}
-
-    - name: Decode email
-      id: decode_email
-      uses: ./.github/actions/encode-decode-string
-      with:
-        input_string: ${{ steps.extract.outputs.email }}
-        encryption_key: ${{ inputs.string_encryption_key }}
-        operation: "decode"
-        skip: ${{ steps.check_email_encryption.outputs.encoded == 'false' }}
-
     - name: Send mail
       uses: dawidd6/action-send-mail@62a2d05b79935ad4fb90ce9079928099579c14ac # v9
       with:
@@ -103,7 +83,7 @@ runs:
         username: ${{ inputs.mail_server_username }}
         password: ${{ inputs.mail_server_password }}
         from: MorphoCloudPortal <no-reply@morphocloud.org>
-        to: ${{ steps.decode_email.outputs.output_string }}
+        to: ${{ steps.lookup_email.outputs.email }}
         subject:
           "[${{ github.event.repository.name }}] Workshop Instance ${{
           inputs.instance_name }} active"
