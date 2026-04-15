@@ -253,6 +253,8 @@ def vendorize_course(session: nox.Session) -> None:
             ".github/workflows/update-issue.yml",
             ".github/workflows/update-issue-from-workflow.yml",
             ".github/workflows/retrieve-emails.yml",
+            # Instructor credential delivery not needed — instructors use Exosphere directly
+            ".github/workflows/instructor-access.yml",
         ],
     )
 

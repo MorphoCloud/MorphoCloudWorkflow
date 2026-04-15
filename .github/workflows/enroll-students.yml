@@ -55,7 +55,7 @@ jobs:
 
       - name: Enroll students via Apps Script
         env:
-          ENROLLMENT_URL: ${{ vars.MORPHOCLOUD_COURSE_INSTRUCTOR_LOOKUP_URL }}
+          ENROLLMENT_URL: ${{ vars.MORPHOCLOUD_COURSE_INTAKE_URL }}
           ENROLLMENT_SECRET: ${{ secrets.ENROLLMENT_WEBHOOK_SECRET }}
           TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
@@ -68,7 +68,7 @@ jobs:
             exit 1
           fi
           if [[ -z "$ENROLLMENT_URL" ]]; then
-            echo "::error::MORPHOCLOUD_COURSE_INSTRUCTOR_LOOKUP_URL repo variable is not set."
+            echo "::error::MORPHOCLOUD_COURSE_INTAKE_URL repo variable is not set."
             exit 1
           fi
 
