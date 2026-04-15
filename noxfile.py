@@ -245,15 +245,9 @@ def vendorize_course(session: nox.Session) -> None:
             ".github/workflows/test-workshop-deletion.yml",
             ".github/workflows/request-notify-admin.yml",
             ".github/workflows/request-notify-admin-workshop.yml",
-            ".github/workflows/send-email.yml",
             ".github/workflows/update-renew-label.yml",
             ".github/workflows/send-renewal-email.yml",
-            ".github/workflows/validate-request.yml",
-            ".github/workflows/request-labeler.yml",
-            ".github/workflows/update-issue.yml",
-            ".github/workflows/update-issue-from-workflow.yml",
-            ".github/workflows/retrieve-emails.yml",
-            # Instructor credential delivery not needed — instructors use Exosphere directly
+            # Deprecated
             ".github/workflows/instructor-access.yml",
         ],
     )
