@@ -43,7 +43,7 @@ workshop, course) and shared failure-comment logic.
 - Trigger: `issue_comment: created`
 - Job `if:` guard: `contains(labels, 'request-type:course-instance')`
 - Supported commands: `/create`, `/shelve`, `/unshelve`, `/email`,
-  `/instructor_access`, `/delete_instance`, `/delete_volume`, `/delete_all`
+  `/delete_instance`, `/delete_volume`, `/delete_all`
 - Failure comment appends `course-issue-commands.md`
 
 ### `validate-command-workshop.yml`
