@@ -9,6 +9,10 @@ inputs:
   github_username:
     description: "GitHub username to look up"
     required: true
+  roster_sheet_id:
+    description:
+      "Google Sheet ID of the instructor-owned course roster (when set, uses
+      lookup_course_roster instead of lookup)"
 outputs:
   email:
     description: "The verified email address for the user"
@@ -24,7 +28,12 @@ runs:
 
         ENCODED_USERNAME=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['GITHUB_USERNAME']))")
 
-        RESPONSE=$(curl -sL "${LOOKUP_URL}?action=lookup&github_username=${ENCODED_USERNAME}")
+        if [[ -n "$ROSTER_SHEET_ID" ]]; then
+          ENCODED_SHEET_ID=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['ROSTER_SHEET_ID']))")
+          RESPONSE=$(curl -sL "${LOOKUP_URL}?action=lookup_course_roster&sheet_id=${ENCODED_SHEET_ID}&github_username=${ENCODED_USERNAME}")
+        else
+          RESPONSE=$(curl -sL "${LOOKUP_URL}?action=lookup&github_username=${ENCODED_USERNAME}")
+        fi
 
         echo "Response: $RESPONSE"
 
@@ -41,3 +50,4 @@ runs:
       env:
         LOOKUP_URL: ${{ inputs.lookup_url }}
         GITHUB_USERNAME: ${{ inputs.github_username }}
+        ROSTER_SHEET_ID: ${{ inputs.roster_sheet_id }}

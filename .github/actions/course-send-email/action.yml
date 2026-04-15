@@ -28,6 +28,11 @@ inputs:
   email_lookup_url:
     description: "URL of the Apps Script web app for email lookup"
     required: true
+  roster_sheet_id:
+    description:
+      "Google Sheet ID of the instructor-owned course roster shared with
+      morphocloudportal@gmail.com"
+    required: true
   issue_creator:
     description: "GitHub username of the course student (issue creator)"
     required: true
@@ -69,6 +74,7 @@ runs:
       with:
         lookup_url: ${{ inputs.email_lookup_url }}
         github_username: ${{ inputs.issue_creator }}
+        roster_sheet_id: ${{ inputs.roster_sheet_id }}
 
     - name: Generate Guacamole Connection URL
       id: guacamole

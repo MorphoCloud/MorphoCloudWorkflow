@@ -117,6 +117,7 @@ jobs:
           mail_server_username: ${{ secrets.MAIL_USERNAME }}
           mail_server_password: ${{ secrets.MAIL_PASSWORD }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
+          roster_sheet_id: ${{ vars.MORPHOCLOUD_STUDENT_ROSTER_SHEET_ID }}
           instance_name: ${{ steps.define.outputs.instance_name }}
           instance_issue_number: ${{ github.event.issue.number }}
 
