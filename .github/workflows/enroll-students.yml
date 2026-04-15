@@ -8,17 +8,16 @@
 #
 # What it does for each username:
 #   1. Verifies the GitHub user exists
-#   2. Skips if already a member of this course team
-#   3. If already in the MorphoCloud org → adds directly to team (immediate)
-#   4. If not yet in org → sends a GitHub org invitation, which also adds
-#      them to the course team once they accept
+#   2. Skips if already an active/pending member of this course team
+#   3. Adds to the team via GitHub API — if the user is already in the org
+#      they are added immediately (active); otherwise a pending org invitation
+#      is sent and they are added to the team once they accept
 #
 # Prerequisites:
-#   - COURSE_TEAM_SLUG repo variable must be set (e.g. Course-UW-BIO240)
+#   - COURSE_TEAM_SLUG repo variable must be set (e.g. mc-34m-bio-102)
 #   - MORPHOCLOUD_WORKFLOW_APP_ID repo variable must be set
 #   - MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY repo secret must be set
-#   - The GitHub App (ID: MORPHOCLOUD_WORKFLOW_APP_ID) must have
-#     "Members: Read & Write" org-level permission enabled.
+#   - The GitHub App must have "Members: Read & Write" org-level permission.
 #     (GitHub → Org Settings → GitHub Apps → Configure → Permissions)
 #
 # =============================================================================
@@ -53,10 +52,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Enroll students via Apps Script
+      - name: Get GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2.2.0
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Enroll students
         env:
-          ENROLLMENT_URL: ${{ vars.MORPHOCLOUD_COURSE_INTAKE_URL }}
-          ENROLLMENT_SECRET: ${{ secrets.ENROLLMENT_WEBHOOK_SECRET }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ORG: ${{ github.repository_owner }}
           TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
           USERNAMES_INPUT: ${{ inputs.usernames || '' }}
@@ -67,12 +74,8 @@ jobs:
             echo "::error::COURSE_TEAM_SLUG repo variable is not set."
             exit 1
           fi
-          if [[ -z "$ENROLLMENT_URL" ]]; then
-            echo "::error::MORPHOCLOUD_COURSE_INTAKE_URL repo variable is not set."
-            exit 1
-          fi
 
-          # Use usernames input if provided, else fall back to students.txt
+          # Build username list from input or students.txt
           if [[ -n "$USERNAMES_INPUT" ]]; then
             mapfile -t USERNAMES < <(echo "$USERNAMES_INPUT" | tr ',' '\n' | tr -d ' \r' | grep -v '^$')
           elif [[ -f students.txt ]]; then
@@ -83,85 +86,88 @@ jobs:
           fi
 
           if [[ ${#USERNAMES[@]} -eq 0 ]]; then
-            echo "No usernames found in students.txt — nothing to do."
+            echo "No usernames found — nothing to do."
             exit 0
           fi
 
           echo "Processing ${#USERNAMES[@]} username(s) for team: $TEAM_SLUG"
 
           if [[ "$DRY_RUN" == "true" ]]; then
-            echo "::notice::DRY RUN MODE — showing usernames only, no changes made"
+            echo "::notice::DRY RUN MODE — no changes made"
             printf '  %s\n' "${USERNAMES[@]}"
             exit 0
           fi
 
-          # Build JSON payload
-          USERNAMES_JSON=$(printf '%s\n' "${USERNAMES[@]}" | jq -R . | jq -sc .)
-          PAYLOAD=$(jq -n \
-            --arg secret "$ENROLLMENT_SECRET" \
-            --arg team_slug "$TEAM_SLUG" \
-            --argjson usernames "$USERNAMES_JSON" \
-            '{secret: $secret, team_slug: $team_slug, usernames: $usernames}')
+          ENROLLED=()
+          INVITED=()
+          ALREADY_MEMBER=()
+          FAILED=()
 
-          # POST to Apps Script enrollment endpoint (-L follows redirects, Apps Script returns 302)
-          RESPONSE=$(curl -s -L -X POST \
-            "${ENROLLMENT_URL}?action=enroll-course" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD")
+          for USERNAME in "${USERNAMES[@]}"; do
+            # Verify the GitHub user exists
+            if ! gh api "users/$USERNAME" --silent 2>/dev/null; then
+              echo "  ❌ $USERNAME — not found on GitHub"
+              FAILED+=("$USERNAME")
+              continue
+            fi
 
-          echo "Response: $RESPONSE"
+            # Check current team membership (404 = not a member)
+            MEMBERSHIP_STATE=$(gh api "orgs/$ORG/teams/$TEAM_SLUG/memberships/$USERNAME" \
+              --jq '.state' 2>/dev/null || echo "none")
+            if [[ "$MEMBERSHIP_STATE" == "active" || "$MEMBERSHIP_STATE" == "pending" ]]; then
+              echo "  ⏭️  $USERNAME — already enrolled (state: $MEMBERSHIP_STATE)"
+              ALREADY_MEMBER+=("$USERNAME")
+              continue
+            fi
 
-          # Check for top-level error
-          ERROR=$(echo "$RESPONSE" | jq -r '.error // empty')
-          if [[ -n "$ERROR" ]]; then
-            echo "::error::Enrollment failed: $ERROR"
-            exit 1
-          fi
+            # Add to team; result is "active" (already in org) or "pending" (invitation sent)
+            RESULT=$(gh api --method PUT "orgs/$ORG/teams/$TEAM_SLUG/memberships/$USERNAME" \
+              --jq '.state' 2>/dev/null || echo "error")
+            if [[ "$RESULT" == "active" ]]; then
+              echo "  ✅ $USERNAME — enrolled"
+              ENROLLED+=("$USERNAME")
+            elif [[ "$RESULT" == "pending" ]]; then
+              echo "  📨 $USERNAME — org invitation sent"
+              INVITED+=("$USERNAME")
+            else
+              echo "  ❌ $USERNAME — failed to enroll"
+              FAILED+=("$USERNAME")
+            fi
+          done
 
-          # Parse results
-          ENROLLED=$(echo "$RESPONSE"       | jq -r '.enrolled[]?'       | sort)
-          INVITED=$(echo "$RESPONSE"        | jq -r '.invited[]?'        | sort)
-          ALREADY_MEMBER=$(echo "$RESPONSE" | jq -r '.already_member[]?' | sort)
-          FAILED=$(echo "$RESPONSE"         | jq -r '.failed[]?'         | sort)
-
-          N_ENROLLED=$(echo "$RESPONSE"       | jq '.enrolled       | length')
-          N_INVITED=$(echo "$RESPONSE"        | jq '.invited        | length')
-          N_ALREADY=$(echo "$RESPONSE"        | jq '.already_member | length')
-          N_FAILED=$(echo "$RESPONSE"         | jq '.failed         | length')
-
-          # Write GitHub job summary
+          # Write job summary
           {
             echo "## Enrollment Summary — $TEAM_SLUG"
             echo ""
 
-            if [[ "$N_ENROLLED" -gt 0 ]]; then
-              echo "### ✅ Enrolled ($N_ENROLLED)"
+            if [[ ${#ENROLLED[@]} -gt 0 ]]; then
+              echo "### ✅ Enrolled (${#ENROLLED[@]})"
               echo "Added directly — students can open instance requests immediately."
-              echo "$ENROLLED" | sed 's/^/- @/'
+              printf -- '- @%s\n' "${ENROLLED[@]}"
               echo ""
             fi
 
-            if [[ "$N_INVITED" -gt 0 ]]; then
-              echo "### 📨 Invitation sent ($N_INVITED)"
+            if [[ ${#INVITED[@]} -gt 0 ]]; then
+              echo "### 📨 Invitation sent (${#INVITED[@]})"
               echo "Students must **accept the GitHub org invitation** before they can open instance requests."
-              echo "$INVITED" | sed 's/^/- @/'
+              printf -- '- @%s\n' "${INVITED[@]}"
               echo ""
             fi
 
-            if [[ "$N_ALREADY" -gt 0 ]]; then
-              echo "### ⏭️ Already enrolled ($N_ALREADY) — skipped"
-              echo "$ALREADY_MEMBER" | sed 's/^/- @/'
+            if [[ ${#ALREADY_MEMBER[@]} -gt 0 ]]; then
+              echo "### ⏭️ Already enrolled (${#ALREADY_MEMBER[@]}) — skipped"
+              printf -- '- @%s\n' "${ALREADY_MEMBER[@]}"
               echo ""
             fi
 
-            if [[ "$N_FAILED" -gt 0 ]]; then
-              echo "### ❌ Not found on GitHub ($N_FAILED) — skipped"
+            if [[ ${#FAILED[@]} -gt 0 ]]; then
+              echo "### ❌ Not found on GitHub (${#FAILED[@]}) — skipped"
               echo "Verify these usernames and re-run."
-              echo "$FAILED" | sed 's/^/- /'
+              printf -- '- %s\n' "${FAILED[@]}"
               echo ""
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [[ "$N_FAILED" -gt 0 ]]; then
-            echo "::warning::$N_FAILED username(s) not found on GitHub — check the job summary."
+          if [[ ${#FAILED[@]} -gt 0 ]]; then
+            echo "::warning::${#FAILED[@]} username(s) could not be enrolled — check the job summary."
           fi
