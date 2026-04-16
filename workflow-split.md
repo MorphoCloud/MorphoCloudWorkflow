@@ -183,9 +183,6 @@ Excludes from `.github/`:
 - `workflows/send-renewal-email.yml`
 - `workflows/validate-request.yml`
 - `workflows/request-labeler.yml`
-- `workflows/update-issue.yml`
-- `workflows/update-issue-from-workflow.yml`
-- `workflows/retrieve-emails.yml`
 
 Also excludes from root:
 

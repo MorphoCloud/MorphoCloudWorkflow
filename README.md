@@ -79,20 +79,12 @@ configure the necessary infrastructure:
    This will provide credentials for the `MAIL_USERNAME` and `MAIL_PASSWORD`
    repository secrets.
 
-6. **Generate an Encryption Key**
-
-   Use a password generator to create a secure encryption key. The value will be
-   used below to set the `STRING_ENCRYPTION_KEY` repository secret.
-
-   The encryption key is used to securely encode and decode the researcher’s
-   email address when requesting an instance.
-
-7. **Set Up and Register a MorphoCloud GitHub Runner**
+6. **Set Up and Register a MorphoCloud GitHub Runner**
 
    See the [instructions below](#setting-up-a-morphocloud-github-runner) to set
    up the runner.
 
-8. **Configure Repository Secrets and Variables**
+7. **Configure Repository Secrets and Variables**
 
    In your GitHub project, set up the following repository secrets and
    variables:
@@ -104,7 +96,6 @@ configure the necessary infrastructure:
    | `MORPHOCLOUD_GITHUB_ADMIN_EMAILS`      | :white_check_mark:  |                    |
    | `MORPHOCLOUD_WORKFLOW_APP_ID`          | :white_check_mark:  |                    |
    | `MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY` |                     | :white_check_mark: |
-   | `STRING_ENCRYPTION_KEY`                |                     | :white_check_mark: |
    | `MAIL_USERNAME`                        |                     | :white_check_mark: |
    | `MAIL_PASSWORD`                        |                     | :white_check_mark: |
    - `MORPHOCLOUD_GITHUB_ADMINS`: A comma-separated list of GitHub usernames
@@ -116,7 +107,7 @@ configure the necessary infrastructure:
      notify the admins each time an instance is requested and correspond to the
      users authorized to issue [commands](issue-commands.md).
 
-9. **Vendorize Workflow into Your GitHub Project**
+8. **Vendorize Workflow into Your GitHub Project**
 
    To vendorize the workflow into your project, run the following commands:
 
