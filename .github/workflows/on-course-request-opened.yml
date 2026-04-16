@@ -82,7 +82,7 @@ jobs:
 
           You already have an open course request — please use that existing issue. If your instance resources have been deleted, you can run \`/create\` directly in the existing issue to get a new instance.
 
-          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the open course-issue limit ($COURSE_COUNT/$MAX_COURSE_PER_USER)."
+          > @${COURSE_INSTRUCTOR} — FYI, @${ISSUE_CREATOR} has reached the open course-issue limit ($COURSE_COUNT/$MAX_COURSE_PER_USER)."
             gh issue close "$ISSUE_NUMBER"
             echo "::error ::User $ISSUE_CREATOR has $COURSE_COUNT open course instance requests (limit: $MAX_COURSE_PER_USER)"
             exit 1
@@ -108,7 +108,7 @@ jobs:
 
           You already have open requests — please use one of those existing issues. If your instance resources have been deleted, you can run \`/create\` directly in an existing issue to get a new instance.
 
-          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the global open-issue limit ($TOTAL_COUNT/$MAX_PER_USER)."
+          > @${COURSE_INSTRUCTOR} — FYI, @${ISSUE_CREATOR} has reached the global open-issue limit ($TOTAL_COUNT/$MAX_PER_USER)."
             gh issue close "$ISSUE_NUMBER"
             echo "::error ::User $ISSUE_CREATOR has $TOTAL_COUNT open instance requests across all types (global limit: $MAX_PER_USER)"
             exit 1
@@ -119,6 +119,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_CREATOR: ${{ github.event.issue.user.login }}
           ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
+          COURSE_INSTRUCTOR: ${{ vars.COURSE_INSTRUCTOR_GITHUB }}
           MAX_COURSE_PER_USER:
             ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
           MAX_PER_USER: ${{ vars.MORPHOCLOUD_MAX_INSTANCES_PER_USER }}

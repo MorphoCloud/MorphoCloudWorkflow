@@ -54,9 +54,9 @@ jobs:
 
           The system has reached its capacity limit of **${MAX_TOTAL}** instances. No new instances can be provisioned at this time.
 
-          Please try again later or contact @MorphoCloud/morphocloud-admins for assistance.
+          Please try again later or contact @${COURSE_INSTRUCTOR} for assistance.
 
-          > @MorphoCloud/morphocloud-admins — ⚠️ System capacity limit reached ($TOTAL_COUNT/$MAX_TOTAL). @${ISSUE_CREATOR} is waiting."
+          > @${COURSE_INSTRUCTOR} — ⚠️ System capacity limit reached ($TOTAL_COUNT/$MAX_TOTAL). @${ISSUE_CREATOR} is waiting."
             gh issue edit "$ISSUE_NUMBER" --add-label "error:system-capacity"
             echo "::error ::System capacity: $TOTAL_COUNT/$MAX_TOTAL"
             exit 1
@@ -99,7 +99,7 @@ jobs:
 
           Go to that issue and type \`/delete_all\` to free your quota, or contact your instructor.
 
-          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user course instance limit ($COURSE_COUNT/$MAX_COURSE_PER_USER)."
+          > @${COURSE_INSTRUCTOR} — FYI, @${ISSUE_CREATOR} has reached the per-user course instance limit ($COURSE_COUNT/$MAX_COURSE_PER_USER)."
             echo "::error ::User $ISSUE_CREATOR has $COURSE_COUNT/$MAX_COURSE_PER_USER course instances"
             exit 1
           fi
@@ -139,7 +139,7 @@ jobs:
 
           Go to one of those issues and type \`/delete_all\` to free your quota before creating a new one.
 
-          > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the global per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
+          > @${COURSE_INSTRUCTOR} — FYI, @${ISSUE_CREATOR} has reached the global per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
             echo "::error ::User $ISSUE_CREATOR has $USER_COUNT/$MAX_PER_USER instances across all types"
             exit 1
           fi
@@ -149,6 +149,7 @@ jobs:
           ISSUE_CREATOR: ${{ github.event.issue.user.login }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
+          COURSE_INSTRUCTOR: ${{ vars.COURSE_INSTRUCTOR_GITHUB }}
           MAX_COURSE_PER_USER:
             ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
           MAX_PER_USER: ${{ vars.MORPHOCLOUD_MAX_INSTANCES_PER_USER }}
