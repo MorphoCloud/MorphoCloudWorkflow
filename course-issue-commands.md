@@ -1,3 +1,14 @@
+### Course Repository Configuration
+
+The following repository variables can be set under **Settings → Secrets and
+variables → Actions → Variables** to customize course behavior.
+
+| Variable                        | Default | Description                                                                                                                                                                                                                                                                                                                |
+| ------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `INSTANCE_SHELVING_TIMEOUT_HRS` | `4`     | Number of hours a student instance may run before being automatically shelved. Increase this value (e.g. to `8`) if students need longer uninterrupted sessions. The per-instance popup reminder (shown ~30 min before shelving) allows individual students to extend their session by 4 hours regardless of this setting. |
+
+---
+
 ### Supported Issue Commands
 
 _The commands described below may be added as issue comments. Only one command

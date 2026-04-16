@@ -137,8 +137,15 @@ jobs:
               fi
 
               if [[ -z "$timeout_hrs" ]]; then
-                echo "::warning ::No 'timeout:NNhrs' label found for issue $issue_number (defaulting to 4hrs)"
-                timeout_hrs=4
+                # Fall back to repo variable INSTANCE_SHELVING_TIMEOUT_HRS, then hardcoded 4.
+                # Course repos can set this variable to allow longer sessions.
+                default_timeout=${INSTANCE_SHELVING_TIMEOUT_HRS:-4}
+                if ! [[ "$default_timeout" =~ ^[0-9]+$ ]]; then
+                  echo "::warning ::INSTANCE_SHELVING_TIMEOUT_HRS ('$default_timeout') is not a valid integer; defaulting to 4hrs"
+                  default_timeout=4
+                fi
+                echo "::warning ::No 'timeout:NNhrs' label found for issue $issue_number (defaulting to ${default_timeout}hrs)"
+                timeout_hrs=$default_timeout
               elif ! [[ "$timeout_hrs" =~ ^[0-9]+$ ]]; then
                 echo "::warning ::Parsed timeout is not an integer ('$timeout_hrs'); defaulting to 4hrs"
                 timeout_hrs=4
@@ -169,3 +176,5 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
+          INSTANCE_SHELVING_TIMEOUT_HRS:
+            ${{ vars.INSTANCE_SHELVING_TIMEOUT_HRS }}
