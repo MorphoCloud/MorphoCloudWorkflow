@@ -22,7 +22,8 @@ jobs:
           permissions: "read,triage,write,maintain,admin"
           allowlist:
             "${{ vars.MORPHOCLOUD_GITHUB_ADMINS }},${{
-            github.event.issue.user.login }}"
+            vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
+            }}"
 
       - uses: actions/checkout@v6
 
