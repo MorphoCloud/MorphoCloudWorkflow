@@ -574,3 +574,110 @@ type-specific repos' vendorize scripts pull from shared first.
 | `.github/workflows/send-renewal-email.yml`         | **Modify** (add course guard)                                    |
 | `noxfile.py`                                       | **Modify** (add `vendorize-course`; update `vendorize` excludes) |
 | `workflow-split.md`                                | **Delete after completion** (this file)                          |
+
+---
+
+## Architectural options evaluated and rejected (April 2026)
+
+The shared-file coupling problem (16 shared workflows + 16 shared actions going
+to both repo types via exclude lists) prompted evaluation of several
+architectural alternatives. All were rejected. This section documents them to
+prevent re-evaluation.
+
+### 1. Allow-list instead of deny-list in noxfile
+
+Flip the vendorize logic: explicitly list files to **include** instead of
+exclude. A forgotten file is excluded (silent omission) rather than included
+(silent pollution).
+
+**Rejected:** Still a curated list. Shifts the failure mode but doesn't
+eliminate bookkeeping. A solo maintainer must still update the list for every
+new file.
+
+### 2. Naming convention enforcement with glob patterns
+
+Prefix files by type (`course-*.yml`, `instance-*.yml`). Noxfile uses glob
+patterns to auto-filter — no per-file list.
+
+**Rejected:** No enforcement mechanism. An agent or contributor who creates a
+file without the prefix silently breaks vendorization. The convention relies on
+discipline, not tooling — the exact thing that fails with a solo maintainer.
+
+### 3. Noxfile validation that rejects unclassified files
+
+Error at vendorize time if any file doesn't match a known pattern or isn't in a
+whitelist.
+
+**Rejected:** Makes failure loud instead of silent, but the whitelist is the
+same curated list as option 1. Shifts notification timing, not the root problem.
+
+### 4. Splitting shared workflows into type-specific copies in the same repo
+
+E.g. `control-instance.yml` → `control-course-instance.yml` +
+`control-individual-instance.yml`. Both live in the same repo.
+
+**Rejected:** The exclude list grows instead of shrinking — now there are more
+files to filter. Doesn't solve the fundamental problem of maintaining lists.
+
+### 5. Hierarchical three-repo split
+
+Three repos: `MorphoCloudSharedWorkflow` → `MorphoCloudCourseWorkflow` /
+`MorphoCloudInstanceWorkflow` → production targets. Each vendorize step is
+wholesale copy (no lists). 5 files with type-branching logic get split into
+type-specific variants.
+
+**Rejected:** Eliminates filtering but adds 2 extra repos. A shared
+infrastructure change (rare but important) requires one commit + four vendorize
+runs. Day-to-day work only touches one repo, but the cognitive overhead of three
+workflow repos and understanding which file goes where is high for a solo
+maintainer. The current number of shared files with actual branching logic (5)
+is small enough that the exclude-list approach is manageable.
+
+### 6. Git subtree (shared repo as git remote)
+
+Add the shared repo as a git remote and use `git subtree pull` to merge shared
+files into each type-specific repo.
+
+**Rejected:** GitHub requires workflow files at `.github/workflows/` and actions
+at `.github/actions/`. Subtree is designed for distinct subdirectories, not
+overlapping paths. Merging a subtree into `.github/` creates conflicts with
+local type-specific files in the same directory tree. Not viable.
+
+### 7. Full cross-repo references (no vendorizing)
+
+Make `MorphoCloudSharedWorkflow` public. Reference shared actions via
+`uses: MorphoCloud/MorphoCloudSharedWorkflow/.github/actions/foo@main` and
+shared workflows via reusable `workflow_call`. Each consumer has thin trigger
+wrappers (~8 lines) that delegate to shared workflows.
+
+**Rejected:** No staging or testing isolation. A broken push to the shared repo
+breaks every consumer simultaneously — all MC-\* repos and MorphoCloudInstances.
+Cannot test a shared action change in one repo before it hits all of them.
+SHA-pinning (`@abc123`) provides version control but reintroduces bookkeeping
+(updating SHAs across repos). Also requires plumbing `inputs:` / `outputs:` /
+`secrets: inherit` through wrappers, which gets verbose for complex multi-job
+workflows.
+
+### 8. Hybrid: cross-repo for shared actions + vendorize for workflows
+
+Use cross-repo `uses:` references for the 15 stable shared actions (OpenStack
+operations rarely change). Continue vendorizing shared workflows (which change
+more often and benefit from staged rollout to test repos first).
+
+**Rejected:** Only partially solves the problem. Shared actions stop drifting,
+but shared workflows — the part that actually changes — still need exclude-list
+vendorizing. Mixing two deployment models (cross-repo refs + vendorize) adds
+complexity without eliminating the core bookkeeping for the files that matter
+most. The benefit (15 stable actions can't drift) doesn't justify the cost
+(every workflow file must use fully-qualified cross-repo action paths, making
+them harder to read and test locally).
+
+### Conclusion
+
+The current approach — **vendorize with exclude lists** — is imperfect but
+understood and stable. The exclude lists are effectively frozen: new shared
+workflows and actions are rare because the OpenStack infrastructure layer is
+mature. The 5 files with type-branching logic are well-documented (see audit
+above). The risk of a silent cross-type break exists but is manageable with
+careful review. No alternative evaluated eliminates bookkeeping without
+introducing worse trade-offs.
