@@ -28,6 +28,12 @@ runs:
 
         ENCODED_USERNAME=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['GITHUB_USERNAME']))")
 
+        # Extract sheet ID if a full Google Sheets URL was pasted instead of just the ID
+        if [[ "$ROSTER_SHEET_ID" =~ /spreadsheets/d/([a-zA-Z0-9_-]+) ]]; then
+          ROSTER_SHEET_ID="${BASH_REMATCH[1]}"
+          echo "Extracted sheet ID from URL: ${ROSTER_SHEET_ID}"
+        fi
+
         if [[ -n "$ROSTER_SHEET_ID" ]]; then
           ENCODED_SHEET_ID=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['ROSTER_SHEET_ID']))")
           RESPONSE=$(curl -sL "${LOOKUP_URL}?action=lookup_course_roster&sheet_id=${ENCODED_SHEET_ID}&github_username=${ENCODED_USERNAME}")
