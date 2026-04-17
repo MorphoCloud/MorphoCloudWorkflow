@@ -68,19 +68,6 @@ def _patch_files(target_dir: Path) -> None:
     )
 
 
-def _patch_files_course(target_dir: Path) -> None:
-    _patch_files(target_dir)
-    # Course repos don't have admin keypairs registered in their allocations.
-    # Remove --key-name from openstack server create — SSH access is via the
-    # runner's injected public key in cloud-config only.
-    action_file = target_dir / ".github/actions/create-instance/action.yml"
-    content = action_file.read_text()
-    content = re.sub(
-        r"^[ \t]+--key-name \"[^\"]*\" \\\n", "", content, flags=re.MULTILINE
-    )
-    action_file.write_text(content)
-
-
 def _vendorize(
     session: nox.Session,
     paths: list[str],
@@ -269,7 +256,7 @@ def vendorize_course(session: nox.Session) -> None:
             # Deprecated
             ".github/workflows/instructor-access.yml",
         ],
-        patch_fn=_patch_files_course,
+        patch_fn=_patch_files,
     )
 
 
