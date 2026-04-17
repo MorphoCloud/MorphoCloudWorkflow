@@ -41,12 +41,11 @@ runs:
           RESPONSE=$(curl -sL "${LOOKUP_URL}?action=lookup&github_username=${ENCODED_USERNAME}")
         fi
 
-        echo "Response: $RESPONSE"
-
         EMAIL=$(echo "$RESPONSE" | jq -r '.email // empty')
         ERROR=$(echo "$RESPONSE" | jq -r '.error // empty')
 
         if [[ -n "$EMAIL" ]]; then
+          echo "::add-mask::$EMAIL"
           echo "email=$EMAIL" >> $GITHUB_OUTPUT
           echo "Successfully resolved email for '$GITHUB_USERNAME'"
         else
