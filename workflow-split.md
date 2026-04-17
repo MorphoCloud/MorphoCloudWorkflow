@@ -300,7 +300,7 @@ The original split addressed the most obvious branching files
 - **Allow-list instead of deny-list in noxfile**: Flips the failure mode
   (forgotten file is excluded vs. included) but doesn't fix the real problem — a
   solo maintainer still has to remember to update a list.
-- **Naming convention enforcement (course-_, instance-_, workshop-\*) with
+- **Naming convention enforcement (course-\*, instance-\*, workshop-\*) with
   noxfile glob patterns**: Removes per-file bookkeeping but relies on the
   convention being followed. An agent or contributor who creates a new file
   without the prefix silently breaks vendorization. No enforcement mechanism
@@ -309,16 +309,126 @@ The original split addressed the most obvious branching files
   time for files not matching a pattern or not in a shared whitelist. Still
   requires maintaining the whitelist. Shifts the failure from silent to loud but
   doesn't prevent it.
+- **Splitting shared workflows into type-specific copies within the same repo**
+  (e.g. `control-instance.yml` → `control-course-instance.yml` +
+  `control-instance-instance.yml`): Still requires filtering during
+  vendorization — the curated exclude list grows instead of shrinking. Doesn't
+  solve the fundamental problem of maintaining lists.
 
-### Open question
+All of these approaches shift bookkeeping from one form to another. The root
+cause remains: **a single repo serving two instance types requires filtering at
+vendorize time, and any filtering mechanism requires a maintained list.**
 
-The core tension: shared workflows exist because the underlying OpenStack
-operations (shelve, unshelve, delete, create IP, etc.) are identical for both
-instance types. Splitting `control-instance.yml` into
-`control-course-instance.yml` and `control-instance-instance.yml` would
-eliminate cross-type coupling at the cost of maintaining two copies of the same
-shell logic. Whether the duplication cost is worth the isolation benefit is a
-judgment call.
+---
+
+## Proposed next phase: hierarchical repo split
+
+### Architecture
+
+Eliminate vendorize filtering entirely by splitting into three repos with a
+hierarchical vendorize chain:
+
+```
+MorphoCloudSharedWorkflow          (generic OpenStack actions + workflows)
+  ├── vendorize → MorphoCloudInstanceWorkflow   (+ individual/workshop-specific files)
+  └── vendorize → MorphoCloudCourseWorkflow     (+ course-specific files)
+
+MorphoCloudInstanceWorkflow        → vendorize → MorphoCloudInstances / MorphoCloudInstancesTest
+MorphoCloudCourseWorkflow          → vendorize → MorphoCloudCourseTemplate → (fork to MC-* repos)
+```
+
+Each vendorize step is a **wholesale copy** — no exclude lists, no include
+lists, no filtering. Every file in the source repo belongs in the target.
+
+### Key properties
+
+- **Course-specific changes** (most common): commit in
+  `MorphoCloudCourseWorkflow` → vendorize to `MorphoCloudCourseTemplate`. One
+  commit, one vendorize. No other repo touched.
+- **Instance/workshop-specific changes**: commit in
+  `MorphoCloudInstanceWorkflow` → vendorize to `MorphoCloudInstances`. One
+  commit, one vendorize.
+- **Shared OpenStack changes** (rare — infrastructure is stable): commit in
+  `MorphoCloudSharedWorkflow` → vendorize to both type-specific workflow repos →
+  vendorize each to production targets. One commit, four vendorize runs.
+- **New file creation is inherently safe**: a file created in
+  `MorphoCloudCourseWorkflow` can never appear in `MorphoCloudInstances` because
+  they are separate repos. No naming convention, glob pattern, or curated list
+  required.
+
+### Vendorize scripts
+
+Each type-specific workflow repo includes a vendorize nox session that
+**automatically pulls from the shared repo first**, then copies everything to
+the target. This means the maintainer never needs to manually run the shared
+vendorize step — it's built into the type-specific vendorize command:
+
+```bash
+# In MorphoCloudCourseWorkflow:
+cd ~/Desktop/Projects/MorphoCloudCourseWorkflow
+pipx run nox -s vendorize -- ~/Desktop/Projects/MorphoCloudCourseTemplate/ --commit
+
+# This internally:
+# 1. Vendorizes MorphoCloudSharedWorkflow → MorphoCloudCourseWorkflow (updates shared files)
+# 2. Copies everything in MorphoCloudCourseWorkflow → MorphoCloudCourseTemplate
+```
+
+Same pattern for `MorphoCloudInstanceWorkflow`.
+
+### Production targets
+
+- **`MorphoCloudCourseTemplate`** is the primary vendorize target for course
+  workflows. New course repos (`MC-*`) are created by `mc-course-intake.gs` as
+  forks/copies of this template — vendorization is not part of the GitHub
+  Actions pipeline.
+- Direct vendorize to a live `MC-*` repo is only done for immediate hotfixes or
+  real-time testing — not the normal flow.
+- **`MorphoCloudInstances`** (and `MorphoCloudInstancesTest`) is the primary
+  vendorize target for individual/workshop workflows.
+
+### Files that need to be split (type branching)
+
+Five files currently contain type-specific branching logic (checking labels or
+dispatching to different actions based on instance type). In the hierarchical
+model, these cannot live in the shared repo. Each gets split into type-specific
+variants that live in the appropriate type-specific workflow repo:
+
+| Current file (shared)             | Branching logic                                                                                                     | Course variant (→ CourseWorkflow) | Instance variant (→ InstanceWorkflow) |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------- | ------------------------------------- |
+| `send-email.yml`                  | 3-way dispatch: calls `send-email/`, `workshop-send-email/`, or `course-send-email/` based on label                 | Course-only email dispatch        | Individual + workshop email dispatch  |
+| `automatic-instance-deleting.yml` | Workshop: skips renewal email, closes sub-issues, cascades to parent issue                                          | Simple expiration (no renewal)    | Full renewal + workshop cascade       |
+| `validate-request.yml`            | Different success comments for individual vs workshop                                                               | Course-specific validation        | Individual + workshop validation      |
+| `control-instance/` action        | On unshelve: sends email via `send-email/` (individual) or `course-send-email/` (course) based on `roster_sheet_id` | Always uses `course-send-email/`  | Always uses `send-email/`             |
+| `lookup-email/` action            | Branches on `roster_sheet_id`: calls `?action=lookup_course_roster` (course) vs `?action=lookup` (individual)       | Always uses roster lookup         | Always uses standard lookup           |
+
+### Files that reference type but don't branch
+
+These files reference type-specific variables (e.g. `COURSE_INSTRUCTOR_GITHUB`
+in allowlists) but don't change behavior. They can stay in the shared repo —
+empty variables resolve to empty strings harmlessly:
+
+- `control-instance.yml` — `COURSE_INSTRUCTOR_GITHUB` in allowlist
+- `control-instance-from-workflow.yml` — accepts `roster_sheet_id` input, passes
+  through
+- `delete-volume.yml` — `COURSE_INSTRUCTOR_GITHUB` in allowlist
+- `delete-instance-and-volume.yml` — `COURSE_INSTRUCTOR_GITHUB` in allowlist
+- `labels.yml` — creates labels for all types unconditionally
+- `runner-setup-helper.yml` — derives course name from repo name
+
+### Exosphere and cloud-config
+
+The `bump-exosphere` nox session and `cloud-config` live in the shared repo.
+Exosphere bumps propagate automatically through the vendorize chain — the
+type-specific repos' vendorize scripts pull from shared first.
+
+### Downsides and mitigations
+
+| Downside                                             | Mitigation                                                                                                                                                 |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared OpenStack bug must be fixed in SharedWorkflow | Discipline: shared changes go upstream. The vendorize script pulls shared first, so the fix propagates automatically on the next type-specific vendorize.  |
+| Direct edits to shared files in type-specific repos  | Next shared vendorize overwrites local changes — forces the fix upstream. This is intentional: it prevents drift.                                          |
+| Three repos instead of one                           | Day-to-day work only touches one repo (the type-specific one). The shared repo is touched only for OpenStack infrastructure changes, which are infrequent. |
+| Exosphere bumps require vendorize propagation        | Built into the vendorize script — one command in each type-specific repo handles it.                                                                       |
 
 ---
 
@@ -326,7 +436,7 @@ judgment call.
 
 ### Workflows (35 files)
 
-#### Course-only (5)
+#### Course-only (5) → MorphoCloudCourseWorkflow
 
 | File                           | Key evidence                                             |
 | ------------------------------ | -------------------------------------------------------- |
@@ -336,7 +446,7 @@ judgment call.
 | `create-course-instance.yml`   | Label guard: `request-type:course-instance`              |
 | `enroll-students.yml`          | Refs `COURSE_TEAM_SLUG`; trigger: push to `students.txt` |
 
-#### Instance/Workshop-only (14)
+#### Instance/Workshop-only (14) → MorphoCloudInstanceWorkflow
 
 | File                                | Key evidence                            |
 | ----------------------------------- | --------------------------------------- |
@@ -355,37 +465,47 @@ judgment call.
 | `send-renewal-email.yml`            | Explicit course-skip guard              |
 | `request-labeler.yml`               | Called only by instance/workshop flows  |
 
-#### Shared (16)
+#### Truly generic (8) → MorphoCloudSharedWorkflow
 
-| File                                 | Key evidence                                                          |
-| ------------------------------------ | --------------------------------------------------------------------- |
-| `send-email.yml`                     | 3-way dispatch by label (individual/workshop/course)                  |
-| `control-instance.yml`               | `/shelve`, `/unshelve`, `/delete_instance`; label: `instance-request` |
-| `control-instance-from-workflow.yml` | Called by auto-shelving (both types)                                  |
-| `delete-volume.yml`                  | `/delete_volume`; label: `instance-request`                           |
-| `delete-volume-from-workflow.yml`    | Called by auto-deleting                                               |
-| `delete-instance-and-volume.yml`     | `/delete_all`; label: `instance-request`                              |
-| `automatic-instance-shelving.yml`    | Schedule — scans all OpenStack instances                              |
-| `automatic-instance-deleting.yml`    | Schedule — scans all expired instances                                |
-| `automatic-volume-deleting.yml`      | Schedule — scans all volumes                                          |
-| `collect-instance-uptime.yml`        | Schedule — all instances                                              |
-| `update-request-status-label.yml`    | Schedule — all issues                                                 |
-| `request-initial-comments.yml`       | Reusable; parameterized by `commands_md_path`                         |
-| `validate-request.yml`               | Fires on issue edit (no label guard)                                  |
-| `labels.yml`                         | Creates labels for all three types                                    |
-| `on-admin-mention.yml`               | Admin notification (any issue)                                        |
-| `runner-setup-helper.yml`            | Setup docs                                                            |
-| `ci.yml`                             | Pre-commit                                                            |
+| File                              | Key evidence                                            |
+| --------------------------------- | ------------------------------------------------------- |
+| `automatic-instance-shelving.yml` | Schedule — scans all OpenStack instances; no type logic |
+| `automatic-volume-deleting.yml`   | Schedule — scans all volumes; no type logic             |
+| `collect-instance-uptime.yml`     | Schedule — all instances; no type logic                 |
+| `update-request-status-label.yml` | Schedule — all issues; no type logic                    |
+| `request-initial-comments.yml`    | Reusable; parameterized by `commands_md_path`           |
+| `on-admin-mention.yml`            | Admin notification (any issue)                          |
+| `runner-setup-helper.yml`         | Setup docs                                              |
+| `ci.yml`                          | Pre-commit                                              |
+
+#### References type but doesn't branch (5) → MorphoCloudSharedWorkflow
+
+| File                                 | Key evidence                                                   |
+| ------------------------------------ | -------------------------------------------------------------- |
+| `control-instance.yml`               | `COURSE_INSTRUCTOR_GITHUB` in allowlist; empty var is harmless |
+| `control-instance-from-workflow.yml` | Accepts `roster_sheet_id` input, passes through                |
+| `delete-volume.yml`                  | `COURSE_INSTRUCTOR_GITHUB` in allowlist                        |
+| `delete-volume-from-workflow.yml`    | Called by auto-deleting; no type logic                         |
+| `delete-instance-and-volume.yml`     | `COURSE_INSTRUCTOR_GITHUB` in allowlist                        |
+| `labels.yml`                         | Creates labels for all types unconditionally                   |
+
+#### Has type branching — must be split (3)
+
+| File                              | Branching logic                    | Course variant → CourseWorkflow | Instance variant → InstanceWorkflow |
+| --------------------------------- | ---------------------------------- | ------------------------------- | ----------------------------------- |
+| `send-email.yml`                  | 3-way dispatch by label            | Course-only email dispatch      | Individual + workshop dispatch      |
+| `automatic-instance-deleting.yml` | Workshop sub-issue close + cascade | Simple expiration               | Full renewal + workshop cascade     |
+| `validate-request.yml`            | Different success comments by type | Course validation message       | Individual + workshop messages      |
 
 ### Actions (22 directories)
 
-#### Course-only (1)
+#### Course-only (1) → MorphoCloudCourseWorkflow
 
 | Directory            | Key evidence                                                             |
 | -------------------- | ------------------------------------------------------------------------ |
 | `course-send-email/` | Called only by `create-course-instance` and `send-email` (course branch) |
 
-#### Instance/Workshop-only (5)
+#### Instance/Workshop-only (5) → MorphoCloudInstanceWorkflow
 
 | Directory                       | Key evidence                                                    |
 | ------------------------------- | --------------------------------------------------------------- |
@@ -395,7 +515,7 @@ judgment call.
 | `send-workshop-email-approval/` | Workshop approval notification                                  |
 | `extract-workshop-fields/`      | Workshop-specific field parsing                                 |
 
-#### Shared (16)
+#### Truly generic (15) → MorphoCloudSharedWorkflow
 
 | Directory                      | Key evidence                                                   |
 | ------------------------------ | -------------------------------------------------------------- |
@@ -404,7 +524,6 @@ judgment call.
 | `check-js2-status/`            | Jetstream2 outage check                                        |
 | `check-volume-exists/`         | Generic OpenStack volume check                                 |
 | `comment-progress/`            | Used by `create-instance` (all types)                          |
-| `control-instance/`            | Core shelve/unshelve/delete                                    |
 | `create-instance/`             | Core provisioning                                              |
 | `create-ip/`                   | Floating IP allocation                                         |
 | `define-instance-name/`        | Name formatting                                                |
@@ -412,37 +531,34 @@ judgment call.
 | `delete-volume/`               | Volume deletion                                                |
 | `extract-issue-fields/`        | Issue body parsing                                             |
 | `generate-connection-url/`     | Guacamole URL generation                                       |
-| `lookup-email/`                | Email lookup (supports both standard and roster modes)         |
 | `retrieve-metadata/`           | Instance IP + passphrase from OpenStack                        |
 | `update-approval/`             | Approve/unapprove label management                             |
 | `update-request-status-label/` | Status label updates                                           |
 
+#### Has type branching — must be split (2)
+
+| Directory           | Branching logic                                                   | Course variant → CourseWorkflow  | Instance variant → InstanceWorkflow |
+| ------------------- | ----------------------------------------------------------------- | -------------------------------- | ----------------------------------- |
+| `control-instance/` | Unshelve: dispatches to `send-email/` or `course-send-email/`     | Always uses `course-send-email/` | Always uses `send-email/`           |
+| `lookup-email/`     | Branches on `roster_sheet_id` for different Apps Script endpoints | Always uses roster lookup        | Always uses standard lookup         |
+
 ### Root files (3)
 
-| File                         | Type                  | Key evidence                                |
-| ---------------------------- | --------------------- | ------------------------------------------- |
-| `issue-commands.md`          | **Instance/Workshop** | Individual command list (includes `/renew`) |
-| `workshop-issue-commands.md` | **Instance/Workshop** | Workshop command list                       |
-| `course-issue-commands.md`   | **Course**            | Course command list (no `/renew`)           |
+| File                         | Destination          | Key evidence                                |
+| ---------------------------- | -------------------- | ------------------------------------------- |
+| `issue-commands.md`          | **InstanceWorkflow** | Individual command list (includes `/renew`) |
+| `workshop-issue-commands.md` | **InstanceWorkflow** | Workshop command list                       |
+| `course-issue-commands.md`   | **CourseWorkflow**   | Course command list (no `/renew`)           |
 
-### Vestigial files (vendorized but unused in target)
+### Other shared root files → MorphoCloudSharedWorkflow
 
-These are currently vendorized to repos where nothing calls them:
+| File                      | Key evidence                                     |
+| ------------------------- | ------------------------------------------------ |
+| `.pre-commit-config.yaml` | Shared linting config                            |
+| `cloud-config`            | OpenStack cloud-init template                    |
+| `scripts/`                | `list-instance-credentials.sh` — generic utility |
 
-**In course repos (MC-\*) but unused:**
-
-- `create-instance-from-workflow.yml` — called only by `create-workshop`
-- `request-labeler.yml` — called only by `on-instance-request-opened`
-- `validate-request.yml` — fires on edit, course uses `validate-request-course`
-- `check-team-membership/` action
-- `send-email/` action
-- `workshop-send-email/` action
-- `send-workshop-email-approval/` action
-- `extract-workshop-fields/` action
-
-**In MorphoCloudInstances but unused:**
-
-- `course-issue-commands.md` — no workflow references it there
+---
 
 ## Files changed summary (original plan — completed)
 
