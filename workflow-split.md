@@ -248,7 +248,203 @@ Verify:
 
 ---
 
-## Files changed summary
+## Implementation status (April 2026)
+
+Steps 1–7 are **complete** on branch `implement-workflow-split`.
+
+| Step                                                             | Status                             |
+| ---------------------------------------------------------------- | ---------------------------------- |
+| 1. Split `validate-command.yml` → 3 type-specific files          | ✅ Done                            |
+| 2. Split `on-request-opened.yml` → 2 files                       | ✅ Done                            |
+| 3. Course guard in `send-renewal-email.yml`                      | ✅ Done                            |
+| 4. Bidirectional issue template exclusions                       | ✅ Done                            |
+| 5. `vendorize-course` nox session + updated `vendorize` excludes | ✅ Done                            |
+| 6. Pre-commit / actionlint validation                            | ✅ Done                            |
+| 7. Vendorize to test repos                                       | ✅ Done (CourseTemplate + MC-U-AL) |
+
+### Additional changes made during testing (beyond original plan)
+
+- Added `COURSE_INSTRUCTOR_GITHUB` to allowlists in `control-instance.yml`,
+  `create-course-instance.yml`, `send-email.yml`, `delete-volume.yml`,
+  `delete-instance-and-volume.yml` so course instructors can run commands on
+  student issues.
+- Added email masking (`::add-mask::`) and removed raw API response logging in
+  `lookup-email/action.yml` to prevent student emails from appearing in action
+  logs.
+- Added URL-to-ID extraction regex in `lookup-email/action.yml` so
+  `MORPHOCLOUD_STUDENT_ROSTER_SHEET_ID` accepts either a full Google Sheets URL
+  or a bare sheet ID.
+- Removed `01-individual-instance-request.yml` and `03-workshop-request.yml`
+  from `MorphoCloudCourseTemplate`.
+- Removed "Course Repository Configuration" section from
+  `course-issue-commands.md`.
+- `_patch_files_course()` strips `--key-name` from `create-instance/action.yml`
+  for course repos (no admin keypairs in allocations).
+
+---
+
+## Remaining problem: shared-file coupling
+
+The original split addressed the most obvious branching files
+(`validate-command.yml`, `on-request-opened.yml`), but **16 shared workflows and
+16 shared actions still go to both repo types**. This means:
+
+1. A change to `send-email.yml` targeting the course path can silently break the
+   individual path (or vice versa) — the exact risk the split was supposed to
+   eliminate.
+2. Nine files are vendorized to repos where they are never called (dead weight
+   that obscures what's actually active).
+
+### Approaches considered and rejected
+
+- **Allow-list instead of deny-list in noxfile**: Flips the failure mode
+  (forgotten file is excluded vs. included) but doesn't fix the real problem — a
+  solo maintainer still has to remember to update a list.
+- **Naming convention enforcement (course-_, instance-_, workshop-\*) with
+  noxfile glob patterns**: Removes per-file bookkeeping but relies on the
+  convention being followed. An agent or contributor who creates a new file
+  without the prefix silently breaks vendorization. No enforcement mechanism
+  short of a curated list — same problem as option A.
+- **Noxfile validation that rejects unclassified files**: Errors at vendorize
+  time for files not matching a pattern or not in a shared whitelist. Still
+  requires maintaining the whitelist. Shifts the failure from silent to loud but
+  doesn't prevent it.
+
+### Open question
+
+The core tension: shared workflows exist because the underlying OpenStack
+operations (shelve, unshelve, delete, create IP, etc.) are identical for both
+instance types. Splitting `control-instance.yml` into
+`control-course-instance.yml` and `control-instance-instance.yml` would
+eliminate cross-type coupling at the cost of maintaining two copies of the same
+shell logic. Whether the duplication cost is worth the isolation benefit is a
+judgment call.
+
+---
+
+## Full audit: file classification
+
+### Workflows (35 files)
+
+#### Course-only (5)
+
+| File                           | Key evidence                                             |
+| ------------------------------ | -------------------------------------------------------- |
+| `validate-command-course.yml`  | Label guard: `request-type:course-instance`              |
+| `validate-request-course.yml`  | Called only by `on-course-request-opened`                |
+| `on-course-request-opened.yml` | Label guard: `request-type:course-instance`              |
+| `create-course-instance.yml`   | Label guard: `request-type:course-instance`              |
+| `enroll-students.yml`          | Refs `COURSE_TEAM_SLUG`; trigger: push to `students.txt` |
+
+#### Instance/Workshop-only (14)
+
+| File                                | Key evidence                            |
+| ----------------------------------- | --------------------------------------- |
+| `validate-command-instance.yml`     | Label guard: `request-type:instance`    |
+| `validate-command-workshop.yml`     | Label guard: `request-type:workshop`    |
+| `on-instance-request-opened.yml`    | Guards on instance + workshop labels    |
+| `create-instance.yml`               | Label guard: `request-type:instance`    |
+| `create-instance-from-workflow.yml` | Called only by `create-workshop`        |
+| `create-workshop.yml`               | Label guard: `request-type:workshop`    |
+| `approve-workshop.yml`              | Label guard: `request-type:workshop`    |
+| `update-workshop.yml`               | Workshop completion scheduling          |
+| `test-workshop-deletion.yml`        | Test workflow for workshops             |
+| `request-notify-admin.yml`          | Individual instance admin email         |
+| `request-notify-admin-workshop.yml` | Workshop admin email                    |
+| `update-renew-label.yml`            | `/renew` — course instances can't renew |
+| `send-renewal-email.yml`            | Explicit course-skip guard              |
+| `request-labeler.yml`               | Called only by instance/workshop flows  |
+
+#### Shared (16)
+
+| File                                 | Key evidence                                                          |
+| ------------------------------------ | --------------------------------------------------------------------- |
+| `send-email.yml`                     | 3-way dispatch by label (individual/workshop/course)                  |
+| `control-instance.yml`               | `/shelve`, `/unshelve`, `/delete_instance`; label: `instance-request` |
+| `control-instance-from-workflow.yml` | Called by auto-shelving (both types)                                  |
+| `delete-volume.yml`                  | `/delete_volume`; label: `instance-request`                           |
+| `delete-volume-from-workflow.yml`    | Called by auto-deleting                                               |
+| `delete-instance-and-volume.yml`     | `/delete_all`; label: `instance-request`                              |
+| `automatic-instance-shelving.yml`    | Schedule — scans all OpenStack instances                              |
+| `automatic-instance-deleting.yml`    | Schedule — scans all expired instances                                |
+| `automatic-volume-deleting.yml`      | Schedule — scans all volumes                                          |
+| `collect-instance-uptime.yml`        | Schedule — all instances                                              |
+| `update-request-status-label.yml`    | Schedule — all issues                                                 |
+| `request-initial-comments.yml`       | Reusable; parameterized by `commands_md_path`                         |
+| `validate-request.yml`               | Fires on issue edit (no label guard)                                  |
+| `labels.yml`                         | Creates labels for all three types                                    |
+| `on-admin-mention.yml`               | Admin notification (any issue)                                        |
+| `runner-setup-helper.yml`            | Setup docs                                                            |
+| `ci.yml`                             | Pre-commit                                                            |
+
+### Actions (22 directories)
+
+#### Course-only (1)
+
+| Directory            | Key evidence                                                             |
+| -------------------- | ------------------------------------------------------------------------ |
+| `course-send-email/` | Called only by `create-course-instance` and `send-email` (course branch) |
+
+#### Instance/Workshop-only (5)
+
+| Directory                       | Key evidence                                                    |
+| ------------------------------- | --------------------------------------------------------------- |
+| `check-team-membership/`        | Called only by `on-instance-request-opened`, `approve-workshop` |
+| `send-email/`                   | Individual connection email (includes `/renew` in body)         |
+| `workshop-send-email/`          | Workshop connection email                                       |
+| `send-workshop-email-approval/` | Workshop approval notification                                  |
+| `extract-workshop-fields/`      | Workshop-specific field parsing                                 |
+
+#### Shared (16)
+
+| Directory                      | Key evidence                                                   |
+| ------------------------------ | -------------------------------------------------------------- |
+| `check-approval/`              | Used by `control-instance`, `create-workshop`, `delete-volume` |
+| `check-instance-exists/`       | Generic OpenStack query                                        |
+| `check-js2-status/`            | Jetstream2 outage check                                        |
+| `check-volume-exists/`         | Generic OpenStack volume check                                 |
+| `comment-progress/`            | Used by `create-instance` (all types)                          |
+| `control-instance/`            | Core shelve/unshelve/delete                                    |
+| `create-instance/`             | Core provisioning                                              |
+| `create-ip/`                   | Floating IP allocation                                         |
+| `define-instance-name/`        | Name formatting                                                |
+| `define-volume-name/`          | Name formatting                                                |
+| `delete-volume/`               | Volume deletion                                                |
+| `extract-issue-fields/`        | Issue body parsing                                             |
+| `generate-connection-url/`     | Guacamole URL generation                                       |
+| `lookup-email/`                | Email lookup (supports both standard and roster modes)         |
+| `retrieve-metadata/`           | Instance IP + passphrase from OpenStack                        |
+| `update-approval/`             | Approve/unapprove label management                             |
+| `update-request-status-label/` | Status label updates                                           |
+
+### Root files (3)
+
+| File                         | Type                  | Key evidence                                |
+| ---------------------------- | --------------------- | ------------------------------------------- |
+| `issue-commands.md`          | **Instance/Workshop** | Individual command list (includes `/renew`) |
+| `workshop-issue-commands.md` | **Instance/Workshop** | Workshop command list                       |
+| `course-issue-commands.md`   | **Course**            | Course command list (no `/renew`)           |
+
+### Vestigial files (vendorized but unused in target)
+
+These are currently vendorized to repos where nothing calls them:
+
+**In course repos (MC-\*) but unused:**
+
+- `create-instance-from-workflow.yml` — called only by `create-workshop`
+- `request-labeler.yml` — called only by `on-instance-request-opened`
+- `validate-request.yml` — fires on edit, course uses `validate-request-course`
+- `check-team-membership/` action
+- `send-email/` action
+- `workshop-send-email/` action
+- `send-workshop-email-approval/` action
+- `extract-workshop-fields/` action
+
+**In MorphoCloudInstances but unused:**
+
+- `course-issue-commands.md` — no workflow references it there
+
+## Files changed summary (original plan — completed)
 
 | File                                               | Action                                                           |
 | -------------------------------------------------- | ---------------------------------------------------------------- |
