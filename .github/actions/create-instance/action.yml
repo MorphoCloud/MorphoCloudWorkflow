@@ -15,6 +15,10 @@ inputs:
   volume_name_suffix:
     description: "Volume name suffix"
     required: true
+  volume_size_gb:
+    description: "Volume size in GB"
+    required: false
+    default: "100"
   token:
     description: "GITHUB_TOKEN or repo scoped PAT"
     required: true
@@ -173,10 +177,11 @@ runs:
       run: |
         source ~/venv/bin/activate
 
-        openstack volume create --size 100 "${VOLUME_NAME}"
+        openstack volume create --size "${VOLUME_SIZE_GB}" "${VOLUME_NAME}"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         VOLUME_NAME: ${{ steps.define_volume_name.outputs.volume_name }}
+        VOLUME_SIZE_GB: ${{ inputs.volume_size_gb }}
 
     - name: comment (failed to create volume)
       if: ${{ steps.create_volume.outcome == 'failure' && failure() }}

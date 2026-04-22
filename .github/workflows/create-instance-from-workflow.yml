@@ -111,6 +111,7 @@ jobs:
           issue_number: ${{ inputs.issue_number }}
           instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
           volume_name_suffix: ${{ vars.VOLUME_NAME_PREFIX }}
+          volume_size_gb: ${{ vars.VOLUME_SIZE_GB || '100' }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Get workshop organizer
