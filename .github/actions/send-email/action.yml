@@ -12,6 +12,12 @@ inputs:
   email_lookup_url:
     description: "URL of the Apps Script web app for email lookup"
     required: true
+  email_lookup_api_key:
+    description:
+      "Optional API key for the lookup endpoint (required when lookup_url points
+      at the morphocloud-intake app)"
+    required: false
+    default: ""
   issue_creator:
     description: "GitHub username of the issue creator"
     required: true
@@ -40,6 +46,7 @@ runs:
       with:
         lookup_url: ${{ inputs.email_lookup_url }}
         github_username: ${{ inputs.issue_creator }}
+        api_key: ${{ inputs.email_lookup_api_key }}
 
     - name: Retrieve metadata
       id: instance_metadata

@@ -99,6 +99,7 @@ jobs:
         with:
           lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
           github_username: ${{ steps.issue_meta.outputs.author }}
+          api_key: ${{ secrets.MORPHOCLOUD_LOOKUP_API_KEY }}
 
       # --- Workshop path: look up email from Apps Script ---
       - name: Look up email (workshop)

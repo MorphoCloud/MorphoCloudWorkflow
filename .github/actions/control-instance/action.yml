@@ -31,6 +31,12 @@ inputs:
   email_lookup_url:
     description: "URL of the Apps Script web app for email lookup"
     required: true
+  email_lookup_api_key:
+    description:
+      "Optional API key for the lookup endpoint (required when lookup_url points
+      at the morphocloud-intake app)"
+    required: false
+    default: ""
   issue_creator:
     description:
       "GitHub username of the issue creator (used for email lookup on unshelve)"
@@ -586,6 +592,7 @@ runs:
         os_cloud: ${{ inputs.os_cloud }}
         token: ${{ inputs.token }}
         email_lookup_url: ${{ inputs.email_lookup_url }}
+        email_lookup_api_key: ${{ inputs.email_lookup_api_key }}
         issue_creator: ${{ inputs.issue_creator }}
         mail_server_username: ${{ inputs.mail_server_username }}
         mail_server_password: ${{ inputs.mail_server_password }}

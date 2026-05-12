@@ -1,10 +1,13 @@
 name: "Lookup email"
 description:
   "Look up a user's email address from the Google Sheet via the Apps Script web
-  app endpoint, using the GitHub username as the key."
+  app endpoint (or the morphocloud-intake API), using the GitHub username as the
+  key."
 inputs:
   lookup_url:
-    description: "Base URL of the Apps Script web app"
+    description:
+      "Base URL of the lookup endpoint (Apps Script web app or
+      morphocloud-intake)"
     required: true
   github_username:
     description: "GitHub username to look up"
@@ -13,6 +16,12 @@ inputs:
     description:
       "Google Sheet ID of the instructor-owned course roster (when set, uses
       lookup_course_roster instead of lookup)"
+  api_key:
+    description:
+      "Optional API key sent as X-Api-Key header. Required when lookup_url
+      points at the morphocloud-intake app; ignored by Apps Script endpoints."
+    required: false
+    default: ""
 outputs:
   email:
     description: "The verified email address for the user"
@@ -34,11 +43,16 @@ runs:
           echo "Extracted sheet ID from URL: ${ROSTER_SHEET_ID}"
         fi
 
+        CURL_ARGS=(-sL)
+        if [[ -n "$API_KEY" ]]; then
+          CURL_ARGS+=(-H "X-Api-Key: $API_KEY")
+        fi
+
         if [[ -n "$ROSTER_SHEET_ID" ]]; then
           ENCODED_SHEET_ID=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['ROSTER_SHEET_ID']))")
-          RESPONSE=$(curl -sL "${LOOKUP_URL}?action=lookup_course_roster&sheet_id=${ENCODED_SHEET_ID}&github_username=${ENCODED_USERNAME}")
+          RESPONSE=$(curl "${CURL_ARGS[@]}" "${LOOKUP_URL}?action=lookup_course_roster&sheet_id=${ENCODED_SHEET_ID}&github_username=${ENCODED_USERNAME}")
         else
-          RESPONSE=$(curl -sL "${LOOKUP_URL}?action=lookup&github_username=${ENCODED_USERNAME}")
+          RESPONSE=$(curl "${CURL_ARGS[@]}" "${LOOKUP_URL}?action=lookup&github_username=${ENCODED_USERNAME}")
         fi
 
         EMAIL=$(echo "$RESPONSE" | jq -r '.email // empty')
@@ -56,3 +70,4 @@ runs:
         LOOKUP_URL: ${{ inputs.lookup_url }}
         GITHUB_USERNAME: ${{ inputs.github_username }}
         ROSTER_SHEET_ID: ${{ inputs.roster_sheet_id }}
+        API_KEY: ${{ inputs.api_key }}
