@@ -217,6 +217,6 @@ To update:
    the target repository.
 
 [ansible-slicer-vars-main-yml]:
-  https://github.com/MorphoCloud/exosphere/blob/morpho-cloud-portal-2024.07.17-78a7e2d93/ansible/roles/slicer/vars/main.yml
+  https://github.com/MorphoCloud/exosphere/blob/morpho-cloud-portal-2026.06-ubuntu24-prep/ansible/roles/slicer/vars/main.yml
 [slicer-install-extension-dependencies-py]:
-  https://github.com/MorphoCloud/exosphere/blob/morpho-cloud-portal-2024.07.17-78a7e2d93/ansible/roles/slicer/files/slicer-install-extension-dependencies.py
+  https://github.com/MorphoCloud/exosphere/blob/morpho-cloud-portal-2026.06-ubuntu24-prep/ansible/roles/slicer/files/slicer-install-extension-dependencies.py
