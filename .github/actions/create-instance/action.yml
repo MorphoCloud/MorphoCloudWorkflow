@@ -238,7 +238,7 @@ runs:
           --nic net-id="auto_allocated_network" \
           --security-group "exosphere" \
           --flavor $INSTANCE_FLAVOR \
-          --image "Featured-Ubuntu22" \
+          --image "Featured-Ubuntu24" \
           --key-name "murat-key" \
           --property "exoGuac={\"v\":1,\"ssh\":true,\"vnc\":true}" \
           --property "exoClientUuid=$exoClientUuid" \
