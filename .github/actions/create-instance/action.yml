@@ -455,11 +455,12 @@ runs:
 
         echo Polling "$INSTANCE_NAME" setup status
 
-        max_wait_time=1200  # Maximum wait time in seconds (1200s -> 20mins)
+        max_wait_time=1200  # Maximum wall-clock wait time in seconds (1200s -> 20mins)
         wait_interval=5    # Interval between status checks in seconds
-        total_wait_time=0
+        start_time=$SECONDS
+        status="pending"
 
-        while [ $total_wait_time -lt $max_wait_time ]; do
+        while (( SECONDS - start_time < max_wait_time )); do
 
             # Get the log; bail if openstack itself fails
             log_output=$(openstack console log show "$INSTANCE_NAME") || {
@@ -474,20 +475,22 @@ runs:
               | jq -r '.status // "pending"'
             )
 
-            echo -n "setup status [$status]. "
+            echo -n "setup status [$status] (waited $((SECONDS - start_time))s). "
 
             if [[ "$status" == "complete" ]]; then
-                echo "Exiting loop."
+                echo "Setup complete."
                 break
+            elif [[ "$status" == "error" ]]; then
+                echo "::error ::Instance setup reported 'error'. Check the instance console log / cloud-init output for the failed step."
+                exit 1
             else
                 echo "Waiting for completion..."
                 sleep $wait_interval
-                total_wait_time=$((total_wait_time + wait_interval))
             fi
         done
 
-        if [ $total_wait_time -ge $max_wait_time ]; then
-            echo "::error ::Maximum wait time ($max_wait_time seconds) exceeded."
+        if [[ "$status" != "complete" ]]; then
+            echo "::error ::Maximum wait time ($max_wait_time seconds) exceeded before setup completed (last status: $status)."
             exit 1
         fi
 
