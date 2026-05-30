@@ -221,3 +221,18 @@ jobs:
           setup_instance: ✅
           attach_volume: ✅
           send_email: ✅
+
+      - name: comment (retry guidance on provisioning failure)
+        if: ${{ failure() && steps.provision.outcome == 'failure' }}
+        uses: peter-evans/create-or-update-comment@v5.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            #### ⚠️ What to do next
+
+            Instance creation did not complete. This is sometimes caused by a transient cloud error. To retry from a clean state, comment the following on this issue, one at a time:
+
+            1. `/delete_all` — removes the partially-created instance, volume, and floating IP
+            2. `/create` — provisions again from scratch
+
+            If it fails again after retrying, please tag `@MorphoCloud/morphocloud-admins` for help.
