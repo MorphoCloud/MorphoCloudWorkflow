@@ -409,9 +409,18 @@ runs:
       run: |
         source ~/venv/bin/activate
 
+        # Verify the association against the Neutron floating-IP object (its
+        # port binding), NOT Nova's 'server show -c addresses'. After
+        # 'add floating ip', the FIP is bound at the Neutron level immediately,
+        # but Nova's cached server-addresses view can lag well past 120s — which
+        # previously made this step time out even though the IP *was* associated
+        # (the instance came up reachable). 'floating ip show' reflects the
+        # binding right away.
         has_ip() {
-          [[ "$(openstack server show "$INSTANCE_NAME" -c addresses -f json \
-                | jq -r '.addresses.auto_allocated_network[1] != null')" == "true" ]]
+          local pid
+          pid=$(openstack floating ip show "$FLOATING_IP_UUID" -c port_id -f value 2>/dev/null) \
+            || return 1
+          [[ -n "$pid" && "$pid" != "None" && "$pid" != "null" ]]
         }
 
         if has_ip; then
@@ -419,8 +428,8 @@ runs:
         else
           # JS2's Neutron API sometimes returns HTTP 500 from 'add floating ip'
           # even though the association actually applied. So attempt it, then
-          # VERIFY by re-checking the instance addresses — tolerating that
-          # spurious 500 — and retry briefly before treating it as a real failure.
+          # VERIFY via the floating-IP port binding — tolerating that spurious
+          # 500 — and retry briefly before treating it as a real failure.
           max_wait=120
           interval=10
           start=$SECONDS
@@ -443,6 +452,7 @@ runs:
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         FLOATING_IP_ADDRESS: ${{ steps.ip_create.outputs.floating_ip_address }}
+        FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (failed to associate IP with instance)
