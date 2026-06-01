@@ -409,14 +409,36 @@ runs:
       run: |
         source ~/venv/bin/activate
 
-        has_ip=$(
-          openstack server show $INSTANCE_NAME -c addresses -f json | \
-          jq -r '.addresses.auto_allocated_network[1] != null'
-        )
-        echo "has_ip [$has_ip]"
+        has_ip() {
+          [[ "$(openstack server show "$INSTANCE_NAME" -c addresses -f json \
+                | jq -r '.addresses.auto_allocated_network[1] != null')" == "true" ]]
+        }
 
-        if [[ $has_ip != "true" ]]; then
-          openstack server add floating ip "$INSTANCE_NAME" $FLOATING_IP_ADDRESS
+        if has_ip; then
+          echo "Floating IP already associated."
+        else
+          # JS2's Neutron API sometimes returns HTTP 500 from 'add floating ip'
+          # even though the association actually applied. So attempt it, then
+          # VERIFY by re-checking the instance addresses — tolerating that
+          # spurious 500 — and retry briefly before treating it as a real failure.
+          max_wait=120
+          interval=10
+          start=$SECONDS
+          associated=false
+          while :; do
+            openstack server add floating ip "$INSTANCE_NAME" "$FLOATING_IP_ADDRESS" \
+              || echo "add floating ip returned non-zero (possible spurious JS2 500); verifying..."
+            sleep 5
+            if has_ip; then associated=true; break; fi
+            if (( SECONDS - start >= max_wait )); then break; fi
+            echo "IP not associated yet (waited $((SECONDS - start))s of ${max_wait}s); retrying in ${interval}s..."
+            sleep "$interval"
+          done
+          if [[ "$associated" != "true" ]]; then
+            echo "::error ::Failed to associate $FLOATING_IP_ADDRESS with $INSTANCE_NAME after ${max_wait}s"
+            exit 1
+          fi
+          echo "Floating IP associated."
         fi
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
