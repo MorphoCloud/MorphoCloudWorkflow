@@ -174,7 +174,7 @@ jobs:
 
           @$ISSUE_CREATOR is not a member of the **$TEAM_SLUG** team.
 
-          To request a workshop, please complete the [MorphoCloud workshop organizer intake form](https://forms.gle/morphocloud-workshop-intake) first and accept the GitHub organization invitation.
+          To request a workshop, please start at [morphocloud.org](https://morphocloud.org) and use the workshop intake there first, then accept the GitHub organization invitation.
 
           This issue will be closed."
 
