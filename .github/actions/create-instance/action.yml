@@ -566,12 +566,56 @@ runs:
       id: rename_mydata
       shell: bash
       run: |
-        ssh \
-          -o StrictHostKeyChecking=no \
-          -o UserKnownHostsFile=/dev/null \
-          -o LogLevel=ERROR \
-          exouser@$INSTANCE_IP \
-          'mv /media/volume/MyData /media/volume/MyData-tmp'
+        # This is the first SSH-to-instance step of the volume phase. Right
+        # after 'setup_instance' completes the instance can still be finishing
+        # cloud-init or rebooting, so sshd is briefly unreachable and ssh exits
+        # 255 (a transient, not an 'mv' error). Previously that aborted the run
+        # and forced the user to /delete_all + /create. Instead, wait for sshd
+        # to come back on a real-elapsed-time budget and retry. The remote
+        # command is idempotent: if a connection drops *after* the mv applied,
+        # MyData-tmp already exists on the next attempt and we treat it as done.
+        # This loop also gates the later instance-SSH steps (copy/relocate),
+        # since by the time it succeeds the instance is reachable and stable.
+        remote_cmd='if [ -e /media/volume/MyData-tmp ]; then
+          echo "MyData-tmp already present; rename already applied.";
+        elif [ -e /media/volume/MyData ]; then
+          mv /media/volume/MyData /media/volume/MyData-tmp;
+        else
+          echo "Neither MyData nor MyData-tmp present on the volume mount" >&2;
+          exit 3;
+        fi'
+        max_wait=300
+        interval=15
+        start=$SECONDS
+        attempt=0
+        while :; do
+          attempt=$((attempt + 1))
+          echo "Rename attempt $attempt (elapsed $((SECONDS - start))s of ${max_wait}s)"
+          set +e
+          ssh \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=10 \
+            -o LogLevel=ERROR \
+            exouser@"$INSTANCE_IP" \
+            "$remote_cmd"
+          rc=$?
+          set -e
+          if [[ $rc -eq 0 ]]; then
+            echo "Rename succeeded (or already applied)."
+            break
+          fi
+          if [[ $rc -ne 255 ]]; then
+            echo "::error ::Remote rename command failed (ssh rc=$rc) — not a connection error; aborting."
+            exit 1
+          fi
+          if (( SECONDS - start >= max_wait )); then
+            echo "::error ::sshd on $INSTANCE_IP not reachable for rename after ${max_wait}s"
+            exit 1
+          fi
+          echo "ssh connection not ready (rc=255); retrying in ${interval}s..."
+          sleep "$interval"
+        done
       env:
         INSTANCE_IP: ${{ steps.ip_create.outputs.floating_ip_address }}
 
