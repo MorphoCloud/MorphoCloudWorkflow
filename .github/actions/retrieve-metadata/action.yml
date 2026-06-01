@@ -61,29 +61,33 @@ runs:
 
         # Retry logic for SSH-based password retrieval
         if [[ -z "$instance_pwd" ]]; then
-          # Since 'exoPw' tag may not yet set, attempt to directly retrieve the password using
-          # the openstack endpoint local to the instance.
-          function retrieve_password {
+          # The 'exoPw' tag may not be set yet — e.g. right after a cold
+          # /unshelve, while the instance is still booting and sshd isn't
+          # accepting connections (ssh fails with "connection refused"). Pull the
+          # password from the instance metadata service over SSH, retrying on a
+          # real-elapsed-time budget until sshd comes up.
+          echo "Password not found in tags, attempting to retrieve via SSH..."
+          max_wait=300   # up to 5 min — a cold unshelve can be slow to boot
+          interval=15
+          start=$SECONDS
+          while (( SECONDS - start < max_wait )); do
             instance_pwd=$(ssh \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
               -o LogLevel=ERROR \
-              exouser@$instance_ip \
-              'curl --silent http://169.254.169.254/openstack/latest/password')
-            echo "$instance_pwd"
-          }
-          echo "Password not found in tags, attempting to retrieve via SSH..."
-          for attempt in {1..2}; do
-            instance_pwd=$(retrieve_password)
+              -o ConnectTimeout=10 \
+              exouser@"$instance_ip" \
+              'curl --silent http://169.254.169.254/openstack/latest/password' 2>/dev/null || true)
             if [[ -n "$instance_pwd" ]]; then
+              echo "Retrieved password after $((SECONDS - start))s."
               break
             fi
-            echo "Retrying password retrieval ($attempt)..."
-            sleep 20
+            echo "sshd/password not ready yet (waited $((SECONDS - start))s of ${max_wait}s); retrying in ${interval}s..."
+            sleep "$interval"
           done
         fi
         if [[ -z "$instance_pwd" ]]; then
-          echo "::error ::Failed to retrieve $INSTANCE_NAME password"
+          echo "::error ::Failed to retrieve $INSTANCE_NAME password within ${max_wait}s (sshd never accepted connections?)"
           exit 1
         fi
         echo "::add-mask::$instance_pwd"
