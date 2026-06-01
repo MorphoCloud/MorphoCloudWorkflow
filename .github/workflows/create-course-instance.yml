@@ -12,6 +12,21 @@ jobs:
       contains(github.event.issue.labels.*.name, 'request-type:course-instance')
       && ( contains(github.event.comment.body, '/create') ) }}
     steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/create-github-app-token@v2.2.0
+        id: admin-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Resolve admins from morphocloud-admins team
+        id: admins
+        uses: ./.github/actions/resolve-team-members
+        with:
+          token: ${{ steps.admin-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: morphocloud-admins
       - name: create command
         id: create_command
         uses: github/command@v2.0.2
@@ -21,7 +36,7 @@ jobs:
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
-            "${{ vars.MORPHOCLOUD_GITHUB_ADMINS }},${{
+            "${{ steps.admins.outputs.members }},${{
             vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
             }},${{ join(github.event.issue.assignees.*.login, ',') }}"
 
@@ -148,7 +163,7 @@ jobs:
           INSTANCE_NAME_PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
           ISSUE_CREATOR: ${{ github.event.issue.user.login }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
+          ADMINS: ${{ steps.admins.outputs.members }}
           COURSE_INSTRUCTOR: ${{ vars.COURSE_INSTRUCTOR_GITHUB }}
           MAX_COURSE_PER_USER:
             ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
@@ -188,6 +203,7 @@ jobs:
           mail_server_password: ${{ secrets.MAIL_PASSWORD }}
           instance_name: ${{ steps.provision.outputs.instance_name }}
           instance_issue_number: ${{ github.event.issue.number }}
+          roster_sheet_id: ${{ vars.MORPHOCLOUD_STUDENT_ROSTER_SHEET_ID }}
 
       - name: comment (failed to send email)
         if: ${{ steps.send_email.outcome == 'failure' && failure() }}

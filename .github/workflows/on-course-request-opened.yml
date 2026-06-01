@@ -53,6 +53,22 @@ jobs:
       'request-type:course-instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/create-github-app-token@v2.2.0
+        id: admin-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Resolve admins from morphocloud-admins team
+        id: admins
+        uses: ./.github/actions/resolve-team-members
+        with:
+          token: ${{ steps.admin-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: morphocloud-admins
+
       - name: Check per-user course instance quota
         run: |
           MAX_COURSE_PER_USER="${MAX_COURSE_PER_USER:-1}"
@@ -118,7 +134,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_CREATOR: ${{ github.event.issue.user.login }}
-          ADMINS: ${{ vars.MORPHOCLOUD_GITHUB_ADMINS }}
+          ADMINS: ${{ steps.admins.outputs.members }}
           COURSE_INSTRUCTOR: ${{ vars.COURSE_INSTRUCTOR_GITHUB }}
           MAX_COURSE_PER_USER:
             ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}

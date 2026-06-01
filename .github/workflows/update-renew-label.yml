@@ -18,6 +18,21 @@ jobs:
       contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.comment.body, '/renew')}}
     steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/create-github-app-token@v2.2.0
+        id: admin-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Resolve admins from morphocloud-admins team
+        id: admins
+        uses: ./.github/actions/resolve-team-members
+        with:
+          token: ${{ steps.admin-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: morphocloud-admins
       - name: renew command
         id: renew_command
         uses: github/command@v2.0.3
@@ -27,7 +42,7 @@ jobs:
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
-            "${{ vars.MORPHOCLOUD_GITHUB_ADMINS }},${{
+            "${{ steps.admins.outputs.members }},${{
             github.event.issue.user.login }}"
 
       - uses: actions/checkout@v6
