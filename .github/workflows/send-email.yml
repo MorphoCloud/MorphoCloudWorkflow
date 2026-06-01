@@ -136,6 +136,7 @@ jobs:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           token: ${{ secrets.GITHUB_TOKEN }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_WORKSHOP_EMAIL_LOOKUP_URL }}
+          email_lookup_api_key: ${{ secrets.MORPHOCLOUD_LOOKUP_API_KEY }}
           github_username: ${{ steps.workshop_org.outputs.username }}
           mail_server_username: ${{ secrets.MAIL_USERNAME }}
           mail_server_password: ${{ secrets.MAIL_PASSWORD }}

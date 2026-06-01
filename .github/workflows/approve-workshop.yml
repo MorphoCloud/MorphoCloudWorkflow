@@ -144,6 +144,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_WORKSHOP_EMAIL_LOOKUP_URL }}
+          email_lookup_api_key: ${{ secrets.MORPHOCLOUD_LOOKUP_API_KEY }}
           mail_server_username: ${{secrets.MAIL_USERNAME}}
           mail_server_password: ${{secrets.MAIL_PASSWORD}}
           workshop_issue_number: ${{ github.event.issue.number }}

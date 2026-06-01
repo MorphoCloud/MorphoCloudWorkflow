@@ -5,8 +5,15 @@ inputs:
     description: "GITHUB_TOKEN or repo scoped PAT"
     required: true
   email_lookup_url:
-    description: "Base URL of the Apps Script web app for email lookup"
+    description:
+      "Base URL of the email lookup endpoint (Apps Script or morphocloud-intake)"
     required: true
+  email_lookup_api_key:
+    description:
+      "Optional API key (X-Api-Key) — required when email_lookup_url points at
+      the morphocloud-intake app"
+    required: false
+    default: ""
   mail_server_username:
     description: "mail server username"
     required: true
@@ -25,6 +32,7 @@ runs:
       with:
         lookup_url: ${{ inputs.email_lookup_url }}
         github_username: ${{ github.event.issue.user.login }}
+        api_key: ${{ inputs.email_lookup_api_key }}
 
     - name: Extract workshop specific fields
       id: extract_workshop

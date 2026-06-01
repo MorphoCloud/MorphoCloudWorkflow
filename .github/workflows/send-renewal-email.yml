@@ -110,6 +110,7 @@ jobs:
         uses: ./.github/actions/lookup-email
         with:
           lookup_url: ${{ vars.MORPHOCLOUD_WORKSHOP_EMAIL_LOOKUP_URL }}
+          api_key: ${{ secrets.MORPHOCLOUD_LOOKUP_API_KEY }}
           github_username: ${{ steps.issue_meta.outputs.author }}
 
       - name: Resolve email

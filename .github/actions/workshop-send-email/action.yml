@@ -24,8 +24,16 @@ inputs:
     description: "GITHUB_TOKEN or repo scoped PAT"
     required: true
   email_lookup_url:
-    description: "Base URL of the Apps Script web app for workshop email lookup"
+    description:
+      "Base URL of the workshop email lookup endpoint (Apps Script or
+      morphocloud-intake)"
     required: true
+  email_lookup_api_key:
+    description:
+      "Optional API key (X-Api-Key) — required when email_lookup_url points at
+      the morphocloud-intake app"
+    required: false
+    default: ""
   github_username:
     description: "GitHub username of the workshop organizer"
     required: true
@@ -54,6 +62,7 @@ runs:
       with:
         lookup_url: ${{ inputs.email_lookup_url }}
         github_username: ${{ inputs.github_username }}
+        api_key: ${{ inputs.email_lookup_api_key }}
 
     - name: Retrieve metadata
       id: instance_metadata
