@@ -20,6 +20,8 @@ jobs:
       contains(github.event.comment.body, '/shelve') ||
       contains(github.event.comment.body, '/delete_instance') ) }}
     steps:
+      - uses: actions/checkout@v6
+
       - uses: actions/create-github-app-token@v2.2.0
         id: app-token
         with:
@@ -105,8 +107,6 @@ jobs:
             ${{ steps.unshelve_command.outputs.continue }}
           SHELVE_COMMAND_CONTINUE: ${{ steps.shelve_command.outputs.continue }}
           DELETE_COMMAND_CONTINUE: ${{ steps.delete_command.outputs.continue }}
-
-      - uses: actions/checkout@v6
 
       - name: Check JS2 status
         id: js2_status
