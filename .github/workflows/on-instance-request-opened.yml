@@ -193,6 +193,51 @@ jobs:
           echo "::error ::User ${{ github.event.issue.user.login }} is not a member of ${{ vars.MORPHOCLOUD_WORKSHOP_ORGANIZERS_TEAM_SLUG }}"
           exit 1
 
+      # A workshop organizer must also be a registered MorphoCloud user, because
+      # they manage (and run /create on) the per-participant instance sub-issues,
+      # which are gated on MorphoCloudUsers membership. Enforce it here at request
+      # time — where the issue creator IS the organizer — so they are bounced
+      # early with onboarding instructions rather than discovering it on workshop
+      # day.
+      - name: Check MorphoCloudUsers team membership
+        id: check_user_membership
+        if: ${{ steps.check_membership.outputs.is_member == 'true' }}
+        uses: ./.github/actions/check-team-membership
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: ${{ vars.MORPHOCLOUD_USERS_TEAM_SLUG }}
+          username: ${{ github.event.issue.user.login }}
+
+      - name: Reject organizer who is not a registered user
+        if:
+          ${{ steps.check_membership.outputs.is_member == 'true' &&
+          steps.check_user_membership.outputs.is_member != 'true' }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "### Authorization Failed ❌
+
+          @$ISSUE_CREATOR is a workshop organizer but is not yet a registered MorphoCloud user.
+
+          You have to onboard yourself with MorphoCloud as a regular user first. Please go to [join.morphocloud.org](https://join.morphocloud.org), submit your intake form, and accept the GitHub organization invitation. Then open your workshop request again.
+
+          This issue will be closed."
+
+          gh issue close "$ISSUE_NUMBER"
+          gh issue edit "$ISSUE_NUMBER" --add-label "error:not-authorized"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+
+      - name: Fail if organizer is not a registered user
+        if:
+          ${{ steps.check_membership.outputs.is_member == 'true' &&
+          steps.check_user_membership.outputs.is_member != 'true' }}
+        run: |
+          echo "::error ::Workshop organizer ${{ github.event.issue.user.login }} is not a member of ${{ vars.MORPHOCLOUD_USERS_TEAM_SLUG }}"
+          exit 1
+
   call-validate-request-workshop:
     needs: [check-workshop-organizer-membership]
     if:
