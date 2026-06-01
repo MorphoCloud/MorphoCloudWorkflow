@@ -20,6 +20,20 @@ jobs:
       contains(github.event.comment.body, '/shelve') ||
       contains(github.event.comment.body, '/delete_instance') ) }}
     steps:
+      - uses: actions/create-github-app-token@v2.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Resolve admins from morphocloud-admins team
+        id: admins
+        uses: ./.github/actions/resolve-team-members
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: morphocloud-admins
+
       - name: unshelve command
         id: unshelve_command
         uses: github/command@v2.0.3
@@ -29,7 +43,7 @@ jobs:
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
-            "${{ vars.MORPHOCLOUD_GITHUB_ADMINS }},${{
+            "${{ steps.admins.outputs.members }},${{
             vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
             }},${{ join(github.event.issue.assignees.*.login, ',') }}"
 
@@ -42,7 +56,7 @@ jobs:
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
-            "${{ vars.MORPHOCLOUD_GITHUB_ADMINS }},${{
+            "${{ steps.admins.outputs.members }},${{
             vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
             }},${{ join(github.event.issue.assignees.*.login, ',') }}"
 
@@ -55,7 +69,7 @@ jobs:
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
-            "${{ vars.MORPHOCLOUD_GITHUB_ADMINS }},${{
+            "${{ steps.admins.outputs.members }},${{
             vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
             }},${{ join(github.event.issue.assignees.*.login, ',') }}"
 

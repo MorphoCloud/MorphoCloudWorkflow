@@ -1,0 +1,54 @@
+name: "Resolve team members"
+description:
+  "Resolve the active members of an organization team into a comma-separated
+  list of GitHub logins (e.g. to feed an IssueOps allowlist)."
+inputs:
+  token:
+    description: "GitHub token with read:org scope (e.g., GitHub App token)"
+    required: true
+  org:
+    description: "GitHub organization name"
+    required: true
+  team_slug:
+    description: "Team slug to resolve members of"
+    required: true
+outputs:
+  members:
+    description: "Comma-separated list of active member logins"
+    value: ${{ steps.resolve.outputs.members }}
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve team members
+      id: resolve
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Resolving members of '$ORG/teams/$TEAM_SLUG'"
+        all=""
+        page=1
+        while :; do
+          resp="$(curl -sf \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/orgs/$ORG/teams/$TEAM_SLUG/members?per_page=100&page=$page")" \
+            || { echo "::error ::Failed to list members of '$ORG/teams/$TEAM_SLUG'"; exit 1; }
+          page_logins="$(printf '%s' "$resp" | jq -r '.[].login')"
+          [ -z "$page_logins" ] && break
+          all="$(printf '%s\n%s' "$all" "$page_logins")"
+          n="$(printf '%s' "$resp" | jq 'length')"
+          [ "$n" -lt 100 ] && break
+          page=$((page + 1))
+        done
+        members="$(printf '%s\n' "$all" | sed '/^[[:space:]]*$/d' | sort -u | paste -sd, -)"
+        if [ -z "$members" ]; then
+          echo "::error ::Resolved an empty member list for '$ORG/teams/$TEAM_SLUG'"
+          exit 1
+        fi
+        echo "Resolved members: $members"
+        echo "members=$members" >> "$GITHUB_OUTPUT"
+      env:
+        TOKEN: ${{ inputs.token }}
+        ORG: ${{ inputs.org }}
+        TEAM_SLUG: ${{ inputs.team_slug }}
