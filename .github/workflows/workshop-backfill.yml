@@ -78,11 +78,16 @@ jobs:
             [ -z "$target" ] && { echo "#$num: no workshop-target label, skip"; continue; }
             if [ -n "$wend" ] && (( now >= wend )); then echo "#$num: past workshop-end, skip"; continue; fi
 
-            subs=$(gh api "/repos/$GH_REPO/issues/$num/sub_issues" --jq '.[].number' 2>/dev/null || true)
+            subs_json=$(gh api "/repos/$GH_REPO/issues/$num/sub_issues" 2>/dev/null || echo '[]')
+            subs=$(jq -r '.[].number' <<<"$subs_json")
             [ -z "$subs" ] && { echo "#$num: no sub-issues, skip"; continue; }
 
             live=0; missing=""
             for s in $subs; do
+              # Skip sub-issues intentionally torn down (e.g. /delete_all sets status:deleted)
+              # so the topper does not recreate an instance the organizer removed on purpose.
+              s_labels=$(jq -r --argjson s "$s" '.[] | select(.number==$s) | [.labels[].name] | join(",")' <<<"$subs_json")
+              case ",$s_labels," in *,status:deleted,*) echo "#$num/#$s: status:deleted, skip"; continue ;; esac
               st=$("$OS" server show "${pref}instance-${s}" -f value -c status 2>/dev/null || echo ABSENT)
               if [[ "$st" == "ACTIVE" || "$st" == "BUILD" ]]; then
                 live=$((live + 1))
