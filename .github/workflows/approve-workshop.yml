@@ -198,7 +198,9 @@ jobs:
 
             @${{ github.event.issue.user.login }} — you may run `/create` no earlier than **${{ steps.schedule.outputs.window_open_label }}** (12 h before your workshop starts). Running it earlier will be rejected.
 
-            **How creation works:** when you run `/create`, we start as many of your **${{ steps.fields.outputs.number_of_instances }}** instances as JetStream2 has free at that moment. **There's no guarantee all are available** — GPU capacity is shared and fluctuates. If there aren't enough, we create what we can and then **keep trying automatically**, adding the rest as capacity frees up, until your target is met or the workshop ends. You'll get a comment whenever the count changes — **no need to re-run `/create` yourself.**
+            **How creation works:** when you run `/create`, we start as many of your **${{ steps.fields.outputs.number_of_instances }}** instances as JetStream2 has free at that moment. **There's no guarantee all are available** — instance capacity is shared and fluctuates. If there aren't enough, we create what we can and then **keep trying automatically**, adding the rest as capacity frees up, until your target is met or the workshop ends. You'll get a comment whenever the count changes — **no need to re-run `/create` yourself.**
+
+            For each instance provisioned successfully, you will receive an email with the access credentials. It is your responsibility to distribute these to your participants. Instances will remain online until the end of the specified end date and time, and will shutdown automatically.
 
       - name: command results comment (failure)
         if: ${{ failure() }}
