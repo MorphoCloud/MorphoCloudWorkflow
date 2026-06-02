@@ -1,0 +1,118 @@
+name: Workshop Backfill
+
+# Tops off approved workshops toward their target instance count by re-dispatching
+# provisioning for sub-issues whose instance isn't live yet. This is the validated
+# "periodic attempt-create" model: OpenStack is the arbiter of free capacity, so we
+# simply re-attempt and capture slots as they free. create-instance is safe to
+# re-dispatch (it skips/fails if the instance already exists, reuses an existing
+# volume, and cleans up + exits on a capacity error).
+#
+# Runs on the self-hosted runner because it queries OpenStack to detect live
+# instances. Stops topping off a workshop once it is full, its parent is
+# closed/unapproved, or its workshop-end has passed.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/create-github-app-token@v2.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Top off under-target workshops
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
+          MAX_TOTAL: ${{ vars.MORPHOCLOUD_MAX_TOTAL_INSTANCES }}
+        run: |
+          set -uo pipefail
+          OS="$HOME/venv/bin/openstack"
+          now=$(date +%s)
+          max_total="${MAX_TOTAL:-0}"
+
+          # System-wide headroom: our-prefix instances currently up or building.
+          sys_running=$("$OS" server list -f value -c Name -c Status 2>/dev/null \
+            | awk -v p="^${PREFIX}_instance-" '$1 ~ p && ($2=="ACTIVE"||$2=="BUILD"){c++} END{print c+0}')
+          echo "System: ${sys_running} ${PREFIX} instance(s) up (cap ${max_total})"
+
+          gh issue list --repo "$GH_REPO" --state open \
+            --label "request-type:workshop" --label "request:approved" \
+            --json number,labels --limit 100 \
+          | jq -c '.[]' | while read -r parent; do
+            num=$(jq -r '.number' <<<"$parent")
+            names=$(jq -r '[.labels[].name] | join(",")' <<<"$parent")
+
+            case ",$names," in
+              *,workflow:creating-instances,*) echo "#$num: locked (creating), skip"; continue ;;
+            esac
+
+            target=$(grep -oE 'workshop-target:[0-9]+' <<<"$names" | head -1 | cut -d: -f2)
+            wend=$(grep -oE 'workshop-end:[0-9]+' <<<"$names" | head -1 | cut -d: -f2)
+            reported=$(grep -oE 'backfill-reported:[0-9]+' <<<"$names" | head -1 | cut -d: -f2)
+            [ -z "$target" ] && { echo "#$num: no workshop-target label, skip"; continue; }
+            if [ -n "$wend" ] && (( now >= wend )); then echo "#$num: past workshop-end, skip"; continue; fi
+
+            subs=$(gh api "/repos/$GH_REPO/issues/$num/sub_issues" --jq '.[].number' 2>/dev/null || true)
+            [ -z "$subs" ] && { echo "#$num: no sub-issues, skip"; continue; }
+
+            live=0; missing=""
+            for s in $subs; do
+              st=$("$OS" server show "${PREFIX}_instance-${s}" -f value -c status 2>/dev/null || echo ABSENT)
+              if [[ "$st" == "ACTIVE" || "$st" == "BUILD" ]]; then
+                live=$((live + 1))
+              else
+                missing="$missing $s"
+              fi
+            done
+            shortfall=$(( target - live ))
+            echo "#$num: target=$target live=$live shortfall=$shortfall missing=[${missing# }]"
+
+            # Comment only when the live count changed since the last report.
+            if [[ "${reported:-}" != "$live" ]]; then
+              gh label create "backfill-reported:${live}" --color "BFD4F2" \
+                --description "Backfill last-reported live count" --force >/dev/null 2>&1 || true
+              [ -n "${reported:-}" ] && gh issue edit "$num" --remove-label "backfill-reported:${reported}" >/dev/null 2>&1 || true
+              gh issue edit "$num" --add-label "backfill-reported:${live}" >/dev/null 2>&1 || true
+              if (( live >= target )); then
+                gh issue comment "$num" --body "✅ All **${target}** workshop instances are up."
+              else
+                gh issue comment "$num" --body "🔄 Backfill: **${live}/${target}** instances up; topping off the rest as capacity frees (re-checks every ~10 min)."
+              fi
+            fi
+
+            (( shortfall <= 0 )) && continue
+
+            headroom=$(( max_total - sys_running ))
+            (( headroom < 0 )) && headroom=0
+            to_make=$shortfall
+            (( to_make > headroom )) && to_make=$headroom
+            if (( to_make <= 0 )); then echo "#$num: system at cap (${sys_running}/${max_total}), no headroom"; continue; fi
+
+            n=0
+            for s in $missing; do
+              (( n >= to_make )) && break
+              echo "#$num: re-dispatch create for sub-issue #$s"
+              if gh workflow run create-instance-from-workflow.yml -f issue_number="$s" -f skip_preamble=true >/dev/null 2>&1; then
+                n=$((n + 1)); sys_running=$((sys_running + 1))
+              else
+                echo "  dispatch failed for #$s"
+              fi
+            done
+            echo "#$num: dispatched $n re-provision attempt(s)"
+          done

@@ -294,7 +294,7 @@ jobs:
           done
 
           if [[ ${#requested_instance_issues[@]} -gt 0 ]]; then
-            comment="Requested ${#requested_instance_issues[@]} workshop instances"
+            comment="Requested ${#requested_instance_issues[@]} workshop instance(s). Provisioning now — subject to live JetStream2 capacity. Any that can't start immediately are **automatically topped off** as capacity frees (re-checked every ~10 min until the workshop starts/ends)."
             gh issue comment "$ISSUE_NUMBER" --body "$comment"
           fi
         env:

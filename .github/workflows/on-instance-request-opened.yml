@@ -269,13 +269,19 @@ jobs:
           start_time: ${{ steps.fields.outputs.start_time }}
           timezone: ${{ steps.fields.outputs.timezone }}
 
-      - name: Validate instance count
+      - name: Validate count and duration
         id: count
         shell: bash
         env:
           N: ${{ steps.fields.outputs.number_of_instances }}
+          D: ${{ steps.fields.outputs.duration_days }}
         run: |
-          if [[ "$N" =~ ^[1-9][0-9]*$ ]]; then
+          cok=false; dok=false
+          [[ "$N" =~ ^[1-9][0-9]*$ ]] && cok=true
+          [[ "$D" =~ ^[1-9][0-9]*$ ]] && dok=true
+          echo "count_valid=$cok" >> "$GITHUB_OUTPUT"
+          echo "duration_valid=$dok" >> "$GITHUB_OUTPUT"
+          if [[ "$cok" == true && "$dok" == true ]]; then
             echo "valid=true" >> "$GITHUB_OUTPUT"
           else
             echo "valid=false" >> "$GITHUB_OUTPUT"
@@ -294,8 +300,10 @@ jobs:
           SCHED_VALID: ${{ steps.schedule.outputs.valid }}
           SCHED_ERROR: ${{ steps.schedule.outputs.error }}
           IN_PAST: ${{ steps.schedule.outputs.in_past }}
-          COUNT_VALID: ${{ steps.count.outputs.valid }}
+          COUNT_VALID: ${{ steps.count.outputs.count_valid }}
+          DURATION_VALID: ${{ steps.count.outputs.duration_valid }}
           NUM: ${{ steps.fields.outputs.number_of_instances }}
+          DUR: ${{ steps.fields.outputs.duration_days }}
         run: |
           reasons=""
           if [[ "$SCHED_VALID" != "true" ]]; then
@@ -305,6 +313,9 @@ jobs:
           fi
           if [[ "$COUNT_VALID" != "true" ]]; then
             reasons+="- Number of Instances must be a whole number (got '${NUM}')."$'\n'
+          fi
+          if [[ "$DURATION_VALID" != "true" ]]; then
+            reasons+="- Duration (days) must be a whole number (got '${DUR}')."$'\n'
           fi
 
           gh label create "needs-fix" --color "B60205" \
@@ -328,15 +339,20 @@ jobs:
           START_EPOCH: ${{ steps.schedule.outputs.start_epoch }}
           TARGET: ${{ steps.fields.outputs.number_of_instances }}
           START_HUMAN: ${{ steps.schedule.outputs.start_label }}
+          DURATION: ${{ steps.fields.outputs.duration_days }}
         run: |
           start_label="start:${START_EPOCH}"
           target_label="workshop-target:${TARGET}"
+          end_epoch=$(( START_EPOCH + DURATION * 86400 ))
+          end_label="workshop-end:${end_epoch}"
           gh label create "$start_label" --color "0E8A16" \
             --description "Workshop start (UTC epoch)" --force >/dev/null 2>&1 || true
           gh label create "$target_label" --color "0E8A16" \
             --description "Target workshop instance count" --force >/dev/null 2>&1 || true
-          gh issue edit "$ISSUE_NUMBER" --add-label "$start_label" --add-label "$target_label"
-          echo "Validated start ${START_HUMAN} (epoch ${START_EPOCH}); target ${TARGET}"
+          gh label create "$end_label" --color "0E8A16" \
+            --description "Workshop end (UTC epoch = start + duration days)" --force >/dev/null 2>&1 || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "$start_label" --add-label "$target_label" --add-label "$end_label"
+          echo "Validated start ${START_HUMAN} (epoch ${START_EPOCH}); target ${TARGET}; end ${end_epoch}"
 
   call-validate-request-workshop:
     needs: [check-workshop-organizer-membership, validate-workshop-schedule]
