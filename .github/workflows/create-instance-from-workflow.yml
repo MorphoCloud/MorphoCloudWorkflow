@@ -28,6 +28,15 @@ on:
         default: "false"
         type: string
 
+concurrency:
+  # One create per sub-issue at a time. Under runner saturation a dispatched
+  # create can sit queued for many minutes; without this, every backfill pass
+  # that still sees the instance "missing" dispatches another, piling up
+  # duplicates (workshop #9: 19 runs for 6 instances). Queue, never cancel —
+  # aborting a half-run create would orphan a partial instance.
+  group: create-instance-${{ inputs.issue_number }}
+  cancel-in-progress: false
+
 permissions:
   issues: write
   contents: read

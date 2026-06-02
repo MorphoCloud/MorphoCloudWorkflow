@@ -16,6 +16,13 @@ on:
     - cron: "*/10 * * * *"
   workflow_dispatch:
 
+concurrency:
+  # Singleton: don't let backfill runs pile up behind a busy runner and execute
+  # in bursts, each re-dispatching the same missing sub-issues. Queue (don't
+  # cancel) so a run mid-dispatch isn't aborted with its work half-done.
+  group: workshop-backfill
+  cancel-in-progress: false
+
 permissions:
   issues: write
   contents: read
