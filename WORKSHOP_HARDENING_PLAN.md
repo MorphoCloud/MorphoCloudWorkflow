@@ -43,6 +43,54 @@ organizers in **their own local timezone** — never UTC.
 - **Backfill cadence / per-run cap:** every **15 min**; create at most
   **available** (and respect `MORPHOCLOUD_MAX_TOTAL_INSTANCES`) per run.
 
+## Experiment results & validated backfill design (2026-06-02)
+
+Validated live against the scarce **r3.xl** flavor on BIO180006 (prototype loop
+on the runner; the maintainer freed slots on demand):
+
+- **Capture works via periodic attempt-create.** A loop that simply attempts
+  `openstack server create` every ~30–40 s and **holds** what succeeds captured
+  both freed slots, held them simultaneously, and the 3rd attempt correctly
+  failed ("No valid host") at the real ceiling of **2**. **OpenStack is the
+  arbiter** — no Grafana gating.
+- **Holding (accumulate) is essential.** An earlier delete-on-capture prototype
+  was wrong — it just re-grabbed the same free slot and never tested the
+  ceiling. The backfill must **hold** captures and accumulate toward target.
+- **Grafana** (`js2_availability`) is **start-only / admin-facing** ("~N free
+  right now"), never a gate.
+
+**Backfill plan (Phase 4) — re-provision missing sub-issue instances:**
+
+- `workshop-backfill.yml`: `schedule` (~ every 10 min) + `workflow_dispatch`,
+  `runs-on: self-hosted` (needs OpenStack to detect live instances).
+- For each open `request-type:workshop` + `request:approved` parent, not
+  `workflow:creating-instances`, with `now < workshop-end`:
+  - `live` = count of sub-issues whose OpenStack instance
+    (`<prefix>_instance-<sub#>`) is `ACTIVE`; `shortfall = target − live`.
+  - For sub-issues lacking a live instance (up to shortfall, respecting
+    `MORPHOCLOUD_MAX_TOTAL_INSTANCES`), **re-dispatch
+    `create-instance-from-workflow.yml`** for that sub-issue (the attempt-create
+    — succeeds only when a slot is free).
+  - Comment on the parent only when `live` changes ("backfilled → Y/N"). Stops:
+    target met / parent closed-or-unapproved / `now ≥ workshop-end`.
+- **To build together + verify (needs the r3.xl scenario):**
+  1. Store a `workshop-end:<epoch>` label at validation (watcher needs it;
+     start + duration are available there).
+  2. Confirm **`create-instance` is safe to re-dispatch** for a sub-issue whose
+     prior attempt failed (it has `check-instance-exists` — verify it cleanly
+     retries, no double-provision / partial-state error).
+  3. Live-instance detection: OpenStack `server show` (authoritative) vs the
+     sub-issue `status:*` label (cheaper).
+- **Partial-create at `/create` (Phase 3)** is then minimal — create-workshop
+  already creates N sub-issues + dispatches provisioning; capacity-short ones
+  just fail and the backfill tops them off. Add messaging ("X of N up; topping
+  off the rest as capacity frees").
+
+> **Status 2026-06-02:** Phase 1 (timing core) + the split date/time fields are
+> live on Instances. **Phase 2 (lifecycle window-anchoring)** implemented in
+> source (commit `643368a`, NOT yet vendorized). Phase 3/4 per the design above
+> — to implement + test together.
+
 ## Component changes (all in `MorphoCloudWorkflow`, vendorized to Instances/Test-Instances/MC-\*)
 
 ### 1. Issue template — `.github/ISSUE_TEMPLATE/03-workshop-request.yml`
