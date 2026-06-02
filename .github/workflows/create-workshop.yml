@@ -316,3 +316,15 @@ jobs:
           # Workshop schedule (for window-anchored lifecycle)
           SCHED_VALID: ${{ steps.schedule.outputs.valid }}
           SCHED_START_EPOCH: ${{ steps.schedule.outputs.start_epoch }}
+
+      - name: Release creation lock
+        if: ${{ always() && steps.create_command.outputs.continue == 'true' }}
+        run: |
+          # Hand off to the backfill watcher: clear the "creating-instances" lock
+          # so workshop-backfill.yml can top off any sub-issues that couldn't be
+          # provisioned now (capacity). Always runs after the create loop.
+          gh issue edit "$ISSUE_NUMBER" --remove-label "workflow:creating-instances" || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
