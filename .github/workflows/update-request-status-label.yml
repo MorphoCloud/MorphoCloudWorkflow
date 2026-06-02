@@ -2,12 +2,12 @@ name: Update Request Status Label
 on:
   schedule:
     # Run every 5 mins
-    - cron: "* * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ vars.MORPHOCLOUD_OS_CLOUD }}
-  cancel-in-progress: true
+  cancel-in-progress: false # queue a starved cycle, don't drop it
 
 permissions:
   issues: write
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   update-request-status-label:
-    runs-on: self-hosted
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@v6
 

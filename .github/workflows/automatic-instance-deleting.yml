@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   auto-delete:
-    runs-on: self-hosted
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@v6
         with:

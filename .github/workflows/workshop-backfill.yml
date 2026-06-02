@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   backfill:
-    runs-on: self-hosted
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@v6
 

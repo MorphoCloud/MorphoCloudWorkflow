@@ -6,7 +6,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ vars.MORPHOCLOUD_OS_CLOUD }}
-  cancel-in-progress: true
+  cancel-in-progress: false # queue a starved cycle, don't drop it (shelving must run, even if late)
 
 permissions:
   issues: write
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   auto-shelve:
-    runs-on: self-hosted
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@v6
 
