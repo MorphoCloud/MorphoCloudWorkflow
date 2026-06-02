@@ -277,7 +277,7 @@ runs:
 
         echo "Waiting for instance to reach stable state..."
 
-        max_wait_time=60  # Wait up to 60 seconds for status to stabilize
+        max_wait_time=300  # Wait up to 5 min — full-A100-passthrough flavors (g3.xl) spawn slower than the smaller ones (loop still breaks early on ACTIVE/ERROR)
         wait_interval=3
         total_wait_time=0
 
