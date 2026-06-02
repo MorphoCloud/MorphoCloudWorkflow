@@ -376,9 +376,19 @@ runs:
         steps.wait_instance_state.outputs.final_status != 'ACTIVE' }}
       shell: bash
       run: |
+        source ~/venv/bin/activate
+        # The VM did not reach ACTIVE within the wait window and this is not a
+        # capacity ERROR (e.g. still in BUILD). Delete the partial instance so it
+        # cannot linger as a bare, half-provisioned VM that later flips to ACTIVE —
+        # which would mislead the status-label cron (status:active) and make the
+        # workshop backfill treat the slot as filled, never recreating it.
+        echo "Instance did not reach ACTIVE in time (status: $CURRENT_STATUS); deleting the partial instance."
+        openstack server delete "$INSTANCE_NAME" --wait || echo "Delete failed or instance not found."
         echo "::error ::Instance failed to reach ACTIVE state. Current status: $CURRENT_STATUS"
         exit 1
       env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         CURRENT_STATUS: ${{ steps.wait_instance_state.outputs.final_status }}
 
     - name: comment (instance creation failed)
