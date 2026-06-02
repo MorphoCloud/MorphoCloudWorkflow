@@ -1,0 +1,116 @@
+name: "Resolve workshop schedule"
+description:
+  "Parse a workshop start datetime + timezone into a UTC epoch and
+  human-readable local labels (DST-aware via IANA zoneinfo). Also computes the
+  earliest allowed /create time (start - lead_hours)."
+
+inputs:
+  start_local:
+    description:
+      "Start datetime as entered by the organizer, 'YYYY-MM-DD HH:MM'"
+    required: true
+  timezone:
+    description: "Timezone option text (IANA name in parentheses, or 'UTC')"
+    required: true
+  lead_hours:
+    description: "Hours before start that /create becomes allowed"
+    required: false
+    default: "12"
+
+outputs:
+  valid:
+    description: "'true' if start_local + timezone parsed successfully"
+    value: ${{ steps.resolve.outputs.valid }}
+  error:
+    description: "Human-readable reason when valid != 'true'"
+    value: ${{ steps.resolve.outputs.error }}
+  in_past:
+    description: "'true' if the start time is already in the past"
+    value: ${{ steps.resolve.outputs.in_past }}
+  start_epoch:
+    description: "Workshop start as a UTC epoch (seconds)"
+    value: ${{ steps.resolve.outputs.start_epoch }}
+  tz_name:
+    description: "Resolved IANA timezone name"
+    value: ${{ steps.resolve.outputs.tz_name }}
+  start_label:
+    description: "Start formatted in the organizer's local time"
+    value: ${{ steps.resolve.outputs.start_label }}
+  window_open_epoch:
+    description:
+      "Earliest allowed /create time (start - lead_hours) as a UTC epoch"
+    value: ${{ steps.resolve.outputs.window_open_epoch }}
+  window_open_label:
+    description:
+      "Earliest allowed /create time formatted in the organizer's local time"
+    value: ${{ steps.resolve.outputs.window_open_label }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve schedule
+      id: resolve
+      shell: bash
+      env:
+        START_LOCAL: ${{ inputs.start_local }}
+        TZ_TEXT: ${{ inputs.timezone }}
+        LEAD_HOURS: ${{ inputs.lead_hours }}
+      run: |
+        python3 - <<'PY'
+        import os, re, sys, time
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+
+        start_local = os.environ.get("START_LOCAL", "").strip()
+        tz_text = os.environ.get("TZ_TEXT", "").strip()
+        try:
+            lead = int(os.environ.get("LEAD_HOURS", "12"))
+        except ValueError:
+            lead = 12
+
+        gh_out = os.environ["GITHUB_OUTPUT"]
+
+        def emit(**kw):
+            with open(gh_out, "a") as f:
+                for k, v in kw.items():
+                    f.write(f"{k}={v}\n")
+
+        # IANA name is inside parentheses, e.g. "US/Canada Eastern (America/New_York)";
+        # bare "UTC" has none.
+        m = re.search(r"\(([^)]+)\)", tz_text)
+        tz_name = (m.group(1) if m else tz_text).strip()
+
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            emit(valid="false", error=f"Unrecognized timezone '{tz_text}'.")
+            sys.exit(0)
+
+        dt = None
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S"):
+            try:
+                dt = datetime.strptime(start_local, fmt)
+                break
+            except ValueError:
+                continue
+        if dt is None:
+            emit(valid="false",
+                 error=f"Could not read start time '{start_local}'. "
+                       f"Use YYYY-MM-DD HH:MM (24-hour), e.g. 2026-06-08 09:00.")
+            sys.exit(0)
+
+        start = dt.replace(tzinfo=tz)
+        start_epoch = int(start.timestamp())
+        window_open = start - timedelta(hours=lead)
+        LBL = "%a %b %d %Y, %H:%M %Z"
+
+        emit(
+            valid="true",
+            in_past=("true" if start_epoch < int(time.time()) else "false"),
+            start_epoch=start_epoch,
+            tz_name=tz_name,
+            start_label=start.strftime(LBL),
+            window_open_epoch=int(window_open.timestamp()),
+            window_open_label=window_open.strftime(LBL),
+        )
+        PY

@@ -238,6 +238,104 @@ jobs:
           echo "::error ::Workshop organizer ${{ github.event.issue.user.login }} is not a member of ${{ vars.MORPHOCLOUD_USERS_TEAM_SLUG }}"
           exit 1
 
+  validate-workshop-schedule:
+    needs: [check-workshop-organizer-membership]
+    runs-on: ubuntu-latest
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/create-github-app-token@v2.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Extract workshop fields
+        id: fields
+        uses: ./.github/actions/extract-workshop-fields
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: ${{ github.repository }}
+          issue_number: ${{ github.event.issue.number }}
+
+      - name: Resolve schedule
+        id: schedule
+        uses: ./.github/actions/resolve-workshop-schedule
+        with:
+          start_local: ${{ steps.fields.outputs.start_local }}
+          timezone: ${{ steps.fields.outputs.timezone }}
+
+      - name: Validate instance count
+        id: count
+        shell: bash
+        env:
+          N: ${{ steps.fields.outputs.number_of_instances }}
+        run: |
+          if [[ "$N" =~ ^[1-9][0-9]*$ ]]; then
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reject invalid request
+        if:
+          ${{ steps.schedule.outputs.valid != 'true' ||
+          steps.schedule.outputs.in_past == 'true' || steps.count.outputs.valid
+          != 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          SCHED_VALID: ${{ steps.schedule.outputs.valid }}
+          SCHED_ERROR: ${{ steps.schedule.outputs.error }}
+          IN_PAST: ${{ steps.schedule.outputs.in_past }}
+          COUNT_VALID: ${{ steps.count.outputs.valid }}
+          NUM: ${{ steps.fields.outputs.number_of_instances }}
+        run: |
+          reasons=""
+          if [[ "$SCHED_VALID" != "true" ]]; then
+            reasons+="- ${SCHED_ERROR}"$'\n'
+          elif [[ "$IN_PAST" == "true" ]]; then
+            reasons+="- The workshop start time is in the past."$'\n'
+          fi
+          if [[ "$COUNT_VALID" != "true" ]]; then
+            reasons+="- Number of Instances must be a whole number (got '${NUM}')."$'\n'
+          fi
+
+          gh label create "needs-fix" --color "B60205" \
+            --description "Request needs correction before approval" --force >/dev/null 2>&1 || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "needs-fix"
+          gh issue comment "$ISSUE_NUMBER" --body "$(printf '### This workshop request needs fixing ❌\n\n%s\nPlease re-open the request with **Workshop start** as `YYYY-MM-DD HH:MM` (24-hour) and your timezone selected, e.g. `2026-06-08 09:00`.' "$reasons")"
+          echo "::error ::Workshop request validation failed"
+          exit 1
+
+      - name: Store canonical schedule labels
+        if:
+          ${{ steps.schedule.outputs.valid == 'true' &&
+          steps.schedule.outputs.in_past != 'true' && steps.count.outputs.valid
+          == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          START_EPOCH: ${{ steps.schedule.outputs.start_epoch }}
+          TARGET: ${{ steps.fields.outputs.number_of_instances }}
+          START_HUMAN: ${{ steps.schedule.outputs.start_label }}
+        run: |
+          start_label="start:${START_EPOCH}"
+          target_label="workshop-target:${TARGET}"
+          gh label create "$start_label" --color "0E8A16" \
+            --description "Workshop start (UTC epoch)" --force >/dev/null 2>&1 || true
+          gh label create "$target_label" --color "0E8A16" \
+            --description "Target workshop instance count" --force >/dev/null 2>&1 || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "$start_label" --add-label "$target_label"
+          echo "Validated start ${START_HUMAN} (epoch ${START_EPOCH}); target ${TARGET}"
+
   call-validate-request-workshop:
     needs: [check-workshop-organizer-membership]
     if:
