@@ -44,9 +44,34 @@ body:
 
   - type: input
     attributes:
-      label: Workshop Date(s)
-      description: Start date (and end date if multi-day) of the workshop.
-      placeholder: "e.g., April 15, 2026 or April 15–17, 2026"
+      label: Workshop start
+      description: >
+        When the workshop begins, in the timezone you select below. Use 24-hour
+        format YYYY-MM-DD HH:MM (e.g. 2026-06-08 09:00).
+      placeholder: "2026-06-08 09:00"
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Timezone
+      description:
+        Your local timezone, used to schedule instance creation and cleanup.
+      options:
+        - US/Canada Pacific (America/Los_Angeles)
+        - US/Canada Mountain (America/Denver)
+        - US Arizona, no DST (America/Phoenix)
+        - US/Canada Central (America/Chicago)
+        - US/Canada Eastern (America/New_York)
+        - Canada Atlantic (America/Halifax)
+        - US Alaska (America/Anchorage)
+        - US Hawaii (Pacific/Honolulu)
+        - Mexico Central (America/Mexico_City)
+        - Brazil Brasilia (America/Sao_Paulo)
+        - UK/Ireland/Portugal (Europe/London)
+        - Western/Central Europe (Europe/Paris)
+        - Eastern Europe (Europe/Athens)
+        - UTC
     validations:
       required: true
 
@@ -57,14 +82,12 @@ body:
         Provide details about your workshop. Approval is contingent upon a valid
         use case in the domain of 3D digital morphology.
       value: |
-        **Workshop name:** 
+        **Workshop name:**
 
-        **Target audience:** 
+        **Target audience:**
 
-        **Workshop content / goals:** 
+        **Workshop content / goals:**
 
-        **Software / data to be used:** 
+        **Software / data to be used:**
     validations:
       required: true
-
-
