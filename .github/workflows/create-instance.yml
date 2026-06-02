@@ -6,7 +6,7 @@ on:
 
 jobs:
   create:
-    runs-on: self-hosted
+    runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
     if:
       ${{ !github.event.issue.pull_request &&
       contains(github.event.issue.labels.*.name, 'request-type:instance') && (
@@ -233,7 +233,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue_number: ${{ github.event.issue.number }}
 
-      - name: Create instance
+      - name: Create instance (acquire)
         id: provision
         uses: ./.github/actions/create-instance
         with:
@@ -244,9 +244,25 @@ jobs:
           volume_size_gb: ${{ vars.VOLUME_SIZE_GB || '100' }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Individual creates stay one job (acquire + setup back-to-back on the
+      # acquire runner) — same behaviour as before the split; only the workshop
+      # path fans setup out to the control runner.
+      - name: Setup instance
+        id: setup
+        uses: ./.github/actions/setup-instance
+        with:
+          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          issue_number: ${{ github.event.issue.number }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          instance_name: ${{ steps.provision.outputs.instance_name }}
+          volume_name: ${{ steps.provision.outputs.volume_name }}
+          instance_ip: ${{ steps.provision.outputs.floating_ip_address }}
+          progress_comment_id:
+            ${{ steps.provision.outputs.progress_comment_id }}
+
       - name: Send email
         id: send_email
-        if: ${{ steps.provision.outputs.setup_status == 'complete' }}
+        if: ${{ steps.setup.outputs.setup_status == 'complete' }}
         uses: ./.github/actions/send-email
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
