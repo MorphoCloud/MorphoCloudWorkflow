@@ -61,7 +61,7 @@ runs:
         from datetime import datetime, timedelta
         from zoneinfo import ZoneInfo
 
-        start_local = os.environ.get("START_LOCAL", "").strip()
+        start_local = re.sub(r"\s+", " ", os.environ.get("START_LOCAL", "").strip())
         tz_text = os.environ.get("TZ_TEXT", "").strip()
         try:
             lead = int(os.environ.get("LEAD_HOURS", "12"))

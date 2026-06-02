@@ -44,11 +44,20 @@ body:
 
   - type: input
     attributes:
-      label: Workshop start
-      description: >
-        When the workshop begins, in the timezone you select below. Use 24-hour
-        format YYYY-MM-DD HH:MM (e.g. 2026-06-08 09:00).
-      placeholder: "2026-06-08 09:00"
+      label: Workshop start date
+      description:
+        The day the workshop begins. Format YYYY-MM-DD (e.g. 2026-06-08).
+      placeholder: "2026-06-08"
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Workshop start time
+      description:
+        The time the workshop begins, in the timezone you select below. 24-hour
+        HH:MM (e.g. 09:00).
+      placeholder: "09:00"
     validations:
       required: true
 

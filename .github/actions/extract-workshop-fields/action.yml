@@ -74,11 +74,15 @@ runs:
         )
         echo "number_of_instances=$number_of_instances" >> $GITHUB_OUTPUT
 
-        start_local=$(
+        start_date=$(
           printf '%s\n' "$DATA" |
-          jq -r '."workshop-start".text'
+          jq -r '."workshop-start-date".text'
         )
-        echo "start_local=$start_local" >> $GITHUB_OUTPUT
+        start_time=$(
+          printf '%s\n' "$DATA" |
+          jq -r '."workshop-start-time".text'
+        )
+        echo "start_local=${start_date} ${start_time}" >> $GITHUB_OUTPUT
 
         timezone=$(
           printf '%s\n' "$DATA" |

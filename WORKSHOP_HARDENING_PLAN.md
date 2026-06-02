@@ -49,7 +49,8 @@ organizers in **their own local timezone** — never UTC.
 
 Replace the free-text **"Workshop Date(s)"** with:
 
-- `input` **"Workshop start (YYYY-MM-DD HH:MM, 24-hour)"** — required.
+- `input` **"Workshop start date"** (`YYYY-MM-DD`) + `input` **"Workshop start
+  time"** (`HH:MM`, 24-hour) — separate fields — required.
 - `dropdown` **"Your timezone"** — curated Americas + Europe IANA zones + UTC —
   required.
 
