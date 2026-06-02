@@ -20,11 +20,12 @@ outputs:
   number_of_instances:
     description: "Number of instances requested"
     value: ${{ steps.extract.outputs.number_of_instances }}
-  start_local:
-    description:
-      "Workshop start datetime as entered by the organizer (local), 'YYYY-MM-DD
-      HH:MM'"
-    value: ${{ steps.extract.outputs.start_local }}
+  start_date:
+    description: "Workshop start date as entered (year-first, e.g. 2026-06-08)"
+    value: ${{ steps.extract.outputs.start_date }}
+  start_time:
+    description: "Workshop start time as entered (24-hour, e.g. 09:00)"
+    value: ${{ steps.extract.outputs.start_time }}
   timezone:
     description:
       "Selected timezone option text (IANA name in parentheses, or 'UTC')"
@@ -78,11 +79,13 @@ runs:
           printf '%s\n' "$DATA" |
           jq -r '."workshop-start-date".text'
         )
+        echo "start_date=$start_date" >> $GITHUB_OUTPUT
+
         start_time=$(
           printf '%s\n' "$DATA" |
           jq -r '."workshop-start-time".text'
         )
-        echo "start_local=${start_date} ${start_time}" >> $GITHUB_OUTPUT
+        echo "start_time=$start_time" >> $GITHUB_OUTPUT
 
         timezone=$(
           printf '%s\n' "$DATA" |

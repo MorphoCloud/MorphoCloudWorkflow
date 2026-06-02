@@ -95,7 +95,8 @@ jobs:
         if: ${{ steps.create_command.outputs.continue == 'true' }}
         uses: ./.github/actions/resolve-workshop-schedule
         with:
-          start_local: ${{ steps.extract_workshop.outputs.start_local }}
+          start_date: ${{ steps.extract_workshop.outputs.start_date }}
+          start_time: ${{ steps.extract_workshop.outputs.start_time }}
           timezone: ${{ steps.extract_workshop.outputs.timezone }}
 
       - name: Enforce 12-hour create window

@@ -265,7 +265,8 @@ jobs:
         id: schedule
         uses: ./.github/actions/resolve-workshop-schedule
         with:
-          start_local: ${{ steps.fields.outputs.start_local }}
+          start_date: ${{ steps.fields.outputs.start_date }}
+          start_time: ${{ steps.fields.outputs.start_time }}
           timezone: ${{ steps.fields.outputs.timezone }}
 
       - name: Validate instance count
