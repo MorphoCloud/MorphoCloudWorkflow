@@ -123,6 +123,21 @@ jobs:
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
 
+      - name: Block approval if request needs fixing
+        if:
+          ${{ steps.command.outputs.continue == 'true' &&
+          steps.command.outputs.command_name == 'approve' &&
+          contains(github.event.issue.labels.*.name, 'needs-fix') }}
+        shell: bash
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "⚠️ This request still has the **needs-fix** label — please correct the issues noted above and reopen before approving."
+          echo "::error ::Cannot approve: request has needs-fix label"
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+
       - name: Add "request:approved" label
         if:
           ${{ steps.command.outputs.continue == 'true' &&
@@ -134,6 +149,27 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+      - name: Extract workshop fields
+        id: fields
+        if:
+          ${{ steps.command.outputs.continue == 'true' &&
+          steps.command.outputs.command_name == 'approve' }}
+        uses: ./.github/actions/extract-workshop-fields
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: ${{ github.repository }}
+          issue_number: ${{ github.event.issue.number }}
+
+      - name: Resolve schedule
+        id: schedule
+        if:
+          ${{ steps.command.outputs.continue == 'true' &&
+          steps.command.outputs.command_name == 'approve' }}
+        uses: ./.github/actions/resolve-workshop-schedule
+        with:
+          start_local: ${{ steps.fields.outputs.start_local }}
+          timezone: ${{ steps.fields.outputs.timezone }}
 
       - name: Send approval mail
         if:
@@ -157,9 +193,11 @@ jobs:
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
-            ✅ Workshop management approved by **${{ github.event.comment.user.login }}**.
+            ✅ **Workshop approved** by **${{ github.event.comment.user.login }}**.
 
-            @${{ github.event.issue.user.login }} may now use commands such as `/create`.
+            @${{ github.event.issue.user.login }} — you may run `/create` no earlier than **${{ steps.schedule.outputs.window_open_label }}** (12 h before your workshop starts). Running it earlier will be rejected.
+
+            **How creation works:** when you run `/create`, we start as many of your **${{ steps.fields.outputs.number_of_instances }}** instances as JetStream2 has free at that moment. **There's no guarantee all are available** — GPU capacity is shared and fluctuates. If there aren't enough, we create what we can and then **keep trying automatically**, adding the rest as capacity frees up, until your target is met or the workshop ends. You'll get a comment whenever the count changes — **no need to re-run `/create` yourself.**
 
       - name: command results comment (failure)
         if: ${{ failure() }}

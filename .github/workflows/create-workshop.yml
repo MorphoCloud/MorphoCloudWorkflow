@@ -90,6 +90,38 @@ jobs:
           repository: ${{ github.repository }}
           issue_number: ${{ github.event.issue.number }}
 
+      - name: Resolve workshop schedule
+        id: schedule
+        if: ${{ steps.create_command.outputs.continue == 'true' }}
+        uses: ./.github/actions/resolve-workshop-schedule
+        with:
+          start_local: ${{ steps.extract_workshop.outputs.start_local }}
+          timezone: ${{ steps.extract_workshop.outputs.timezone }}
+
+      - name: Enforce 12-hour create window
+        if: ${{ steps.create_command.outputs.continue == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          VALID: ${{ steps.schedule.outputs.valid }}
+          WINDOW_OPEN_EPOCH: ${{ steps.schedule.outputs.window_open_epoch }}
+          WINDOW_OPEN_LABEL: ${{ steps.schedule.outputs.window_open_label }}
+          START_LABEL: ${{ steps.schedule.outputs.start_label }}
+        run: |
+          if [[ "$VALID" != "true" ]]; then
+            echo "::warning ::Could not resolve workshop schedule; skipping 12h gate (fail-open)."
+            exit 0
+          fi
+          now=$(date +%s)
+          if (( now < WINDOW_OPEN_EPOCH )); then
+            gh issue comment "$ISSUE_NUMBER" --body "$(printf '### Too early to create ⛔\n\nThis workshop starts **%s**. Instances can be created no earlier than **%s** (12 hours before start). Please run `/create` again then.' "$START_LABEL" "$WINDOW_OPEN_LABEL")"
+            echo "::error ::/create attempted before the 12h window opens (now=$now < open=$WINDOW_OPEN_EPOCH)"
+            exit 1
+          fi
+          echo "Within create window (now=$now >= open=$WINDOW_OPEN_EPOCH)."
+
       - name: Update workshop labels
         if: ${{ steps.create_command.outputs.continue == 'true' }}
         run: |
