@@ -41,14 +41,17 @@ jobs:
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
           MAX_TOTAL: ${{ vars.MORPHOCLOUD_MAX_TOTAL_INSTANCES }}
         run: |
-          set -uo pipefail
+          set -u
+          set +e # GitHub runs steps with -e; disable it (this watcher handles errors explicitly)
           OS="$HOME/venv/bin/openstack"
           now=$(date +%s)
           max_total="${MAX_TOTAL:-0}"
+          # Instance name prefix, matching define-instance-name: "<PREFIX>_" only if PREFIX is set.
+          pref="${PREFIX:+${PREFIX}_}"
 
-          # System-wide headroom: our-prefix instances currently up or building.
+          # System-wide headroom: our instances currently up or building.
           sys_running=$("$OS" server list -f value -c Name -c Status 2>/dev/null \
-            | awk -v p="^${PREFIX}_instance-" '$1 ~ p && ($2=="ACTIVE"||$2=="BUILD"){c++} END{print c+0}')
+            | awk -v p="^${pref}instance-[0-9]+$" '$1 ~ p && ($2=="ACTIVE"||$2=="BUILD"){c++} END{print c+0}')
           echo "System: ${sys_running} ${PREFIX} instance(s) up (cap ${max_total})"
 
           gh issue list --repo "$GH_REPO" --state open \
@@ -73,7 +76,7 @@ jobs:
 
             live=0; missing=""
             for s in $subs; do
-              st=$("$OS" server show "${PREFIX}_instance-${s}" -f value -c status 2>/dev/null || echo ABSENT)
+              st=$("$OS" server show "${pref}instance-${s}" -f value -c status 2>/dev/null || echo ABSENT)
               if [[ "$st" == "ACTIVE" || "$st" == "BUILD" ]]; then
                 live=$((live + 1))
               else
