@@ -310,8 +310,9 @@ jobs:
           gh label create "needs-fix" --color "B60205" \
             --description "Request needs correction before approval" --force >/dev/null 2>&1 || true
           gh issue edit "$ISSUE_NUMBER" --add-label "needs-fix"
-          gh issue comment "$ISSUE_NUMBER" --body "$(printf '### This workshop request needs fixing ❌\n\n%s\nPlease re-open the request with **Workshop start** as `YYYY-MM-DD HH:MM` (24-hour) and your timezone selected, e.g. `2026-06-08 09:00`.' "$reasons")"
-          echo "::error ::Workshop request validation failed"
+          gh issue comment "$ISSUE_NUMBER" --body "$(printf '### Workshop request closed — needs fixing ❌\n\n%s\nThis request has been **closed** because the start date/time could not be read. Please open a **new** Workshop Request, entering the date as `YYYY-MM-DD` and the time as 24-hour `HH:MM` — e.g. date `2026-06-08`, time `09:00`.' "$reasons")"
+          gh issue close "$ISSUE_NUMBER"
+          echo "::error ::Workshop request validation failed; issue closed"
           exit 1
 
       - name: Store canonical schedule labels
@@ -338,7 +339,7 @@ jobs:
           echo "Validated start ${START_HUMAN} (epoch ${START_EPOCH}); target ${TARGET}"
 
   call-validate-request-workshop:
-    needs: [check-workshop-organizer-membership]
+    needs: [check-workshop-organizer-membership, validate-workshop-schedule]
     if:
       ${{ contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
@@ -348,7 +349,7 @@ jobs:
     secrets: inherit
 
   call-request-notify-admin-workshop:
-    needs: [check-workshop-organizer-membership]
+    needs: [check-workshop-organizer-membership, validate-workshop-schedule]
     if:
       ${{ contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
