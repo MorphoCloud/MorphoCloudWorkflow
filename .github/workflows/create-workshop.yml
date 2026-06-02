@@ -157,31 +157,44 @@ jobs:
           DURATION_DAYS=$(echo "$DURATION_DAYS" | tr -d '[:space:]')
 
           if ! [[ "$NUMBER_OF_INSTANCES" =~ ^[0-9]+$ ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "❌ \`/create\` failed: **Number of Instances** must be a whole number (got '$NUMBER_OF_INSTANCES'). Please open a new workshop request with a valid value."
             echo "::error ::Invalid number of instances [$NUMBER_OF_INSTANCES]"
             exit 1
           fi
 
           if ! [[ "$DURATION_DAYS" =~ ^[0-9]+$ ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "❌ \`/create\` failed: **Duration (days)** must be a whole number (got '$DURATION_DAYS'). Please open a new workshop request with a valid value."
             echo "::error ::Invalid duration (days) [$DURATION_DAYS]"
             exit 1
           fi
 
-          timeout_hours=$((DURATION_DAYS * 24))
+          # Phase 2: anchor shelve/delete to the workshop WINDOW, not create time.
+          # workshop end = start + duration days; shelve 1h after end; delete 24h
+          # after end. Per instance (created ~now): timeout = hours from now until
+          # shelve_at, expiration = days from now until delete_at. So the initial
+          # batch AND any later backfilled instances converge on the same end.
+          now=$(date +%s)
+          if [[ "$SCHED_VALID" == "true" && -n "$SCHED_START_EPOCH" ]]; then
+            end=$(( SCHED_START_EPOCH + DURATION_DAYS * 86400 ))
+            shelve_at=$(( end + 3600 ))    # 1h grace after end
+            delete_at=$(( end + 86400 ))   # 24h retention after end
+            secs_to_shelve=$(( shelve_at - now ))
+            if (( secs_to_shelve < 3600 )); then secs_to_shelve=3600; fi
+            timeout_hours=$(( (secs_to_shelve + 3599) / 3600 ))   # ceil to whole hours
+            expiration_days=$(echo "scale=3; ($delete_at - $now)/86400" | bc)
+            if [[ "$(echo "$expiration_days < 0.1" | bc)" == "1" ]]; then expiration_days="0.1"; fi
+          else
+            # fail-open fallback: anchor to create time (original behavior)
+            timeout_hours=$(( DURATION_DAYS * 24 ))
+            expiration_days=$(( DURATION_DAYS + 1 ))
+          fi
           timeout_label="timeout:${timeout_hours}hrs"
-
-          # Calculate expiration for workshop instances: duration + 1 day (24 hours grace period)
-          # Timeline: instances shelve after DURATION_DAYS, then delete 24h later
-          # Example for 3-day workshop:
-          #   T+0h: Instance created
-          #   T+72h: Instance shelves (timeout)
-          #   T+96h: Instance and volume deleted (expiration = 4 days)
-          expiration_days=$((DURATION_DAYS + 1))
           expiration_label="expiration:${expiration_days}d"
 
           declare -a requested_instance_issues=()
 
-          gh label create "$timeout_label" --color "5319E7" --description "Instance timeout after ${timeout_hours} hours" --force >/dev/null 2>&1 || true
-          gh label create "$expiration_label" --color "892368" --description "Instance expires in ${expiration_days} days (24h grace after shelving)" --force >/dev/null 2>&1 || true
+          gh label create "$timeout_label" --color "5319E7" --description "Instance shelves after ${timeout_hours}h uptime (workshop end + 1h)" --force >/dev/null 2>&1 || true
+          gh label create "$expiration_label" --color "892368" --description "Instance deleted ${expiration_days}d after creation (workshop end + 24h)" --force >/dev/null 2>&1 || true
 
           for idx in $(seq 1 "$NUMBER_OF_INSTANCES"); do
             issue_title="Instance: Workshop ${ISSUE_NUMBER} - Participant ${idx} (${REQUEST_TITLE})"
@@ -300,3 +313,6 @@ jobs:
             ${{ steps.extract_workshop.outputs.number_of_instances }}
           DURATION_DAYS: ${{ steps.extract_workshop.outputs.duration_days }}
           ORGANIZER_USERNAME: ${{ github.event.issue.user.login }}
+          # Workshop schedule (for window-anchored lifecycle)
+          SCHED_VALID: ${{ steps.schedule.outputs.valid }}
+          SCHED_START_EPOCH: ${{ steps.schedule.outputs.start_epoch }}
