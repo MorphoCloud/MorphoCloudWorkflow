@@ -1,0 +1,520 @@
+name: "Setup Instance"
+description:
+  "Post-ACTIVE setup tail (split out of create-instance so it can run on the
+  control runner): wait for cloud-init, attach + populate the data volume,
+  relocate the home directory, reboot, and mark the instance ready. All instance
+  facts come in as inputs from the acquire job."
+inputs:
+  os_cloud:
+    description:
+      "Name of the OpenStack cloud allocation to select openstack auth settings
+      defined in '.config/openstack/clouds.yaml'"
+    required: true
+  issue_number:
+    description: "Issue number"
+    required: true
+  token:
+    description: "GITHUB_TOKEN or repo scoped PAT"
+    required: true
+  instance_name:
+    description: "Name of the instance (from the acquire job)"
+    required: true
+  volume_name:
+    description: "Name of the data volume (from the acquire job)"
+    required: true
+  instance_ip:
+    description: "Floating IP of the instance (from the acquire job)"
+    required: true
+  progress_comment_id:
+    description:
+      "GitHub comment ID for the progress tracking comment (from the acquire
+      job)"
+    required: true
+outputs:
+  setup_status:
+    description: "Instance setup status ('complete' when ready)"
+    value: ${{ steps.instance_poll.outputs.status }}
+runs:
+  using: "composite"
+  steps:
+    - name: Poll instance setup status
+      id: instance_poll
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        echo Polling "$INSTANCE_NAME" setup status
+
+        max_wait_time=1200  # Maximum wall-clock wait time in seconds (1200s -> 20mins)
+        wait_interval=5    # Interval between status checks in seconds
+        start_time=$SECONDS
+        status="pending"
+
+        while (( SECONDS - start_time < max_wait_time )); do
+
+            # Get the log; bail if openstack itself fails
+            log_output=$(openstack console log show "$INSTANCE_NAME") || {
+              echo "ERROR: failed to fetch console log for $INSTANCE_NAME" >&2
+              exit 1
+            }
+
+            # Extract the last {"status":"..."} line; default to pending if none
+            status_line=$(printf '%s\n' "$log_output" | grep -E '^\{"status":"' || true)
+            status=$(
+              { [ -n "$status_line" ] && printf '%s\n' "$status_line" | tail -n1 || echo '{"status":"pending"}'; } \
+              | jq -r '.status // "pending"'
+            )
+
+            echo -n "setup status [$status] (waited $((SECONDS - start_time))s). "
+
+            if [[ "$status" == "complete" ]]; then
+                echo "Setup complete."
+                break
+            elif [[ "$status" == "error" ]]; then
+                echo "::error ::Instance setup reported 'error'. Check the instance console log / cloud-init output for the failed step."
+                exit 1
+            else
+                echo "Waiting for completion..."
+                sleep $wait_interval
+            fi
+        done
+
+        if [[ "$status" != "complete" ]]; then
+            echo "::error ::Maximum wait time ($max_wait_time seconds) exceeded before setup completed (last status: $status)."
+            exit 1
+        fi
+
+        # Explicitly set status to "complete"
+        exoSetup='{"status":"complete", "epoch": '$(date '+%s')'000}'
+
+        openstack server set \
+            --property "exoSetup=$exoSetup" \
+          $INSTANCE_NAME
+
+        echo "status=$status" >> $GITHUB_OUTPUT
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
+
+    - name: comment (maximum wait time exceeded)
+      if: ${{ steps.instance_poll.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Maximum wait time for instance **${{ inputs.instance_name }}** setup to complete exceeded.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: comment (progress)
+      uses: ./.github/actions/comment-progress
+      with:
+        comment-id: ${{ inputs.progress_comment_id }}
+        create_ip: ✅
+        create_volume: ✅
+        create_instance: ✅
+        associate_ip: ✅
+        setup_instance: ✅
+        attach_volume: ⏳
+        send_email: ""
+
+    - name: Rename MyData directory to MyData-tmp
+      id: rename_mydata
+      shell: bash
+      run: |
+        # This is the first SSH-to-instance step of the volume phase. Right
+        # after 'setup_instance' completes the instance can still be finishing
+        # cloud-init or rebooting, so sshd is briefly unreachable and ssh exits
+        # 255 (a transient, not an 'mv' error). Previously that aborted the run
+        # and forced the user to /delete_all + /create. Instead, wait for sshd
+        # to come back on a real-elapsed-time budget and retry. The remote
+        # command is idempotent: if a connection drops *after* the mv applied,
+        # MyData-tmp already exists on the next attempt and we treat it as done.
+        # This loop also gates the later instance-SSH steps (copy/relocate),
+        # since by the time it succeeds the instance is reachable and stable.
+        remote_cmd='if [ -e /media/volume/MyData-tmp ]; then
+          echo "MyData-tmp already present; rename already applied.";
+        elif [ -e /media/volume/MyData ]; then
+          mv /media/volume/MyData /media/volume/MyData-tmp;
+        else
+          echo "Neither MyData nor MyData-tmp present on the volume mount" >&2;
+          exit 3;
+        fi'
+        max_wait=300
+        interval=15
+        start=$SECONDS
+        attempt=0
+        while :; do
+          attempt=$((attempt + 1))
+          echo "Rename attempt $attempt (elapsed $((SECONDS - start))s of ${max_wait}s)"
+          set +e
+          out=$(ssh \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=10 \
+            -o LogLevel=ERROR \
+            exouser@"$INSTANCE_IP" \
+            "$remote_cmd" 2>&1)
+          rc=$?
+          set -e
+          [[ -n "$out" ]] && echo "$out"
+          if [[ $rc -eq 0 ]]; then
+            echo "Rename succeeded (or already applied)."
+            break
+          fi
+          if [[ $rc -ne 255 ]]; then
+            echo "::error ::Remote rename command failed (ssh rc=$rc) — not a connection error; aborting."
+            exit 1
+          fi
+          # rc=255 is both transient connection errors (retry) AND SSH auth
+          # rejection (permanent — retrying 300s is pointless). Fail fast on auth.
+          if grep -qi "permission denied" <<<"$out"; then
+            echo "::error ::SSH auth rejected by $INSTANCE_IP — the runner's key is not authorized on the instance. Confirm ~/.ssh/id_ed25519 exists on the runner (injected into the instance via cloud-config) and that the instance booted with it."
+            exit 1
+          fi
+          if (( SECONDS - start >= max_wait )); then
+            echo "::error ::sshd on $INSTANCE_IP not reachable for rename after ${max_wait}s"
+            exit 1
+          fi
+          echo "ssh not ready yet (connection error, rc=255); retrying in ${interval}s..."
+          sleep "$interval"
+        done
+      env:
+        INSTANCE_IP: ${{ inputs.instance_ip }}
+
+    - name: comment (failed to rename MyData)
+      if: ${{ steps.rename_mydata.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Failed to rename `/media/volume/MyData` to `/media/volume/MyData-tmp` for instance **${{ inputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Attach Volume
+      id: attach_volume
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        instance_id=$(openstack server list -f json | \
+          jq \
+          --arg instance_name "$INSTANCE_NAME" \
+          -c '.[] | select(.Name == $instance_name)' | \
+          jq -r '.ID' | tail -1)
+        echo "instance_id [$instance_id]"
+
+        volume_id=$(openstack volume list -f json | \
+          jq \
+          --arg volume_name "$VOLUME_NAME" \
+          -c '.[] | select(.Name == $volume_name)' | \
+          jq -r '.ID' | tail -1)
+        echo "volume_id [$volume_id]"
+
+        openstack server set \
+          --property "exoVolumes::$volume_id={\"name\":\"MyData\"}" \
+          $instance_id
+
+        openstack server add volume \
+          $instance_id \
+          $volume_id
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
+        VOLUME_NAME: ${{ inputs.volume_name }}
+
+    - name: comment (failed to attach volume)
+      if: ${{ steps.attach_volume.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Failed to attach volume **${{ inputs.volume_name }}** to instance **${{ inputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Copy installed files into attached volume
+      id: copy_installed_files
+      shell: bash
+      run: |
+        function check_mountpoint_ready {
+          ssh \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o LogLevel=ERROR \
+            exouser@$INSTANCE_IP \
+            'mountpoint -q /media/volume/MyData'
+        }
+        set +e
+        max_attempts=5
+        for attempt in $(seq 1 $max_attempts); do
+          echo "Checking if mount point is ready ($attempt/$max_attempts)"
+          check_mountpoint_ready
+          if check_mountpoint_ready; then
+            echo "Mount point /media/volume/MyData is ready."
+            break
+          else
+            echo "Mount point not ready. Retrying in 5 seconds..."
+            sleep 5
+          fi
+        done
+        if ! check_mountpoint_ready; then
+          echo "::error ::Mount point /media/volume/MyData not ready after $((max_attempts * 5)) seconds."
+          exit 1
+        fi
+        set -e
+        ssh \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          exouser@$INSTANCE_IP \
+          '[ ! -d /media/volume/MyData/Slicer ] && mv /media/volume/MyData-tmp/Slicer /media/volume/MyData/Slicer && rmdir /media/volume/MyData-tmp || rm -rf /media/volume/MyData-tmp'
+      env:
+        INSTANCE_IP: ${{ inputs.instance_ip }}
+
+    - name: comment (failed to copy installed files from MyData-tmp to MyData)
+      if: ${{ steps.copy_installed_files.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Failed to copy installed files from `/media/volume/MyData-tmp` to `/media/volume/MyData` for instance **${{ inputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Relocate home directory to persistent volume
+      id: relocate_home_directory
+      shell: bash
+      run: |
+        ssh \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          exouser@$INSTANCE_IP \
+          'bash -s' << 'EOF'
+        VOLUME_HOME=/media/volume/MyData/home/exouser
+        set -e
+        sudo mkdir -p "$(dirname "$VOLUME_HOME")"
+        sudo chown exouser:exouser "$(dirname "$VOLUME_HOME")"
+
+        if [ ! -d "$VOLUME_HOME" ]; then
+            # First-time create: seed volume home from the freshly provisioned home
+            # Exclude .cache — it will be redirected to the ephemeral root disk
+            sudo rsync -a --exclude='.cache' /home/exouser/ "$VOLUME_HOME/"
+            sudo chmod 700 "$VOLUME_HOME"
+            echo "Home directory copied to volume (first create)"
+        else
+            echo "Existing home directory found on volume — preserving user data"
+
+            # Clean up ephemeral session files from the previous (now-dead) instance.
+            # These carry stale hostnames, PIDs, and X11 cookies that can break
+            # GNOME/VNC on the new instance.
+            sudo rm -f "$VOLUME_HOME/.Xauthority" "$VOLUME_HOME/.ICEauthority"
+            sudo rm -f "$VOLUME_HOME/.vnc/"*.pid "$VOLUME_HOME/.vnc/"*.log
+            sudo rm -rf "$VOLUME_HOME/.cache/sessions"
+            sudo rm -rf "$VOLUME_HOME/.dbus"
+        fi
+
+        # Always refresh SSH authorized_keys from cloud-init
+        # (guards against runner key rotation or accidental user deletion)
+        sudo mkdir -p "$VOLUME_HOME/.ssh"
+        sudo cp /home/exouser/.ssh/authorized_keys "$VOLUME_HOME/.ssh/authorized_keys"
+        sudo chown exouser:exouser "$VOLUME_HOME/.ssh" "$VOLUME_HOME/.ssh/authorized_keys"
+        sudo chmod 700 "$VOLUME_HOME/.ssh"
+        sudo chmod 600 "$VOLUME_HOME/.ssh/authorized_keys"
+
+        # Always refresh VNC password from cloud-init (new password generated each provision).
+        # Without this the volume retains the old password and VNC/Guacamole auth fails.
+        if [ -f /home/exouser/.vnc/passwd ]; then
+          sudo mkdir -p "$VOLUME_HOME/.vnc"
+          sudo cp /home/exouser/.vnc/passwd "$VOLUME_HOME/.vnc/passwd"
+          sudo chown exouser:exouser "$VOLUME_HOME/.vnc/passwd"
+          sudo chmod 600 "$VOLUME_HOME/.vnc/passwd"
+        fi
+
+        # Redirect ~/.cache to the ephemeral root disk so browser/app caches
+        # don't consume the user's persistent volume quota.
+        sudo mkdir -p /var/cache/exouser
+        sudo chown exouser:exouser /var/cache/exouser
+        sudo rm -rf "$VOLUME_HOME/.cache"
+        sudo ln -sfn /var/cache/exouser "$VOLUME_HOME/.cache"
+
+        # Update passwd entry.
+        # usermod may fail if exouser processes are already running (GDM, VNC, etc.),
+        # so fall back to direct /etc/passwd edit.
+        sudo usermod -d "$VOLUME_HOME" exouser 2>/dev/null \
+          || sudo sed -i "s|^\(exouser:[^:]*:[^:]*:[^:]*:[^:]*:\)/home/exouser:|\1${VOLUME_HOME}:|" /etc/passwd
+
+        # Replace original home with symlink (atomic swap to avoid a broken state)
+        sudo mv /home/exouser /home/exouser.bak
+        sudo ln -sfn "$VOLUME_HOME" /home/exouser
+        sudo rm -rf /home/exouser.bak
+        EOF
+      env:
+        INSTANCE_IP: ${{ inputs.instance_ip }}
+
+    - name: comment (failed to relocate home directory to persistent volume)
+      if: ${{ steps.relocate_home_directory.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Failed to relocate `/home/exouser` to `/media/volume/MyData/home/exouser` for instance **${{ inputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Create Renviron file
+      id: create_renviron_file
+      shell: bash
+      run: |
+        ssh \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          exouser@$INSTANCE_IP \
+          'echo -e "R_LIBS_SITE=/media/share/MorphoCloudCephShare/R/x86_64-pc-linux-gnu-library/4.4/\nR_LIBS_USER=/media/volume/MyData/R/x86_64-pc-linux-gnu-library/4.4/" > /home/exouser/.Renviron && mkdir -p /media/volume/MyData/R/x86_64-pc-linux-gnu-library/4.4/'
+      env:
+        INSTANCE_IP: ${{ inputs.instance_ip }}
+
+    - name: comment (failed to create /home/exouser/.Renviron)
+      if: ${{ steps.create_renviron_file.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Failed to create `/home/exouser/.Renviron` file for instance **${{ inputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Reboot instance
+      id: reboot_instance
+      shell: bash
+      run: |
+        set +e
+
+        ssh \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          exouser@$INSTANCE_IP \
+          'sudo shutdown -r now'
+
+        sleep 10
+        function check_instance_ready {
+          ssh \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o LogLevel=ERROR \
+            exouser@$INSTANCE_IP \
+            'true'
+        }
+
+        max_attempts=3
+        instance_ready=false
+        for attempt in $(seq 1 $max_attempts); do
+          echo "Checking if instance is ready ($attempt/$max_attempts)"
+          if check_instance_ready; then
+            instance_ready=true
+            echo "Instance '$INSTANCE_NAME' is ready."
+            break
+          else
+            echo "Instance '$INSTANCE_NAME' is not ready. Retrying in 5 seconds..."
+            sleep 10
+          fi
+        done
+        if ! $instance_ready; then
+          echo "::error ::Instance '$INSTANCE_NAME' is not ready after $max_attempts attempts to connect."
+          exit 1
+        fi
+        set -e
+      env:
+        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
+
+    - name: comment (failed to reboot instance)
+      if: ${{ steps.reboot_instance.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Failed to reboot instance **${{ inputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Set instance properties
+      id: set_instance_properties
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        # Explicitly set status to complete
+        exoSetup='{"status":"complete", "epoch": '$(date '+%s')'000}'
+
+        openstack server set \
+            --property "exoSetup=$exoSetup" \
+          $INSTANCE_NAME
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
+
+    - name: comment (failed to set instance properties)
+      if: ${{ steps.set_instance_properties.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Failed to set instance **${{ inputs.instance_name }}** properties.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Update Request Status Label
+      id: update-request-status-label
+      uses: ./.github/actions/update-request-status-label
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        token: ${{ inputs.token }}
+        instance_name: ${{ inputs.instance_name }}
+        issue_number: ${{ inputs.issue_number }}
+
+    - name: comment (failed to update request status label)
+      if:
+        ${{ steps.update-request-status-label.outcome == 'failure' && failure()
+        }}
+      uses: peter-evans/create-or-update-comment@v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Failed to update request status label for instance **${{ inputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: comment (progress)
+      uses: ./.github/actions/comment-progress
+      with:
+        comment-id: ${{ inputs.progress_comment_id }}
+        create_ip: ✅
+        create_volume: ✅
+        create_instance: ✅
+        associate_ip: ✅
+        setup_instance: ✅
+        attach_volume: ✅
+        send_email: ⏳

@@ -64,13 +64,21 @@ jobs:
       issue_number: "${{ inputs.issue_number }}"
     secrets: inherit
 
-  control:
-    runs-on: self-hosted
+  # Job A — acquire lane (FIP allocation + server-create + associate). Serial on
+  # the acquire runner; short, so it frees the scarce runner quickly. Hands the
+  # instance facts to the setup job via outputs (the baton is just these values).
+  acquire:
+    runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
     needs:
       - call-validate-request
       - call-request-labeler
       - call-request-initial-comments
     if: ${{ !failure() && !cancelled() }}
+    outputs:
+      instance_name: ${{ steps.provision.outputs.instance_name }}
+      volume_name: ${{ steps.provision.outputs.volume_name }}
+      instance_ip: ${{ steps.provision.outputs.floating_ip_address }}
+      progress_comment_id: ${{ steps.provision.outputs.progress_comment_id }}
     steps:
       - uses: actions/checkout@v6
 
@@ -79,16 +87,6 @@ jobs:
         with:
           app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
           private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
-
-      - name: Get issue creator
-        id: issue_meta
-        run: |
-          AUTHOR=$(gh issue view "$ISSUE_NUMBER" --json author --jq '.author.login')
-          echo "author=$AUTHOR" >> $GITHUB_OUTPUT
-        env:
-          ISSUE_NUMBER: ${{ inputs.issue_number }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
 
       - name: Check authorization
         id: check_auth
@@ -112,7 +110,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue_number: ${{ inputs.issue_number }}
 
-      - name: Create instance
+      - name: Create instance (acquire)
         id: provision
         uses: ./.github/actions/create-instance
         with:
@@ -123,9 +121,38 @@ jobs:
           volume_size_gb: ${{ vars.VOLUME_SIZE_GB || '100' }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  # Job B — setup lane (cloud-init wait, volume mount, reboot, email). Runs on the
+  # control runner so the long setup tail does not pin the scarce acquire runner;
+  # reconstructs all instance facts from the acquire job's outputs.
+  setup:
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    needs:
+      - acquire
+    if: ${{ !failure() && !cancelled() }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/create-github-app-token@7e473efe3cb98aa54f8d4bac15400b15fad77d94 # v2.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Setup instance
+        id: setup
+        uses: ./.github/actions/setup-instance
+        with:
+          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          issue_number: ${{ inputs.issue_number }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          instance_name: ${{ needs.acquire.outputs.instance_name }}
+          volume_name: ${{ needs.acquire.outputs.volume_name }}
+          instance_ip: ${{ needs.acquire.outputs.instance_ip }}
+          progress_comment_id: ${{ needs.acquire.outputs.progress_comment_id }}
+
       - name: Get workshop organizer
         id: workshop_org
-        if: ${{ steps.provision.outputs.setup_status == 'complete' }}
+        if: ${{ steps.setup.outputs.setup_status == 'complete' }}
         shell: bash
         run: |
           ASSIGNEE=$(gh issue view "$ISSUE_NUMBER" --json assignees --jq '.assignees[0].login')
@@ -135,9 +162,25 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
+      - name: Check if credentials already emailed
+        id: email_check
+        if: ${{ steps.setup.outputs.setup_status == 'complete' }}
+        shell: bash
+        run: |
+          # email-sent guard: a re-run of this setup job (e.g. by the watchdog)
+          # must not email the organizer twice.
+          already=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '[.labels[].name] | index("email-sent") != null')
+          echo "already_sent=$already" >> $GITHUB_OUTPUT
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
       - name: Send workshop email
         id: send_email
-        if: ${{ steps.provision.outputs.setup_status == 'complete' }}
+        if:
+          ${{ steps.setup.outputs.setup_status == 'complete' &&
+          steps.email_check.outputs.already_sent != 'true' }}
         uses: ./.github/actions/workshop-send-email
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
@@ -147,8 +190,20 @@ jobs:
           github_username: ${{ steps.workshop_org.outputs.username }}
           mail_server_username: ${{ secrets.MAIL_USERNAME }}
           mail_server_password: ${{ secrets.MAIL_PASSWORD }}
-          instance_name: ${{ steps.provision.outputs.instance_name }}
+          instance_name: ${{ needs.acquire.outputs.instance_name }}
           instance_issue_number: ${{ inputs.issue_number }}
+
+      - name: Mark credentials emailed
+        if: ${{ steps.send_email.outcome == 'success' }}
+        shell: bash
+        run: |
+          gh label create "email-sent" --color "0E8A16" \
+            --description "Credentials email sent to the organizer/user" --force >/dev/null 2>&1 || true
+          gh issue edit "$ISSUE_NUMBER" --add-label "email-sent" >/dev/null 2>&1 || true
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
       - name: comment (failed to send email)
         if: ${{ steps.send_email.outcome == 'failure' && failure() }}
@@ -158,15 +213,17 @@ jobs:
           body: |
             ### Instance Creation Results ❌
 
-            Failed to send connection email for instance **${{ steps.provision.outputs.instance_name }}**. ${{ steps.send_email.outputs.error_message }}
+            Failed to send connection email for instance **${{ needs.acquire.outputs.instance_name }}**. ${{ steps.send_email.outputs.error_message }}
 
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
       - name: comment (progress)
-        if: ${{ steps.send_email.outcome == 'success' }}
+        if:
+          ${{ steps.send_email.outcome == 'success' ||
+          steps.email_check.outputs.already_sent == 'true' }}
         uses: ./.github/actions/comment-progress
         with:
-          comment-id: ${{ steps.provision.outputs.progress_comment_id }}
+          comment-id: ${{ needs.acquire.outputs.progress_comment_id }}
           create_ip: ✅
           create_volume: ✅
           create_instance: ✅

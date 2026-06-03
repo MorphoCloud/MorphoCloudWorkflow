@@ -193,6 +193,13 @@ jobs:
 
           declare -a requested_instance_issues=()
 
+          # Trickle: dispatch only the first BATCH builds now; the backfill cron
+          # brings up the rest a few at a time, keeping the shared acquire lane
+          # free for individual-user commands (workshops have a 12h window, so
+          # they can afford to fill gradually).
+          BATCH="${WORKSHOP_BUILD_BATCH:-3}"
+          dispatched=0
+
           gh label create "$timeout_label" --color "5319E7" --description "Instance shelves after ${timeout_hours}h uptime (workshop end + 1h)" --force >/dev/null 2>&1 || true
           gh label create "$expiration_label" --color "892368" --description "Instance deleted ${expiration_days}d after creation (workshop end + 24h)" --force >/dev/null 2>&1 || true
 
@@ -278,29 +285,40 @@ jobs:
             #  exit 1
             #fi
 
-            set +e
-            gh workflow run create-instance-from-workflow.yml \
-              -f issue_number=$instance_issue_number \
-              -f skip_preamble=true
-            error_code=$?
-            set -e
-            if [[ $error_code -ne 0 ]]; then
-              echo "::warning ::Failed to run workflow for creating instance $instance_issue_number"
-              gh issue comment "$instance_issue_number" \
-                --body "❌ Failed to create instance $instance_issue_number. See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-              continue
+            # Trickle gate: only the first BATCH get a build now. The rest are
+            # created as sub-issues (records) and the backfill cron brings them
+            # up a few at a time, so a burst of workshop builds never floods the
+            # acquire lane that individual-user /create /shelve /unshelve share.
+            if (( dispatched < BATCH )); then
+              set +e
+              gh workflow run create-instance-from-workflow.yml \
+                -f issue_number=$instance_issue_number \
+                -f skip_preamble=true
+              error_code=$?
+              set -e
+              if [[ $error_code -ne 0 ]]; then
+                echo "::warning ::Failed to run workflow for creating instance $instance_issue_number"
+                gh issue comment "$instance_issue_number" \
+                  --body "❌ Failed to create instance $instance_issue_number. See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                continue
+              fi
+              dispatched=$((dispatched + 1))
+            else
+              echo "Trickle: deferring build for #$instance_issue_number to backfill (batch=$BATCH already dispatched)"
             fi
 
           done
 
           if [[ ${#requested_instance_issues[@]} -gt 0 ]]; then
-            comment="Requested ${#requested_instance_issues[@]} workshop instance(s). Provisioning now — subject to live JetStream2 capacity. Any that can't start immediately are **automatically topped off** as capacity frees (re-checked every ~10 min until the workshop starts/ends)."
+            comment="Requested ${#requested_instance_issues[@]} workshop instance(s). Bringing them up **a few at a time** so regular users' commands stay responsive — the rest are topped off automatically as capacity frees (re-checked every ~10 min until the workshop starts/ends). Subject to live JetStream2 capacity."
             gh issue comment "$ISSUE_NUMBER" --body "$comment"
           fi
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          # Trickle batch size (max workshop builds dispatched up front); backfill brings up the rest
+          WORKSHOP_BUILD_BATCH: ${{ vars.MORPHOCLOUD_WORKSHOP_BUILD_BATCH }}
           # Common fields
           REQUEST_TITLE: ${{ steps.extract.outputs.title }}
           REQUEST_DESCRIPTION: ${{ steps.extract.outputs.description }}
