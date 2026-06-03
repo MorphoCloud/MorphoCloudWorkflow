@@ -248,6 +248,7 @@ def vendorize_course(session: nox.Session) -> None:
             ".github/workflows/create-workshop.yml",
             ".github/workflows/approve-workshop.yml",
             ".github/workflows/update-workshop.yml",
+            ".github/workflows/workshop-backfill.yml",
             ".github/workflows/test-workshop-deletion.yml",
             ".github/workflows/request-notify-admin.yml",
             ".github/workflows/request-notify-admin-workshop.yml",
