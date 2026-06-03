@@ -1,9 +1,20 @@
 # Runner Architecture & Concurrency — Design Note
 
-Status: **decided — building now on a feature branch.** Sections 1–10 are the
-analysis/exploration that led here; **the Decision section below is what we are
-actually doing.** §9 (reconciler) is kept for reference but is explicitly _not_
-being built (see Decision → "Explicitly NOT building").
+Status: **IMPLEMENTED & VALIDATED (2026-06-03), merged to `main`.** The
+two-runner split (`acquire` / `control` lanes) is live and was A/B-tested
+against the monolithic single-runner — interactive commands stay far more
+responsive under a workshop create-storm (full results in
+`RUNNER_AB_RESULTS.md`). A **workshop-build trickle** was added on top: a soft
+de-prioritization of workshop creates vs. individual-user commands, via
+`MORPHOCLOUD_WORKSHOP_BUILD_BATCH` (default 3). Sections 1–10 are the original
+analysis/exploration; §9 (reconciler) was explicitly _not_ built.
+
+> **Known limitation (soft, not hard).** Precedence comes from lane separation +
+> the trickle, but GitHub self-hosted scheduling isn't strict FIFO, and
+> individual `/create` is itself a long acquire+setup job that holds the acquire
+> lane while it runs. A _hard_ guarantee would need a dedicated command lane + a
+> floating-IP mutex — not built (the trickle is the low-risk path that preserves
+> FIP safety).
 
 ---
 
@@ -84,10 +95,8 @@ specifics:
 - All work on a **feature branch** in MorphoCloudWorkflow; vendorize to a
   **branch** in the target repos via `nox -s vendorize -- … --branch` (which
   opens a PR).
-- **Instances `main` is the untouched fallback** until the branch is validated
-  and _you_ merge. If it doesn't work out, we abandon the branch and main is
-  unchanged.
-- Soak-test on Test-Instances (and `workflow_dispatch --ref`) before any merge.
+- \*\*MOrphoCloudWorkflow `main` is never to be 1touched without explicit
+  permission of the human (double check)
 
 ---
 

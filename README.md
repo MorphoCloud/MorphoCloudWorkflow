@@ -203,6 +203,24 @@ configure the necessary infrastructure:
        ./config.sh --url https://github.com/YourOrganization/YourProject --token TOKEN
        ```
 
+       **Two-runner setup (recommended for the `Instances` repo).** Register
+       **two** runners on the VM — label one `acquire` and the other `control`
+       (each in its own `actions-runner` directory):
+
+       ```bash
+       ./config.sh --url ... --token ... --labels acquire   # runner 1
+       ./config.sh --url ... --token ... --labels control   # runner 2 (separate dir)
+       ```
+
+       Then set the repo variables `MORPHOCLOUD_ACQUIRE_RUNNER=acquire` and
+       `MORPHOCLOUD_CONTROL_RUNNER=control`. This splits instance creation into
+       a floating-IP-safe **acquire** lane (VM + IP) and a parallel **control**
+       lane (cloud-init setup, lifecycle crons, commands), so a workshop's
+       builds don't block individual users. A single runner with no extra label
+       also works — leave both variables unset and everything runs `self-hosted`
+       on it (the fallback). See the **Runner Architecture** section of
+       `SYSTEM-OVERVIEW.md`.
+
     6. Start the runner and ensure it's connected to GitHub:
 
        ```bash
