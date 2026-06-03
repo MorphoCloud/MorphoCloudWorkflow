@@ -47,6 +47,7 @@ jobs:
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
           MAX_TOTAL: ${{ vars.MORPHOCLOUD_MAX_TOTAL_INSTANCES }}
+          WORKSHOP_BUILD_BATCH: ${{ vars.MORPHOCLOUD_WORKSHOP_BUILD_BATCH }}
         run: |
           set -u
           set +e # GitHub runs steps with -e; disable it (this watcher handles errors explicitly)
@@ -60,6 +61,18 @@ jobs:
           sys_running=$("$OS" server list -f value -c Name -c Status 2>/dev/null \
             | awk -v p="^${pref}instance-[0-9]+$" '$1 ~ p && ($2=="ACTIVE"||$2=="BUILD"){c++} END{print c+0}')
           echo "System: ${sys_running} ${PREFIX} instance(s) up (cap ${max_total})"
+
+          # Trickle cap: keep at most BATCH workshop builds in flight so the shared
+          # acquire lane stays free for individual-user commands. In-flight = queued +
+          # in-progress create-instance-from-workflow runs (workshop builds only;
+          # individual /create uses a different workflow and is intentionally not throttled).
+          batch="${WORKSHOP_BUILD_BATCH:-3}"
+          inflight=$(gh run list --repo "$GH_REPO" --workflow create-instance-from-workflow.yml --status in_progress --json databaseId --jq 'length' 2>/dev/null || echo 0)
+          q=$(gh run list --repo "$GH_REPO" --workflow create-instance-from-workflow.yml --status queued --json databaseId --jq 'length' 2>/dev/null || echo 0)
+          inflight=$(( inflight + q ))
+          slots=$(( batch - inflight ))
+          (( slots < 0 )) && slots=0
+          echo "Workshop trickle: batch=${batch} in-flight=${inflight} free-slots=${slots}"
 
           gh issue list --repo "$GH_REPO" --state open \
             --label "request-type:workshop" --label "request:approved" \
@@ -117,14 +130,15 @@ jobs:
             (( headroom < 0 )) && headroom=0
             to_make=$shortfall
             (( to_make > headroom )) && to_make=$headroom
-            if (( to_make <= 0 )); then echo "#$num: system at cap (${sys_running}/${max_total}), no headroom"; continue; fi
+            (( to_make > slots )) && to_make=$slots   # trickle: respect free workshop-build slots
+            if (( to_make <= 0 )); then echo "#$num: no free build slots (in-flight=${inflight}/${batch}) or system at cap (${sys_running}/${max_total})"; continue; fi
 
             n=0
             for s in $missing; do
               (( n >= to_make )) && break
               echo "#$num: re-dispatch create for sub-issue #$s"
               if gh workflow run create-instance-from-workflow.yml -f issue_number="$s" -f skip_preamble=true >/dev/null 2>&1; then
-                n=$((n + 1)); sys_running=$((sys_running + 1))
+                n=$((n + 1)); sys_running=$((sys_running + 1)); slots=$((slots - 1))
               else
                 echo "  dispatch failed for #$s"
               fi
