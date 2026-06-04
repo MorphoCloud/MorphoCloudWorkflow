@@ -11,6 +11,18 @@ scripts, and modifying the version of Slicer installed on instances.
 > manual installation management. See
 > [pipx documentation](https://pipx.pypa.io/).
 
+> [!IMPORTANT]
+>
+> **Source of truth.** All workflow/action changes are made **here in
+> `MorphoCloudWorkflow`** and reach `Instances`/`Test-Instances` (`vendorize`)
+> and `MorphoCloudCourseTemplate` + each `MC-*` repo (`vendorize-course`) **only
+> by vendorize** — never the reverse. Do **not** hand-edit `.github/workflows/`
+> or `.github/actions/` in a target repo or the template; the next vendorize
+> silently reverts it. `MC-*` repos are a one-time frozen snapshot of the
+> template at creation, so a fix reaches an existing course repo only by
+> re-running `vendorize-course` **into that repo**. See SYSTEM-OVERVIEW.md →
+> Workflows.
+
 ## Vendoring `MorphoCloudWorkflow`
 
 Once an ACCESS allocation and associated target GitHub (runner and repository)
