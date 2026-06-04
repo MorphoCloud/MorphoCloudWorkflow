@@ -30,14 +30,14 @@ are set up according to
 [these instructions](https://github.com/MorphoCloud/MorphoCloudWorkflow/blob/main/README.md),
 follow these steps to vendor or re-vendor the GitHub Workflow scripts.
 
-### Example: Vendoring to `MorphoCloudInstances`
+### Example: Vendoring to `Instances`
 
 ```bash
 PROJECTS_DIR=/home/jcfr/Projects
 cd $PROJECTS_DIR
 
 # Clone the target GitHub repository
-git clone https://github.com/MorphoCloud/MorphoCloudInstances
+git clone https://github.com/MorphoCloud/Instances
 
 # Clone MorphoCloudWorkflow
 git clone https://github.com/MorphoCloud/MorphoCloudWorkflow
@@ -45,10 +45,10 @@ git clone https://github.com/MorphoCloud/MorphoCloudWorkflow
 cd MorphoCloudWorkflow
 
 # Vendor scripts
-pipx run nox -s vendorize -- $PROJECTS_DIR/MorphoCloudInstances/ --commit
+pipx run nox -s vendorize -- $PROJECTS_DIR/Instances/ --commit
 
 # Publish updated target repository
-cd $PROJECTS_DIR/MorphoCloudInstances
+cd $PROJECTS_DIR/Instances
 git push origin main
 ```
 
@@ -90,9 +90,9 @@ Ansible scripts for MorphoCloud instances are maintained in our fork of
 1. Identify the version of the `exosphere` used in `MorphoCloudWorkflow`
 2. Update the `exosphere` version in `MorphoCloudWorkflow`
 3. Vendor the updated `MorphoCloudWorkflow` into the target repository (e.g.,
-   `MorphoCloudInstances` or `MorphoCloudInstancesTest`)
+   `Instances` or `Test-Instances`)
 
-### Example: Vendoring to `MorphoCloudInstances`
+### Example: Vendoring to `Instances`
 
 **Step 1**: Identify the version of `exosphere` used in `MorphoCloudWorkflow`
 
@@ -122,21 +122,21 @@ pipx run nox -s bump-exosphere -- $PROJECTS_DIR/exosphere --commit
 git push origin main
 ```
 
-**Step 3:** Vendor changes into the `MorphoCloudInstances` target repository
+**Step 3:** Vendor changes into the `Instances` target repository
 
 ```
 cd $PROJECTS_DIR
 
 # Clone the target GitHub repository
-git clone https://github.com/MorphoCloud/MorphoCloudInstances.git
+git clone https://github.com/MorphoCloud/Instances.git
 
 cd MorphoCloudWorkflow
 
 # Vendor scripts
-pipx run nox -s vendorize -- $PROJECTS_DIR/MorphoCloudInstances/ --commit
+pipx run nox -s vendorize -- $PROJECTS_DIR/Instances/ --commit
 
 # Push updates to target repository
-cd $PROJECTS_DIR/MorphoCloudInstances
+cd $PROJECTS_DIR/Instances
 git push origin main
 ```
 
@@ -207,10 +207,10 @@ pipx run nox -s bump-exosphere -- $PROJECTS_DIR/exosphere --commit
 git push origin main
 
 # Vendor scripts
-pipx run nox -s vendorize -- $PROJECTS_DIR/MorphoCloudInstances/ --commit
+pipx run nox -s vendorize -- $PROJECTS_DIR/Instances/ --commit
 
 # Publish updated target repository
-cd $PROJECTS_DIR/MorphoCloudInstances
+cd $PROJECTS_DIR/Instances
 git push origin main
 ```
 

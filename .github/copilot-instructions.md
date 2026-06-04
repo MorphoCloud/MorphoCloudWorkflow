@@ -20,11 +20,12 @@ reference.
 
 ### Target repositories
 
-| Repo                         | Purpose                       | Policy                                                                  |
-| ---------------------------- | ----------------------------- | ----------------------------------------------------------------------- |
-| `MorphoCloudInstancesTest`   | Test environment              | OK to vendorize freely                                                  |
-| `MorphoCloudInstances`       | **Production**                | **DO NOT touch without explicit user instruction**                      |
-| `MorphoCloudCourseTemplate ` | Template for new course repos | OK to vendorize, but do not make any manual changes to this repo either |
+| Repo                         | Purpose                                | Policy                                                                  |
+| ---------------------------- | -------------------------------------- | ----------------------------------------------------------------------- |
+| `Test-Instances`             | Test environment                       | OK to vendorize freely                                                  |
+| `Instances`                  | **Production** (individual + workshop) | **DO NOT touch without explicit user instruction**                      |
+| `MorphoCloudInstances`       | **ARCHIVED** old production            | Do NOT use or vendorize — inert                                         |
+| `MorphoCloudCourseTemplate ` | Template for new course repos          | OK to vendorize, but do not make any manual changes to this repo either |
 
 ## Branch policy
 
@@ -76,7 +77,7 @@ and pre-commit hooks will NOT catch this.
 
 1. Read the triggering workflow file first to understand the call chain
 2. Confirm whether you are editing the source (`MorphoCloudWorkflow`) or a
-   vendorized copy (`MC-*`, `MorphoCloudInstancesTest`)
+   vendorized copy (`MC-*`, `Test-Instances`)
 3. And changes to main branch is forbidden without explicit user instruction.
 4. Do not make any changes to files or GitHub resources without explicit user
    instruction
