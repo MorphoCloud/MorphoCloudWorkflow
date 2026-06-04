@@ -10,7 +10,8 @@ on:
         required: true
         type: number
       dry_run:
-        description: "Dry run (don't actually delete, just log what would happen)"
+        description:
+          "Dry run (don't actually delete, just log what would happen)"
         required: false
         type: boolean
         default: true

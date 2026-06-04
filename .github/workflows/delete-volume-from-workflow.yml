@@ -12,7 +12,9 @@ on:
         type: boolean
         default: false
       volume_name_suffix:
-        description: "Volume name suffix (use 'none' for no suffix, omit to use VOLUME_NAME_SUFFIX variable)"
+        description:
+          "Volume name suffix (use 'none' for no suffix, omit to use
+          VOLUME_NAME_SUFFIX variable)"
         type: string
         required: false
   workflow_call:
@@ -26,7 +28,9 @@ on:
         type: boolean
         default: false
       volume_name_suffix:
-        description: "Volume name suffix (use 'none' for no suffix, omit to use VOLUME_NAME_SUFFIX variable)"
+        description:
+          "Volume name suffix (use 'none' for no suffix, omit to use
+          VOLUME_NAME_SUFFIX variable)"
         type: string
         required: false
 permissions:
