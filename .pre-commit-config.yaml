@@ -36,11 +36,12 @@ repos:
     rev: "v1.7.12"
     hooks:
       - id: actionlint
-        # SC2086 ("double quote to prevent globbing") is informational style noise
-        # across our many `run:` shell blocks. Quoting ~70 sites inside production
-        # cron workflows is riskier than the rule is worth, so suppress it repo-wide.
-        # This config is vendorized, so Instances + course repos inherit the same rule.
-        args: ["-ignore", "SC2086"]
+        # Disable actionlint's shellcheck integration. Our `run:` blocks trip dozens
+        # of mostly-informational shellcheck findings (SC2086, SC2016, SC1090, SC2129,
+        # …) that aren't worth re-quoting across production cron workflows. actionlint's
+        # own workflow/expression checks still run. Vendorized, so Instances + course
+        # repos inherit the same setting.
+        args: ["-shellcheck="]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: "v0.12.3"
