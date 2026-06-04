@@ -200,9 +200,14 @@ jobs:
                 fi
 
               elif [[ "$days_until_expiration" -le $EXPIRATION_WARNING_DAYS ]]; then
+                # Course instances are not renewable: fixed duration set at intake,
+                # deleted at course end. Skip the renewal warning/email entirely.
+                # COURSE_TEAM_SLUG is set by mc-course-intake.gs only in MC-* repos.
+                if [[ -n "$COURSE_TEAM_SLUG" ]]; then
+                  echo "Skipping renewal email for course instance ${instance_name} (courses are not renewable)"
                 # Skip renewal emails if the issue is already closed (e.g. manually closed without deleting resources)
                 # The deletion branch above still runs regardless of issue state when expiration passes
-                if [[ "$issue_state" == "CLOSED" ]]; then
+                elif [[ "$issue_state" == "CLOSED" ]]; then
                   echo "Skipping renewal email for ${instance_name}: issue #${issue_number} is closed (resources will still be deleted at expiration)"
                 # Skip renewal emails for workshop instances (expiration <= 7 days)
                 # Workshop instances are temporary and not meant to be renewed
@@ -238,3 +243,4 @@ jobs:
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
           SUFFIX: ${{ vars.VOLUME_NAME_SUFFIX }}
           EXPIRATION_WARNING_DAYS: 7
+          COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
