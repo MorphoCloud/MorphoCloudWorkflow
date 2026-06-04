@@ -68,6 +68,44 @@ def _patch_files(target_dir: Path) -> None:
     )
 
 
+def _prune_orphans(
+    session: nox.Session,
+    src_dir: Path,
+    target_dir: Path,
+    paths: list[str],
+    files_to_copy: list[Path],
+) -> None:
+    """Delete downstream files no longer in the copy set (excluded or removed upstream).
+
+    Scoped to vendorized *directory* roots (e.g. ".github"); single-file paths and
+    non-vendorized files (runner-setup.md, .gitignore) are left untouched. Without
+    this, vendorize only ever adds/updates, so excluded/renamed files linger
+    downstream forever (the recurring course-template cruft).
+    """
+    copied_rel = {f.relative_to(src_dir) for f in files_to_copy}
+    for path in paths:
+        if not (src_dir / path).is_dir():
+            continue
+        target_root = target_dir / path
+        if not target_root.is_dir():
+            continue
+        for target_file in list(target_root.rglob("*")):
+            if (
+                target_file.is_file()
+                and target_file.relative_to(target_dir) not in copied_rel
+            ):
+                session.log(f"Pruning orphan {target_file.relative_to(target_dir)}")
+                target_file.unlink()
+        # remove any directories left empty by pruning (deepest first)
+        for empty_dir in sorted(
+            (d for d in target_root.rglob("*") if d.is_dir()),
+            key=lambda d: len(d.parts),
+            reverse=True,
+        ):
+            if not any(empty_dir.iterdir()):
+                empty_dir.rmdir()
+
+
 def _vendorize(
     session: nox.Session,
     paths: list[str],
@@ -112,6 +150,8 @@ def _vendorize(
         target_file.parent.mkdir(parents=True, exist_ok=True)
         session.log(f"Copying file {relative_path}")
         shutil.copy2(src_file, target_file)
+
+    _prune_orphans(session, src_dir, target_dir, paths, files_to_copy)
 
     if patch_fn is None:
         _patch_files(target_dir)
@@ -196,7 +236,7 @@ See https://github.com/{org}/{project}/compare/{before}...{after}
 
 @nox.session
 def vendorize(session: nox.Session) -> None:
-    """Vendorize into MorphoCloudInstances / MorphoCloudInstancesTest (individual + workshop)."""
+    """Vendorize into Instances / Test-Instances (individual + workshop)."""
     _vendorize(
         session,
         [
