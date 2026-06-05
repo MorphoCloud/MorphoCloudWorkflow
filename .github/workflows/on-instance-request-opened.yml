@@ -275,13 +275,17 @@ jobs:
         env:
           N: ${{ steps.fields.outputs.number_of_instances }}
           D: ${{ steps.fields.outputs.duration_days }}
+          MAX_DAYS: "5"
         run: |
-          cok=false; dok=false
+          cok=false; dok=false; drange=false
           [[ "$N" =~ ^[1-9][0-9]*$ ]] && cok=true
           [[ "$D" =~ ^[1-9][0-9]*$ ]] && dok=true
+          if [[ "$dok" == true ]] && (( D <= MAX_DAYS )); then drange=true; fi
           echo "count_valid=$cok" >> "$GITHUB_OUTPUT"
           echo "duration_valid=$dok" >> "$GITHUB_OUTPUT"
-          if [[ "$cok" == true && "$dok" == true ]]; then
+          echo "duration_in_range=$drange" >> "$GITHUB_OUTPUT"
+          echo "max_days=$MAX_DAYS" >> "$GITHUB_OUTPUT"
+          if [[ "$cok" == true && "$dok" == true && "$drange" == true ]]; then
             echo "valid=true" >> "$GITHUB_OUTPUT"
           else
             echo "valid=false" >> "$GITHUB_OUTPUT"
@@ -302,6 +306,8 @@ jobs:
           IN_PAST: ${{ steps.schedule.outputs.in_past }}
           COUNT_VALID: ${{ steps.count.outputs.count_valid }}
           DURATION_VALID: ${{ steps.count.outputs.duration_valid }}
+          DURATION_IN_RANGE: ${{ steps.count.outputs.duration_in_range }}
+          MAX_DAYS: ${{ steps.count.outputs.max_days }}
           NUM: ${{ steps.fields.outputs.number_of_instances }}
           DUR: ${{ steps.fields.outputs.duration_days }}
         run: |
@@ -317,11 +323,14 @@ jobs:
           if [[ "$DURATION_VALID" != "true" ]]; then
             reasons+="- Duration (days) must be a whole number (got '${DUR}')."$'\n'
           fi
+          if [[ "$DURATION_VALID" == "true" && "$DURATION_IN_RANGE" != "true" ]]; then
+            reasons+="- Workshop duration must be at most ${MAX_DAYS} days (got '${DUR}')."$'\n'
+          fi
 
           gh label create "needs-fix" --color "B60205" \
             --description "Request needs correction before approval" --force >/dev/null 2>&1 || true
           gh issue edit "$ISSUE_NUMBER" --add-label "needs-fix"
-          gh issue comment "$ISSUE_NUMBER" --body "$(printf '### Workshop request closed — needs fixing ❌\n\n%s\nThis request has been **closed** because the start date/time could not be read. Please open a **new** Workshop Request, entering the date as `YYYY-MM-DD` and the time as 24-hour `HH:MM` — e.g. date `2026-06-08`, time `09:00`.' "$reasons")"
+          gh issue comment "$ISSUE_NUMBER" --body "$(printf '### Workshop request closed — needs fixing ❌\n\n%s\nThis request has been **closed**. Please fix the issue(s) above and open a **new** Workshop Request. Reminder: dates are `YYYY-MM-DD`, times are 24-hour `HH:MM` (e.g. `2026-06-08` / `09:00`), and workshops may run at most %s days.' "$reasons" "$MAX_DAYS")"
           gh issue close "$ISSUE_NUMBER"
           echo "::error ::Workshop request validation failed; issue closed"
           exit 1
