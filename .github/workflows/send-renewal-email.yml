@@ -165,6 +165,37 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
+      - name: Render renewal email from PortalContent
+        id: render
+        if: ${{ steps.skip_check.outputs.is_course != 'true' }}
+        shell: bash
+        env:
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+          VOLUME_NAME: ${{ steps.define_volume_name.outputs.volume_name }}
+          DAYS: ${{ inputs.days_until_expiration }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          REPO: ${{ github.repository }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          TEMPLATE_URL: https://raw.githubusercontent.com/muratmaga/MorphoCloudPortalContent/main/templates/renewal.json
+        run: |
+          set -euo pipefail
+          tmpl=$(curl -fsSL --retry 3 --retry-delay 2 "$TEMPLATE_URL")
+          render() {
+            jq -r --arg k "$1" '.[$k]' <<<"$tmpl" \
+              | sed -e "s#{{instance_name}}#${INSTANCE_NAME}#g" \
+                    -e "s#{{volume_name}}#${VOLUME_NAME}#g" \
+                    -e "s#{{days_until_expiration}}#${DAYS}#g" \
+                    -e "s#{{issue_number}}#${ISSUE_NUMBER}#g" \
+                    -e "s#{{repo_name}}#${REPO_NAME}#g" \
+                    -e "s#{{repo}}#${REPO}#g"
+          }
+          {
+            echo "renewal_subject<<__EOF__"; render renewal_available_subject; echo "__EOF__"
+            echo "renewal_body<<__EOF__";    render renewal_available_body;    echo "__EOF__"
+            echo "final_subject<<__EOF__";   render final_notice_subject;      echo "__EOF__"
+            echo "final_body<<__EOF__";      render final_notice_body;         echo "__EOF__"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Send renewal email (renewal available)
         id: send_email_renewable
         if:
@@ -179,31 +210,9 @@ jobs:
           password: ${{ secrets.MAIL_PASSWORD }}
           from: MorphoCloudPortal <no-reply@morphocloud.org>
           to: ${{ steps.resolve_email.outputs.email }}
-          subject:
-            "[${{ github.event.repository.name }}] Instance ${{
-            steps.define.outputs.instance_name }} and Volume ${{
-            steps.define_volume_name.outputs.volume_name }} Scheduled for
-            Deletion"
+          subject: ${{ steps.render.outputs.renewal_subject }}
           convert_markdown: true
-          html_body: |
-            ## 🚨 Urgent: Your MorphoCloud Instance & Volume Will Be Deleted in ${{ inputs.days_until_expiration }} Days
-
-            Your MorphoCloud instance **${{ steps.define.outputs.instance_name }}** and its associated volume **${{ steps.define_volume_name.outputs.volume_name }}** are scheduled for **permanent deletion** in **${{ inputs.days_until_expiration }}** days.
-
-            **This action is irreversible.** If you need to retain your instance and volume, you **must renew before the deadline** by commenting `/renew` on [Issue #${{ inputs.issue_number }}](https://github.com/${{ github.repository }}/issues/${{ inputs.issue_number }}).
-
-            ## 🔄 How to Renew
-            1️⃣ Open [Issue #${{ inputs.issue_number }}](https://github.com/${{ github.repository }}/issues/${{ inputs.issue_number }})
-            2️⃣ Add a new comment: **`/renew`**
-            3️⃣ If additional lifespan is available, your instance will be extended.
-
-            **🔴 If no renewal is requested, your instance and volume will be permanently deleted in ${{ inputs.days_until_expiration }} days.**
-
-            ## ❓ Need Help?
-
-            Contact us at [portal@morphocloud.org](mailto:portal@morphocloud.org) if you have any questions.
-
-            **⏳ Time is running out! If you wish to keep your instance and volume, comment `/renew` now!**
+          html_body: ${{ steps.render.outputs.renewal_body }}
 
       - name: Send final expiration email (no renewal available)
         id: send_email_final
@@ -219,33 +228,9 @@ jobs:
           password: ${{ secrets.MAIL_PASSWORD }}
           from: MorphoCloudPortal <no-reply@morphocloud.org>
           to: ${{ steps.resolve_email.outputs.email }}
-          subject:
-            "[${{ github.event.repository.name }}] FINAL NOTICE: Instance ${{
-            steps.define.outputs.instance_name }} and Volume ${{
-            steps.define_volume_name.outputs.volume_name }} Will Be Deleted"
+          subject: ${{ steps.render.outputs.final_subject }}
           convert_markdown: true
-          html_body: |
-            ## 🚨 FINAL NOTICE: Your MorphoCloud Instance & Volume Will Be Permanently Deleted in ${{ inputs.days_until_expiration }} Days
-
-            Your MorphoCloud instance **${{ steps.define.outputs.instance_name }}** and its associated volume **${{ steps.define_volume_name.outputs.volume_name }}** are scheduled for **permanent deletion** in **${{ inputs.days_until_expiration }}** days.
-
-            **⚠️ IMPORTANT: This instance has already been renewed and NO FURTHER RENEWALS ARE POSSIBLE.**
-
-            **This action is irreversible.** Please ensure you:
-            1. **Back up all important data immediately** from your instance and volume
-            2. Download any files or results you need to keep
-
-            **🔴 Your instance and volume will be permanently deleted in ${{ inputs.days_until_expiration }} days. There is no way to extend this deadline.**
-
-            ## 🆕 Need a New Instance?
-
-            After your current instance is deleted, you can request a new instance by opening a new issue in this repository.
-
-            ## ❓ Need Help?
-
-            Contact us at [portal@morphocloud.org](mailto:portal@morphocloud.org) if you have any questions.
-
-            **⏳ Time is running out! Back up your data now!**
+          html_body: ${{ steps.render.outputs.final_body }}
 
       - name: command results comment (failed)
         if:
