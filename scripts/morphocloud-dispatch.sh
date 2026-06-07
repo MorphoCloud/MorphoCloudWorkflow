@@ -13,7 +13,10 @@
 # Setup + crontab: see scripts/runner-cron-dispatcher.md
 # Usage: morphocloud-dispatch.sh <workflow1.yml> [<workflow2.yml> ...]
 set -u
-REPO="MorphoCloud/Instances"
+# REPO defaults to Instances (the lifecycle crons); override via env for other repos
+# (e.g. MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/MorphoCloudAnalytics for the usage report,
+# paired with MORPHOCLOUD_DISPATCH_TOKEN_FILE pointing at that repo's dispatch token).
+REPO="${MORPHOCLOUD_DISPATCH_REPO:-MorphoCloud/Instances}"
 REF="main" # explicit ref avoids a default-branch lookup that would need Contents:read
 TOKEN_FILE="${MORPHOCLOUD_DISPATCH_TOKEN_FILE:-$HOME/.config/morphocloud/dispatch.pat}"
 LOG="$HOME/morphocloud-dispatch.log"

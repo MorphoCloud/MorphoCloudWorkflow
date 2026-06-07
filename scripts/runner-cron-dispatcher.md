@@ -49,7 +49,15 @@ shelving there burns the instructor's per-course allocation, not the main one).
    */15 * * * * /home/exouser/morphocloud-dispatch.sh collect-instance-uptime.yml
    0 * * * * /home/exouser/morphocloud-dispatch.sh update-workshop.yml
    0 0 * * * /home/exouser/morphocloud-dispatch.sh automatic-instance-deleting.yml automatic-volume-deleting.yml
+   # Monthly usage report -> MorphoCloudAnalytics (separate repo + dedicated token)
+   0 0 1 * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/MorphoCloudAnalytics MORPHOCLOUD_DISPATCH_TOKEN_FILE=/home/exouser/.config/morphocloud/analytics-dispatch.pat /home/exouser/morphocloud-dispatch.sh monthly-usage.yml
    ```
+
+   The monthly-usage line targets **MorphoCloudAnalytics** (not Instances) via
+   the `MORPHOCLOUD_DISPATCH_REPO` + `MORPHOCLOUD_DISPATCH_TOKEN_FILE`
+   overrides, using the dedicated `GH_MorphoCloud-analytics-dispatcher` token at
+   `~/.config/morphocloud/analytics-dispatch.pat` (Actions:rw on
+   MorphoCloudAnalytics only).
 
 ## Verify / monitor
 
