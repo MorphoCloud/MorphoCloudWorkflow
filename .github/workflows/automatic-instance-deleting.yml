@@ -215,22 +215,44 @@ jobs:
                 elif (( $(echo "$expiration_days <= 7" | bc -l) )); then
                   echo "Skipping renewal email for workshop instance ${instance_name} (expires in ${expiration_days} days)"
                 else
-                  echo "Instance ${instance_name} will expire soon. Sending warning..."
-                  gh issue comment "$issue_number" \
-                    --body '⚠️ Instance and volume will be deleted in '"$days_until_expiration"' days. Request an extension using the `renew` command if needed.'
-                  set +e
-                  gh workflow run send-renewal-email.yml \
-                    -f issue_number=$issue_number \
-                    -f days_until_expiration=$days_until_expiration
-                  error_code=$?
-                  set -e
-                  if [[ $error_code -ne 0 ]]; then
-                    echo "::warning ::Failed to run workflow for sending $instance_name renewal email"
+                  # Send at most two notices per expiration cycle: one when the warning
+                  # window opens, one the day before deletion. Labels make each fire once;
+                  # they are cleared below when an instance is renewed back out of the
+                  # window, so the next cycle warns again.
+                  if [[ "$days_until_expiration" -le $FINAL_WARNING_DAYS ]]; then
+                    notice_label="renewal-notice:last"
+                  else
+                    notice_label="renewal-notice:first"
+                  fi
+                  if echo "$labels" | grep -qx "$notice_label"; then
+                    echo "Renewal notice ${notice_label} already sent for ${instance_name} (${days_until_expiration} days left); skipping."
+                  else
+                    echo "Instance ${instance_name} will expire soon. Sending warning (${notice_label})..."
                     gh issue comment "$issue_number" \
-                      --body "❌ Failed to send renewal email. See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                    continue
+                      --body '⚠️ Instance and volume will be deleted in '"$days_until_expiration"' days. Request an extension using the `renew` command if needed.'
+                    set +e
+                    gh workflow run send-renewal-email.yml \
+                      -f issue_number=$issue_number \
+                      -f days_until_expiration=$days_until_expiration
+                    error_code=$?
+                    set -e
+                    if [[ $error_code -ne 0 ]]; then
+                      echo "::warning ::Failed to run workflow for sending $instance_name renewal email"
+                      gh issue comment "$issue_number" \
+                        --body "❌ Failed to send renewal email. See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                      continue
+                    fi
+                    gh issue edit "$issue_number" --add-label "$notice_label" || true
                   fi
                 fi
+              else
+                # Outside the warning window (freshly created or renewed back out):
+                # drop notice labels from a previous cycle so the next cycle warns again.
+                for n in first last; do
+                  if echo "$labels" | grep -qx "renewal-notice:$n"; then
+                    gh issue edit "$issue_number" --remove-label "renewal-notice:$n" || true
+                  fi
+                done
               fi
             else
               echo "Skipping Instance $instance_name. Not associated with any 'expiration' labels. Created: [$created_at], Lifespan: [$lifespan_days days]"
@@ -243,4 +265,5 @@ jobs:
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
           SUFFIX: ${{ vars.VOLUME_NAME_SUFFIX }}
           EXPIRATION_WARNING_DAYS: 7
+          FINAL_WARNING_DAYS: 1
           COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}

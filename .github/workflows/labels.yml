@@ -40,6 +40,8 @@ jobs:
           {"name": "request-creator:user", "color": "7B6F4C", "description": "Issue was explicitly created by the user"},
           {"name": "renewed:1", "color": "1550D4", "description": "Instance lifespan renewed once"},
           {"name": "renewed:2", "color": "1550D4", "description": "Instance lifespan renewed twice"},
+          {"name": "renewal-notice:first", "color": "FBCA04", "description": "First expiration warning sent (warning window opened)"},
+          {"name": "renewal-notice:last", "color": "FBCA04", "description": "Final expiration warning sent (day before deletion)"},
           {"name": "workflow:creating-instances", "color": "5319E7", "description": "Workshop instances are currently being created"},
           {"name": "workflow:instances-created", "color": "5319E7", "description": "All workshop instances were created"},
           {"name": "workflow:instances-deleted", "color": "5319E7", "description": "Workshop instances were deleted"},
