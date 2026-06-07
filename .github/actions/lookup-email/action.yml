@@ -43,7 +43,7 @@ runs:
           echo "Extracted sheet ID from URL: ${ROSTER_SHEET_ID}"
         fi
 
-        CURL_ARGS=(-sL)
+        CURL_ARGS=(-sL --retry 3 --retry-delay 5 --retry-all-errors)
         if [[ -n "$API_KEY" ]]; then
           CURL_ARGS+=(-H "X-Api-Key: $API_KEY")
         fi

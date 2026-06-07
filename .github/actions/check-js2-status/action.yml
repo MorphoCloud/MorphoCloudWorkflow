@@ -23,7 +23,7 @@ runs:
       id: check
       shell: bash
       run: |
-        RESPONSE=$(curl -sf --max-time 10 \
+        RESPONSE=$(curl -sf --max-time 10 --retry 3 --retry-delay 5 --retry-all-errors \
           "https://operations-api.access-ci.org/wh2/news/v1/affiliation/access-ci.org/current_outages/") || {
           echo "ACCESS status API unreachable — skipping outage check"
           echo "outage_detected=false" >> $GITHUB_OUTPUT
