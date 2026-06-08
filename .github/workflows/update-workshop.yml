@@ -5,6 +5,13 @@ on:
     - cron: "0 * * * *"
   workflow_dispatch:
 
+# Serialize runs so two overlapping invocations can't both process the same workshop
+# before the first flips it to instances-created — which would double-send the
+# organizer's credential email + comment. (The other lifecycle crons already do this.)
+concurrency:
+  group: ${{ github.workflow }}-${{ vars.MORPHOCLOUD_OS_CLOUD }}
+  cancel-in-progress: false
+
 permissions:
   issues: write
   contents: read
