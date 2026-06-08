@@ -1,0 +1,12 @@
+# MorphoCloud/Instances dispatcher crontab — ACQUIRE runner (runner-1) ONLY.
+# GitHub's on:schedule is throttled, so the time-sensitive workflows are fired here
+# via gh workflow run. NEVER install this on the control runner — a second copy
+# double-fires every cron. Canonical source: MorphoCloudWorkflow/scripts/. Installed
+# by restore-instances-dispatcher.sh. See INSTANCES_RUNNER_REBUILD.md.
+*/5 * * * * /home/exouser/morphocloud-dispatch.sh automatic-instance-shelving.yml update-request-status-label.yml
+*/10 * * * * /home/exouser/morphocloud-dispatch.sh workshop-backfill.yml
+*/15 * * * * /home/exouser/morphocloud-dispatch.sh collect-instance-uptime.yml
+0 * * * * /home/exouser/morphocloud-dispatch.sh update-workshop.yml
+0 0 * * * /home/exouser/morphocloud-dispatch.sh automatic-instance-deleting.yml automatic-volume-deleting.yml
+0 0 1 * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/MorphoCloudAnalytics MORPHOCLOUD_DISPATCH_TOKEN_FILE=/home/exouser/.config/morphocloud/analytics-dispatch.pat /home/exouser/morphocloud-dispatch.sh monthly-usage.yml
+0 8 * * 1 /home/exouser/check-dispatch-tokens.sh >> /home/exouser/token-expiry.log 2>&1
