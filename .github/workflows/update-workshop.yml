@@ -19,14 +19,18 @@ jobs:
         id: collect
         run: |
           set -euo pipefail
+          # Watch every open workshop that is NOT already marked done. Do NOT require
+          # workflow:creating-instances: create-workshop clears that lock ~12s after the
+          # initial batch to hand off to backfill, so requiring it made this job skip
+          # every workshop — the final "all active" comment + credential CSV never fired.
           issues=$(gh issue list \
             --repo "$GH_REPO" \
             --label "request-type:workshop" \
-            --label "workflow:creating-instances" \
             --state open \
-            --json number \
+            --json number,labels \
             --limit 100)
-          issue_numbers=$(echo "$issues" | jq -c '[.[].number]')
+          issue_numbers=$(echo "$issues" | jq -c \
+            '[.[] | select((.labels | map(.name) | index("workflow:instances-created")) | not) | .number]')
           if [[ "$issue_numbers" == "null" ]]; then
             issue_numbers="[]"
           fi
@@ -150,9 +154,9 @@ jobs:
       - name: Update workshop labels
         if: ${{ steps.readiness.outputs.ready == 'true' }}
         run: |
-          gh issue edit "$ISSUE_NUMBER" \
-            --remove-label "workflow:creating-instances" \
-            --add-label "workflow:instances-created"
+          gh issue edit "$ISSUE_NUMBER" --add-label "workflow:instances-created"
+          # creating-instances is usually already cleared by create-workshop; best-effort.
+          gh issue edit "$ISSUE_NUMBER" --remove-label "workflow:creating-instances" 2>/dev/null || true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
