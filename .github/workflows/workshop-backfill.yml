@@ -87,7 +87,6 @@ jobs:
 
             target=$(grep -oE 'workshop-target:[0-9]+' <<<"$names" | head -1 | cut -d: -f2)
             wend=$(grep -oE 'workshop-end:[0-9]+' <<<"$names" | head -1 | cut -d: -f2)
-            reported=$(grep -oE 'backfill-reported:[0-9]+' <<<"$names" | head -1 | cut -d: -f2)
             [ -z "$target" ] && { echo "#$num: no workshop-target label, skip"; continue; }
             if [ -n "$wend" ] && (( now >= wend )); then echo "#$num: past workshop-end, skip"; continue; fi
 
@@ -111,18 +110,12 @@ jobs:
             shortfall=$(( target - live ))
             echo "#$num: target=$target live=$live shortfall=$shortfall missing=[${missing# }]"
 
-            # Comment only when the live count changed since the last report.
-            if [[ "${reported:-}" != "$live" ]]; then
-              gh label create "backfill-reported:${live}" --color "BFD4F2" \
-                --description "Backfill last-reported live count" --force >/dev/null 2>&1 || true
-              [ -n "${reported:-}" ] && gh issue edit "$num" --remove-label "backfill-reported:${reported}" >/dev/null 2>&1 || true
-              gh issue edit "$num" --add-label "backfill-reported:${live}" >/dev/null 2>&1 || true
-              if (( live >= target )); then
-                gh issue comment "$num" --body "✅ All **${target}** workshop instances are up."
-              else
-                gh issue comment "$num" --body "🔄 Backfill: **${live}/${target}** instances up; topping off the rest as capacity frees (re-checks every ~10 min)."
-              fi
-            fi
+            # Backfill no longer comments on the issue: an "instances are up" comment
+            # based on the ACTIVE/BUILD count is premature (a VM is ACTIVE ~20 min before
+            # cloud-init/setup finishes), and per-cycle "topping off" comments are noise.
+            # `update-workshop` is the single source of the readiness announcement — it
+            # comments + emails the credentials only when every instance is truly ready
+            # (the exoPw/setup-complete check via list-instance-credentials.sh).
 
             (( shortfall <= 0 )) && continue
 
