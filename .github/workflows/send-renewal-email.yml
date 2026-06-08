@@ -176,7 +176,7 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           REPO: ${{ github.repository }}
           REPO_NAME: ${{ github.event.repository.name }}
-          TEMPLATE_URL: https://raw.githubusercontent.com/muratmaga/MorphoCloudPortalContent/main/templates/renewal.json
+          TEMPLATE_URL: https://raw.githubusercontent.com/MorphoCloud/MorphoCloudPortalContent/main/templates/renewal.json
         run: |
           set -euo pipefail
           tmpl=$(curl -fsSL --retry 3 --retry-delay 2 "$TEMPLATE_URL")
