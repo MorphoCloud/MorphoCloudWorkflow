@@ -51,7 +51,16 @@ shelving there burns the instructor's per-course allocation, not the main one).
    0 0 * * * /home/exouser/morphocloud-dispatch.sh automatic-instance-deleting.yml automatic-volume-deleting.yml
    # Monthly usage report -> MorphoCloudAnalytics (separate repo + dedicated token)
    0 0 1 * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/MorphoCloudAnalytics MORPHOCLOUD_DISPATCH_TOKEN_FILE=/home/exouser/.config/morphocloud/analytics-dispatch.pat /home/exouser/morphocloud-dispatch.sh monthly-usage.yml
+   # Weekly: email GH_ADMIN_EMAILS if a runner dispatch token is within 4 weeks of expiry
+   0 8 * * 1 /home/exouser/check-dispatch-tokens.sh >> /home/exouser/token-expiry.log 2>&1
    ```
+
+   `check-dispatch-tokens.sh` reads each dispatch token's live expiry from the
+   GitHub auth header (no stored dates) and, if within `WARN_DAYS` (default 28),
+   dispatches `MorphoCloudAnalytics/token-expiry-alert.yml` (via the
+   analytics-dispatcher token) to email the admins — the runner can't send mail
+   itself. The reader token is checked separately by MorphoCloudAnalytics's own
+   `token-expiry-check.yml`.
 
    The monthly-usage line targets **MorphoCloudAnalytics** (not Instances) via
    the `MORPHOCLOUD_DISPATCH_REPO` + `MORPHOCLOUD_DISPATCH_TOKEN_FILE`
