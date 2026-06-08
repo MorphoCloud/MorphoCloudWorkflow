@@ -3,9 +3,9 @@
 Status: **IMPLEMENTED & VALIDATED (2026-06-03), merged to `main`.** The
 two-runner split (`acquire` / `control` lanes) is live and was A/B-tested
 against the monolithic single-runner — interactive commands stay far more
-responsive under a workshop create-storm (full results in
-`RUNNER_AB_RESULTS.md`). A **workshop-build trickle** was added on top: a soft
-de-prioritization of workshop creates vs. individual-user commands, via
+responsive under a workshop create-storm (A/B-measured 2026-06-03). A
+**workshop-build trickle** was added on top: a soft de-prioritization of
+workshop creates vs. individual-user commands, via
 `MORPHOCLOUD_WORKSHOP_BUILD_BATCH` (default 3). Sections 1–10 are the original
 analysis/exploration; §9 (reconciler) was explicitly _not_ built.
 
