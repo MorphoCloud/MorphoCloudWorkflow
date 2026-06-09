@@ -101,8 +101,28 @@ jobs:
 
           # Apply the label updates in GitHub
           gh issue edit ${ISSUE_NUMBER} --add-label "${add_label}" --remove-label "${remove_labels}"
+
+          # Acknowledge the successful renewal to the user. Every other command posts a
+          # result comment; /renew was previously silent (only a reaction), leaving the
+          # user with no confirmation, new expiration date, or renewals-remaining count.
+          # The active expiration after this renewal is the (renewed_count + 1)-th rung of
+          # the sorted ladder, and the instance is deleted at created_at + that many days.
+          created_at=$(gh issue view "$ISSUE_NUMBER" --json createdAt -q '.createdAt')
+          created_epoch=$(date -d "$created_at" +%s)
+          new_expiration_days=$(echo "$lifespan_list" | sed -n "$((renewed_count + 1))p")
+          new_expiration_days=${new_expiration_days:-$(echo "$lifespan_list" | tail -n1)}
+          exp_epoch=$(printf "%.0f" "$(echo "$created_epoch + $new_expiration_days * 86400" | bc)")
+          expiration_date=$(date -u -d "@$exp_epoch" +%Y-%m-%d)
+          remaining=$((expiration_count - 1 - renewed_count))
+
+          if [[ "$remaining" -le 0 ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "✅ Renewal applied — no more renewals left. **${expiration_date}** is the final expiration date for **${INSTANCE_NAME}**; the instance and its volume will be deleted then."
+          else
+            gh issue comment "$ISSUE_NUMBER" --body "✅ Renewal applied. New expiration for **${INSTANCE_NAME}**: **${expiration_date}** — ${remaining} renewal(s) remaining."
+          fi
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
 
