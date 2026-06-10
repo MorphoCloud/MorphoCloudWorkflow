@@ -241,7 +241,7 @@ jobs:
                       renew_hint='No renewals remain.'
                     fi
                     gh issue comment "$issue_number" \
-                      --body '⚠️ Instance and volume will be deleted in '"$days_until_expiration"' days. '"$renew_hint
+                      --body '⚠️ Instance and volume will be deleted in '"$days_until_expiration"' days. '"$renew_hint"
                     set +e
                     gh workflow run send-renewal-email.yml \
                       -f issue_number=$issue_number \
