@@ -34,10 +34,10 @@ inputs:
       required by its lookup endpoints"
     required: false
     default: ""
-  roster_sheet_id:
+  course_team_slug:
     description:
-      "Google Sheet ID of the instructor-owned course roster shared with
-      morphocloudportal@gmail.com"
+      "Course team slug (mc-…); the roster sheet is resolved server-side by the
+      Apps Script endpoint"
     required: true
   issue_creator:
     description: "GitHub username of the course student (issue creator)"
@@ -80,7 +80,7 @@ runs:
       with:
         lookup_url: ${{ inputs.email_lookup_url }}
         github_username: ${{ inputs.issue_creator }}
-        roster_sheet_id: ${{ inputs.roster_sheet_id }}
+        course_team_slug: ${{ inputs.course_team_slug }}
         gas_secret: ${{ inputs.email_lookup_secret }}
 
     - name: Generate Guacamole Connection URL

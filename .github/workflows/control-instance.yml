@@ -136,6 +136,6 @@ jobs:
           email_lookup_api_key: ${{ secrets.MORPHOCLOUD_LOOKUP_API_KEY }}
           email_lookup_secret: ${{ secrets.ENROLLMENT_WEBHOOK_SECRET }}
           issue_creator: ${{ github.event.issue.user.login }}
-          roster_sheet_id: ${{ vars.MORPHOCLOUD_STUDENT_ROSTER_SHEET_ID }}
+          course_team_slug: ${{ vars.COURSE_TEAM_SLUG }}
           mail_server_username: ${{secrets.MAIL_USERNAME}}
           mail_server_password: ${{secrets.MAIL_PASSWORD}}

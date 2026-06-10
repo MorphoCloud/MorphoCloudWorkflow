@@ -21,10 +21,8 @@ on:
         required: false
         type: string
         default: ""
-      roster_sheet_id:
-        description:
-          "Google Sheet ID of the course roster (leave blank for individual
-          repos)"
+      course_team_slug:
+        description: "Course team slug (leave blank for individual repos)"
         required: false
         type: string
         default: ""
@@ -48,10 +46,8 @@ on:
         required: false
         type: string
         default: ""
-      roster_sheet_id:
-        description:
-          "Google Sheet ID of the course roster (leave blank for individual
-          repos)"
+      course_team_slug:
+        description: "Course team slug (leave blank for individual repos)"
         required: false
         type: string
         default: ""
@@ -79,6 +75,6 @@ jobs:
           email_lookup_api_key: ${{ secrets.MORPHOCLOUD_LOOKUP_API_KEY }}
           email_lookup_secret: ${{ secrets.ENROLLMENT_WEBHOOK_SECRET }}
           issue_creator: ${{ inputs.issue_creator }}
-          roster_sheet_id: ${{ inputs.roster_sheet_id }}
+          course_team_slug: ${{ inputs.course_team_slug }}
           mail_server_username: ${{secrets.MAIL_USERNAME}}
           mail_server_password: ${{secrets.MAIL_PASSWORD}}

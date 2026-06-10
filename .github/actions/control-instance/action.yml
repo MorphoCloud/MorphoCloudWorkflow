@@ -48,10 +48,9 @@ inputs:
       "GitHub username of the issue creator (used for email lookup on unshelve)"
     required: false
     default: ""
-  roster_sheet_id:
+  course_team_slug:
     description:
-      "Google Sheet ID of the instructor-owned course roster (course repos only;
-      leave blank for individual repos)"
+      "Course team slug (course repos only; leave blank for individual repos)"
     required: false
     default: ""
 runs:
@@ -627,7 +626,7 @@ runs:
       id: send_email_individual
       if:
         ${{ steps.check_instance.outputs.exists == 'true' && success() &&
-        inputs.command_name == 'unshelve' && inputs.roster_sheet_id == '' }}
+        inputs.command_name == 'unshelve' && inputs.course_team_slug == '' }}
       uses: ./.github/actions/send-email
       with:
         os_cloud: ${{ inputs.os_cloud }}
@@ -644,7 +643,7 @@ runs:
       id: send_email_course
       if:
         ${{ steps.check_instance.outputs.exists == 'true' && success() &&
-        inputs.command_name == 'unshelve' && inputs.roster_sheet_id != '' }}
+        inputs.command_name == 'unshelve' && inputs.course_team_slug != '' }}
       uses: ./.github/actions/course-send-email
       with:
         os_cloud: ${{ inputs.os_cloud }}
@@ -652,7 +651,7 @@ runs:
         email_lookup_url: ${{ inputs.email_lookup_url }}
         email_lookup_secret: ${{ inputs.email_lookup_secret }}
         issue_creator: ${{ inputs.issue_creator }}
-        roster_sheet_id: ${{ inputs.roster_sheet_id }}
+        course_team_slug: ${{ inputs.course_team_slug }}
         mail_server_username: ${{ inputs.mail_server_username }}
         mail_server_password: ${{ inputs.mail_server_password }}
         instance_name: ${{ steps.define.outputs.instance_name }}
