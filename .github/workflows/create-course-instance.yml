@@ -192,13 +192,12 @@ jobs:
           if [[ "$COURSE_COUNT" -ge "$MAX_COURSE_PER_USER" ]]; then
             gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
 
-          @${ISSUE_CREATOR} already has **${COURSE_COUNT}** active course instance(s), which is at the per-user limit of **${MAX_COURSE_PER_USER}**.
+          Only **${MAX_COURSE_PER_USER}** course instance request(s) per user may hold resources at a time, and @${ISSUE_CREATOR} already has **${COURSE_COUNT}** — see ${OCCUPIED_COURSE_ISSUES}.
 
-          Existing course instance(s) found in OpenStack: ${OCCUPIED_COURSE_ISSUES}
-
-          Go to that issue and type \`/delete_all\` to free your quota, or contact your instructor.
+          Comment \`/delete_all\` on that issue to release it, then open a new request — or contact your instructor.
 
           > @${COURSE_INSTRUCTOR} — FYI, @${ISSUE_CREATOR} has reached the per-user course instance limit ($COURSE_COUNT/$MAX_COURSE_PER_USER)."
+            gh issue close "$ISSUE_NUMBER"
             echo "::error ::User $ISSUE_CREATOR has $COURSE_COUNT/$MAX_COURSE_PER_USER course instances"
             exit 1
           fi
@@ -232,13 +231,12 @@ jobs:
           if [[ "$USER_COUNT" -ge "$MAX_PER_USER" ]]; then
             gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
 
-          @${ISSUE_CREATOR} has **${USER_COUNT}** active instance(s) across all types, which is at the global per-user limit of **${MAX_PER_USER}**.
+          Only **${MAX_PER_USER}** instance requests per user may hold resources at a time (all types combined), and @${ISSUE_CREATOR} already has **${USER_COUNT}** — see ${OCCUPIED_ALL_ISSUES}.
 
-          Existing instance(s) found in OpenStack: ${OCCUPIED_ALL_ISSUES}
-
-          Go to one of those issues and type \`/delete_all\` to free your quota before creating a new one.
+          Comment \`/delete_all\` on one of those issues to release it, then open a new request.
 
           > @${COURSE_INSTRUCTOR} — FYI, @${ISSUE_CREATOR} has reached the global per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
+            gh issue close "$ISSUE_NUMBER"
             echo "::error ::User $ISSUE_CREATOR has $USER_COUNT/$MAX_PER_USER instances across all types"
             exit 1
           fi

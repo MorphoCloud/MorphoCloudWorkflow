@@ -224,13 +224,12 @@ jobs:
           if [[ "$USER_COUNT" -ge "$MAX_PER_USER" ]]; then
             gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
 
-          @${ISSUE_CREATOR} already has **${USER_COUNT}** active instance(s), which is at the per-user limit of **${MAX_PER_USER}**.
+          Only **${MAX_PER_USER}** instance requests per user may hold resources at a time, and @${ISSUE_CREATOR} already has **${USER_COUNT}** — see ${OCCUPIED_ISSUES}.
 
-          Existing instance(s) found in OpenStack: ${OCCUPIED_ISSUES}
-
-          Go to one of those issues and type \`/delete_all\` to free your quota before creating a new one.
+          Comment \`/delete_all\` on one of those issues to release it, then open a new request.
 
           > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
+            gh issue close "$ISSUE_NUMBER"
             echo "::error ::User $ISSUE_CREATOR has $USER_COUNT/$MAX_PER_USER instances"
             exit 1
           fi
