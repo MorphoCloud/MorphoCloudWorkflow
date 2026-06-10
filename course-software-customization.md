@@ -67,6 +67,13 @@ unconfirmed image.
 - Set the variable to the branch SHA, `/create` on a test issue, and verify the
   requested software is present in-guest (the issue gets a "Custom course image"
   comment recording the exact commit).
+- **Use a fresh data volume.** If a `My-Data-<N>` volume from earlier testing
+  exists, `/create` reuses it and its old Slicer install **shadows** the
+  boot-time build during volume relocation — the custom extension appears
+  missing even though the playbook ran. Delete the leftover volume first
+  (`/delete_volume`), or expect to re-run the extension install on the live
+  desktop. Real students always get fresh volumes, so this only affects
+  validation runs.
 - A garbage value fails loudly before any resource is created.
 - Unset the variable (`gh variable delete MORPHOCLOUD_EXOSPHERE_REF --repo …`)
   to return the course to the standard image.
