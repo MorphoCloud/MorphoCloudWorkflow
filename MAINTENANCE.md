@@ -50,11 +50,12 @@ from the maintainer's Claude subscription — no per-token bill; Actions minutes
 are free on this public repo):
 
 - **`claude-code-review.yml`** — automatically reviews every human-authored PR
-  on open (Dependabot/bot PRs skipped). The prompt targets this repo's real bug
-  classes: Actions expressions, shell quoting, self-hosted-runner assumptions,
-  vendorize blast radius.
+  on open and when a draft is marked ready-for-review (Dependabot/bot PRs
+  skipped). The prompt targets this repo's real bug classes: Actions
+  expressions, shell quoting, self-hosted-runner assumptions, vendorize blast
+  radius.
 - **`claude.yml`** — on-demand: comment `@claude <ask>` on any PR/issue. Gated
-  to org members/collaborators (public repo).
+  to repo owners / org members / collaborators (public repo).
 
 Notes:
 
