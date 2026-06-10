@@ -4,13 +4,27 @@ on:
   issue_comment:
     types: [created]
 
+permissions:
+  issues: write
+  checks: read
+  contents: read
+
+# Two-job split (security review M3/M7): authorization runs first on a
+# GitHub-hosted runner; the self-hosted runner is only occupied — and nothing
+# is checked out or provisioned — once /create is authorized. The job-level
+# gate also closes the fall-through where a comment merely mentioning
+# "/create" mid-sentence (strict prefix match fails -> continue=false)
+# proceeded to provisioning.
 jobs:
-  create:
-    runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
+  authorize:
+    runs-on: ubuntu-latest
     if:
       ${{ !github.event.issue.pull_request &&
       contains(github.event.issue.labels.*.name, 'request-type:course-instance')
       && ( contains(github.event.comment.body, '/create') ) }}
+    outputs:
+      continue: ${{ steps.create_command.outputs.continue }}
+      admins: ${{ steps.admins.outputs.members }}
     steps:
       - uses: actions/checkout@v6
 
@@ -27,6 +41,7 @@ jobs:
           token: ${{ steps.admin-token.outputs.token }}
           org: ${{ github.repository_owner }}
           team_slug: morphocloud-admins
+
       - name: create command
         id: create_command
         uses: github/command@3442f3fa1efe01bdb024b157083c337902d17372 # v2.0.3
@@ -40,7 +55,75 @@ jobs:
             vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
             }},${{ join(github.event.issue.assignees.*.login, ',') }}"
 
+  create:
+    runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
+    needs: authorize
+    if: ${{ needs.authorize.outputs.continue == 'true' }}
+    steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Check authorization
+        id: check_auth
+        shell: bash
+        run: |
+          # An admin running the command is always authorized.
+          if echo ",$ADMINS," | grep -q ",$COMMENT_AUTHOR,"; then
+            echo "Admin $COMMENT_AUTHOR — authorized."
+            exit 0
+          fi
+
+          # The instructor self-tests /create before the roster/team is
+          # populated, so they are authorized on their own issue by identity.
+          if [[ -n "$COURSE_INSTRUCTOR" && "$ISSUE_CREATOR" == "$COURSE_INSTRUCTOR" ]]; then
+            echo "Issue creator is the course instructor — authorized."
+            exit 0
+          fi
+
+          if [[ -z "$COURSE_TEAM_SLUG" ]]; then
+            echo "::error ::COURSE_TEAM_SLUG is not configured for this repo"
+            exit 1
+          fi
+
+          ENCODED_SUBJECT=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$ISSUE_CREATOR")
+          HTTP_CODE=$(curl -s --retry 3 --retry-delay 5 --retry-all-errors -o /tmp/membership_response.json -w "%{http_code}" \
+            -H "Authorization: Bearer $APP_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/orgs/$ORG/teams/$COURSE_TEAM_SLUG/memberships/$ENCODED_SUBJECT") || true
+
+          authorized="false"
+          if [[ "$HTTP_CODE" == "200" ]]; then
+            STATE=$(jq -r '.state' /tmp/membership_response.json)
+            if [[ "$STATE" == "active" ]]; then
+              authorized="true"
+            fi
+          fi
+          rm -f /tmp/membership_response.json
+
+          if [[ "$authorized" != "true" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
+
+          @${ISSUE_CREATOR} is not an enrolled member of this course's team (\`${COURSE_TEAM_SLUG}\`), so \`/create\` cannot proceed. Please contact your instructor."
+            echo "::error ::User $ISSUE_CREATOR is not an active member of $COURSE_TEAM_SLUG"
+            exit 1
+          fi
+        env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          ORG: ${{ github.repository_owner }}
+          COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
+          COURSE_INSTRUCTOR: ${{ vars.COURSE_INSTRUCTOR_GITHUB }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          ADMINS: ${{ needs.authorize.outputs.admins }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
       - name: Check course instance quota
         id: check_quota
@@ -48,9 +131,10 @@ jobs:
         run: |
           MAX_COURSE_PER_USER="${MAX_COURSE_PER_USER:-1}"
           MAX_TOTAL="${MAX_TOTAL:-90}"
-          # Admin bypass
-          if echo ",$ADMINS," | grep -q ",$ISSUE_CREATOR,"; then
-            echo "Admin $ISSUE_CREATOR — skipping quota check."
+          # Admin bypass — keyed on whoever ran /create (an admin acting on a
+          # user's issue overrides the quota), not the issue creator
+          if echo ",$ADMINS," | grep -q ",$COMMENT_AUTHOR,"; then
+            echo "Admin $COMMENT_AUTHOR — skipping quota check."
             exit 0
           fi
 
@@ -162,8 +246,9 @@ jobs:
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           INSTANCE_NAME_PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
           ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ADMINS: ${{ steps.admins.outputs.members }}
+          ADMINS: ${{ needs.authorize.outputs.admins }}
           COURSE_INSTRUCTOR: ${{ vars.COURSE_INSTRUCTOR_GITHUB }}
           MAX_COURSE_PER_USER:
             ${{ vars.MORPHOCLOUD_MAX_COURSE_INSTANCES_PER_USER }}
@@ -178,6 +263,54 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue_number: ${{ github.event.issue.number }}
+
+      # Course software customization (#194): optional per-course repo variable
+      # MORPHOCLOUD_EXOSPHERE_REF = full commit SHA on MorphoCloud/exosphere
+      # (normally the HEAD of the course's course/<slug> branch). Absent
+      # variable = the standard vendorized pin. The committed cloud-config
+      # stays generic and the variable survives vendorize.
+      - name: Apply custom exosphere ref
+        id: custom_ref
+        shell: bash
+        run: |
+          if [[ -z "$EXOSPHERE_REF" ]]; then
+            echo "MORPHOCLOUD_EXOSPHERE_REF not set — standard image."
+            exit 0
+          fi
+
+          # The regex — not the API call, which also resolves branch names and
+          # short SHAs — is what enforces the full-immutable-SHA rule; it also
+          # makes the sed below injection-proof.
+          if ! [[ "$EXOSPHERE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
+
+          \`MORPHOCLOUD_EXOSPHERE_REF\` is set but is not a full 40-character lowercase commit SHA. No instance was created. Please tag @MorphoCloud/morphocloud-admins."
+            echo "::error ::MORPHOCLOUD_EXOSPHERE_REF is not a full commit SHA"
+            exit 1
+          fi
+
+          if ! gh api "repos/${EXOSPHERE_REPO}/commits/${EXOSPHERE_REF}" --jq .sha > /dev/null 2>&1; then
+            gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
+
+          \`MORPHOCLOUD_EXOSPHERE_REF\` points to a commit that does not exist in \`${EXOSPHERE_REPO}\`. No instance was created. Please tag @MorphoCloud/morphocloud-admins."
+            echo "::error ::Commit $EXOSPHERE_REF not found in $EXOSPHERE_REPO"
+            exit 1
+          fi
+
+          sed -i "s|^exosphere_sha=.*|exosphere_sha=\"${EXOSPHERE_REF}\" # MORPHOCLOUD_EXOSPHERE_REF (custom course image)|" ./cloud-config
+          if ! grep -q "^exosphere_sha=\"${EXOSPHERE_REF}\"" ./cloud-config; then
+            echo "::error ::Failed to apply MORPHOCLOUD_EXOSPHERE_REF to cloud-config"
+            exit 1
+          fi
+
+          gh issue comment "$ISSUE_NUMBER" --body "🔧 Custom course image: this instance will boot \`${EXOSPHERE_REPO}\` commit \`${EXOSPHERE_REF}\` (from \`MORPHOCLOUD_EXOSPHERE_REF\`)."
+          echo "Applied custom exosphere ref $EXOSPHERE_REF"
+        env:
+          EXOSPHERE_REF: ${{ vars.MORPHOCLOUD_EXOSPHERE_REF || '' }}
+          EXOSPHERE_REPO: MorphoCloud/exosphere
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
 
       - name: Create instance (acquire)
         id: provision
