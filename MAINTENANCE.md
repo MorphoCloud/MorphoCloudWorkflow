@@ -107,6 +107,10 @@ echo $exosphere_branch
 
 **Step 2**: Update `exosphere` in `MorphoCloudWorkflow`
 
+> `main` is a protected branch (required CI + no direct pushes, admins included
+> — since 2026-06-10), so the bump lands via a pull request. The `--branch` flag
+> does the branching for you.
+
 ```bash
 cd $PROJECTS_DIR
 
@@ -115,11 +119,14 @@ git clone https://github.com/MorphoCloud/exosphere -b $exosphere_branch
 
 cd MorphoCloudWorkflow
 
-# Update exosphere version in cloud-config and commit
-pipx run nox -s bump-exosphere -- $PROJECTS_DIR/exosphere --commit
+# Update exosphere version in cloud-config and commit on a new
+# update-to-exosphere-<sha> branch
+pipx run nox -s bump-exosphere -- $PROJECTS_DIR/exosphere --commit --branch
 
-# Push updates to the MorphoCloudWorkflow repository
-git push origin main
+# Open the PR; merge it once the "Format" check is green
+git push -u origin HEAD
+gh pr create --fill
+gh pr merge --squash --auto
 ```
 
 **Step 3:** Vendor changes into the `Instances` target repository
@@ -200,13 +207,15 @@ target repository.
 ```bash
 cd $PROJECTS_DIR/MorphoCloudWorkflow
 
-# Update exosphere version in cloud-config and commit
-pipx run nox -s bump-exosphere -- $PROJECTS_DIR/exosphere --commit
+# Update exosphere version in cloud-config and commit on a new branch
+# (main is protected — see "Vendoring exosphere" Step 2)
+pipx run nox -s bump-exosphere -- $PROJECTS_DIR/exosphere --commit --branch
+git push -u origin HEAD
+gh pr create --fill
+gh pr merge --squash --auto
 
-# Push updates to the MorphoCloudWorkflow repository
-git push origin main
-
-# Vendor scripts
+# After the PR merges: vendor scripts from updated main
+git switch main && git pull
 pipx run nox -s vendorize -- $PROJECTS_DIR/Instances/ --commit
 
 # Publish updated target repository
