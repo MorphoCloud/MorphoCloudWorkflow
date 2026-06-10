@@ -98,7 +98,7 @@ runs:
 
     - name: comment (maximum wait time exceeded)
       if: ${{ steps.instance_poll.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -186,7 +186,7 @@ runs:
 
     - name: comment (failed to rename MyData)
       if: ${{ steps.rename_mydata.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -230,7 +230,7 @@ runs:
 
     - name: comment (failed to attach volume)
       if: ${{ steps.attach_volume.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -281,7 +281,7 @@ runs:
 
     - name: comment (failed to copy installed files from MyData-tmp to MyData)
       if: ${{ steps.copy_installed_files.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -364,7 +364,7 @@ runs:
 
     - name: comment (failed to relocate home directory to persistent volume)
       if: ${{ steps.relocate_home_directory.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -389,7 +389,7 @@ runs:
 
     - name: comment (failed to create /home/exouser/.Renviron)
       if: ${{ steps.create_renviron_file.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -446,7 +446,7 @@ runs:
 
     - name: comment (failed to reboot instance)
       if: ${{ steps.reboot_instance.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -474,7 +474,7 @@ runs:
 
     - name: comment (failed to set instance properties)
       if: ${{ steps.set_instance_properties.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -497,7 +497,7 @@ runs:
       if:
         ${{ steps.update-request-status-label.outcome == 'failure' && failure()
         }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |

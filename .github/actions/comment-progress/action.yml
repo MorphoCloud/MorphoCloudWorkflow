@@ -54,7 +54,7 @@ runs:
 
     - name: Render template
       id: template
-      uses: chuhlomin/render-template@v1
+      uses: chuhlomin/render-template@a7c644e341797d050d1cb24332d83791b9a46dae # v1
       with:
         template: .github/instance-creation-progress-template.md
         vars: |
@@ -81,7 +81,7 @@ runs:
 
     - name: comment (progress)
       id: couc
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         comment-id: ${{ inputs.comment-id }}
         issue-number: ${{ inputs.issue-number }}

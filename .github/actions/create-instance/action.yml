@@ -101,7 +101,7 @@ runs:
 
     - name: comment (Instance already created)
       if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -128,7 +128,7 @@ runs:
 
     - name: comment (floating IP creation failed)
       if: ${{ steps.ip_create.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -166,7 +166,7 @@ runs:
 
     - name: comment (volume already exists)
       if: ${{ fromJSON(steps.check_volume.outputs.exists) }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -189,7 +189,7 @@ runs:
 
     - name: comment (failed to create volume)
       if: ${{ steps.create_volume.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -339,7 +339,7 @@ runs:
 
     - name: comment (no capacity available)
       if: ${{ steps.check_capacity_error.outputs.capacity_error == 'true' }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -400,7 +400,7 @@ runs:
         steps.check_capacity_error.outputs.capacity_error != 'true') &&
         failure() && steps.check_capacity_error.outputs.capacity_error != 'true'
         }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -478,7 +478,7 @@ runs:
 
     - name: comment (failed to associate IP with instance)
       if: ${{ steps.associated_ip.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v5.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |

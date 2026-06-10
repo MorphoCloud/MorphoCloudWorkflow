@@ -43,7 +43,7 @@ runs:
       if:
         ${{ ! fromJSON(inputs.skip_approval_check) && !
         fromJSON(steps.check_approval.outputs.is_approved) }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -78,7 +78,7 @@ runs:
 
     - name: comment (volume does not exist)
       if: ${{ steps.check_volume.outputs.exists == 'false' }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -176,7 +176,7 @@ runs:
 
     - name: comment (failed to detach volume)
       if: ${{ steps.detach_volume.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -213,7 +213,7 @@ runs:
 
     - name: comment (failed to delete volume)
       if: ${{ steps.delete_volume.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -225,7 +225,7 @@ runs:
 
     - name: command results comment (success)
       if: ${{ steps.check_volume.outputs.exists == 'true' }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |

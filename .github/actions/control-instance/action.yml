@@ -106,7 +106,7 @@ runs:
 
     - name: command results comment (Instance management not approved)
       if: ${{ ! fromJSON(steps.check_approval.outputs.is_approved) }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -132,7 +132,7 @@ runs:
 
     - name: command results comment (Instance does not exist)
       if: ${{ steps.check_instance.outputs.exists == 'false' }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -162,7 +162,7 @@ runs:
 
     - name: comment (server action already in progress)
       if: ${{ steps.check_task_state.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -251,7 +251,7 @@ runs:
 
     - name: comment (failed to check instance IP)
       if: ${{ steps.check_instance_has_ip.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -316,7 +316,7 @@ runs:
 
     - name: comment (failed to retrieve or create floating IP)
       if: ${{ steps.ip_create.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -380,7 +380,7 @@ runs:
 
     - name: comment (failed to associate floating IP with unshelved instance)
       if: ${{ steps.associate_ip.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -406,7 +406,7 @@ runs:
 
     - name: command results comment (failure)
       if: ${{ steps.execute_command.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -489,7 +489,7 @@ runs:
       if:
         ${{ steps.instance_poll.outcome == 'failure' && failure() &&
         steps.instance_poll.outputs.capacity_error != 'true' }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -528,7 +528,7 @@ runs:
 
     - name: comment (no capacity available)
       if: ${{ steps.instance_poll.outputs.capacity_error == 'true' }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -580,7 +580,7 @@ runs:
 
     - name: comment (failed to disassociate floating IP from unshelved instance)
       if: ${{ steps.disassociate_ip.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -613,7 +613,7 @@ runs:
 
     - name: comment (failed to set instance properties)
       if: ${{ steps.set_instance_properties.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -662,7 +662,7 @@ runs:
       if:
         ${{ (steps.send_email_individual.outcome == 'failure' ||
         steps.send_email_course.outcome == 'failure') && failure() }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
@@ -674,7 +674,7 @@ runs:
 
     - name: command results comment (success)
       if: ${{ steps.check_instance.outputs.exists == 'true' && success() }}
-      uses: peter-evans/create-or-update-comment@v4.0.0
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |

@@ -10,9 +10,14 @@ permissions:
 jobs:
   notify-on-mention:
     runs-on: ubuntu-latest
+    # Author-association gate: every MorphoCloud user is an org member, so
+    # this keeps the alert working for real users while stopping arbitrary
+    # accounts from pushing attacker-authored content into admin inboxes
+    # from the trusted sender (security review L1).
     if: >-
       contains(github.event.comment.body, '@MorphoCloud/morphocloud-admins') &&
-      github.event.comment.user.type != 'Bot'
+      github.event.comment.user.type != 'Bot' && contains(fromJSON('["OWNER",
+      "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
     steps:
       - name: Send mail (admin team mentioned)
         uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17

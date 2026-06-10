@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/create-github-app-token@v3.2.0
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: admin-token
         with:
           app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
@@ -29,7 +29,7 @@ jobs:
           team_slug: morphocloud-admins
       - name: email command
         id: email_command
-        uses: github/command@v2.0.3
+        uses: github/command@3442f3fa1efe01bdb024b157083c337902d17372 # v2.0.3
         with:
           command: "/email"
           reaction: "rocket"
@@ -61,7 +61,7 @@ jobs:
         if:
           ${{ steps.email_command.outputs.continue == 'true' &&
           steps.check_instance.outputs.exists == 'false' }}
-        uses: peter-evans/create-or-update-comment@v5.0.0
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
@@ -164,7 +164,7 @@ jobs:
           ${{ (steps.send_email.outcome == 'failure' ||
           steps.send_workshop_email.outcome == 'failure' ||
           steps.send_course_email.outcome == 'failure') && failure() }}
-        uses: peter-evans/create-or-update-comment@v5.0.0
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
@@ -179,7 +179,7 @@ jobs:
           ${{ (steps.send_email.outcome == 'success' ||
           steps.send_workshop_email.outcome == 'success' ||
           steps.send_course_email.outcome == 'success') && success() }}
-        uses: peter-evans/create-or-update-comment@v5.0.0
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
