@@ -23,6 +23,63 @@ scripts, and modifying the version of Slicer installed on instances.
 > re-running `vendorize-course` **into that repo**. See SYSTEM-OVERVIEW.md →
 > Workflows.
 
+## Changing MorphoCloudWorkflow (PR flow)
+
+`main` is **protected** (since 2026-06-10): every change — including the
+maintainers' — lands via a pull request with the **Format** check green. Direct
+pushes are rejected (`GH006`), force-pushes and deletions are blocked, history
+is linear, and the rules apply to admins too. Auto-merge is enabled, so the
+standard loop is:
+
+```bash
+git switch -c <branch>
+# ...edit, commit (pre-commit runs locally)...
+git push -u origin HEAD
+gh pr create --fill
+gh pr merge --squash --auto   # merges itself when Format passes
+```
+
+The vendorize sessions are unaffected — they push to the _target_ repos
+(`Instances`, `Test-Instances`, `MorphoCloudCourseTemplate`, `MC-*`), which are
+private and unprotected.
+
+### Claude PR reviewer
+
+Two workflows (added 2026-06-09, auth = `CLAUDE_CODE_OAUTH_TOKEN` repo secret
+from the maintainer's Claude subscription — no per-token bill; Actions minutes
+are free on this public repo):
+
+- **`claude-code-review.yml`** — automatically reviews every human-authored PR
+  on open and when a draft is marked ready-for-review (Dependabot/bot PRs
+  skipped). The prompt targets this repo's real bug classes: Actions
+  expressions, shell quoting, self-hosted-runner assumptions, vendorize blast
+  radius.
+- **`claude.yml`** — on-demand: comment `@claude <ask>` on any PR/issue. Gated
+  to repo owners / org members / collaborators (public repo).
+
+Notes:
+
+- Both workflows are **excluded from vendorize** (see `noxfile.py`) — the secret
+  exists only here, and downstream repos take direct pushes. Keep the exclusions
+  when editing the session lists.
+- On a PR that **adds or edits** a claude workflow file, the auto-review job
+  exits early with "Workflow validation failed … must have identical content to
+  the default branch". That is a **security feature** (a PR cannot modify the
+  review workflow and run it with the secret), not breakage — it arms once the
+  file is on `main`.
+
+### Stuck Dependabot PRs
+
+Branch protection requires PR branches to be **up to date with `main`**, and
+Dependabot branches don't update themselves — so after `main` moves, an older
+Dependabot PR shows "out of date" with a stale check and auto-merge appears
+unavailable. The recipe:
+
+1. Optionally comment `@claude review` first (worth it on major bumps).
+2. Comment **`@dependabot rebase`** — Dependabot recreates the branch on current
+   `main` and CI re-runs fresh.
+3. `gh pr merge <n> --squash --auto` — merges when Format passes.
+
 ## Vendoring `MorphoCloudWorkflow`
 
 Once an ACCESS allocation and associated target GitHub (runner and repository)
