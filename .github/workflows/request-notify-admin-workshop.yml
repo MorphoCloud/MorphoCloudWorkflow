@@ -38,7 +38,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
 
       - name: Send mail (workshop approval requested)
-        uses: dawidd6/action-send-mail@6d98ae34d733f9a723a9e04e94f2f24ba05e1402 # v6
+        uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
         with:
           server_address: webhost.dynadot.com
           server_port: 587
