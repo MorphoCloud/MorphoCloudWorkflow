@@ -201,7 +201,7 @@ jobs:
         if:
           ${{ steps.skip_check.outputs.is_course != 'true' &&
           steps.check_renewal.outputs.renewal_available == 'true' }}
-        uses: dawidd6/action-send-mail@62a2d05b79935ad4fb90ce9079928099579c14ac # v9
+        uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
         with:
           server_address: webhost.dynadot.com
           server_port: 587
@@ -219,7 +219,7 @@ jobs:
         if:
           ${{ steps.skip_check.outputs.is_course != 'true' &&
           steps.check_renewal.outputs.renewal_available == 'false' }}
-        uses: dawidd6/action-send-mail@62a2d05b79935ad4fb90ce9079928099579c14ac # v9
+        uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
         with:
           server_address: webhost.dynadot.com
           server_port: 587
