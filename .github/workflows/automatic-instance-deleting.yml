@@ -83,6 +83,11 @@ jobs:
               if [[ "$seconds_until_expiration" -le 0 ]]; then
                 echo "Instance ${instance_name} has expired. Deleting..."
 
+                # Expiration notice FIRST: the user reads why before the
+                # mechanical deletion comments that follow.
+                gh issue comment "$issue_number" \
+                  --body "Instance **${instance_name}** has expired. The instance and its associated volume are being deleted." || true
+
                 # Delete volume first inline, then instance (no grace period)
                 # Volume name uses optional suffix from VOLUME_NAME_SUFFIX variable
                 volume_suffix=${SUFFIX:+-${SUFFIX}}
@@ -151,8 +156,7 @@ jobs:
                 # and potentially the parent workshop issue
                 if (( $(echo "$expiration_days <= 7" | bc -l) )); then
                   echo "Closing workshop instance issue #${issue_number}..."
-                  gh issue close "$issue_number" \
-                    --comment "Instance **${instance_name}** and its associated volume have been automatically deleted upon expiration. Closing issue."
+                  gh issue close "$issue_number"
 
                   # Find the parent workshop issue by scanning open workshop issues
                   parent_issue_number=""
