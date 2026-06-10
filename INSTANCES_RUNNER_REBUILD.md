@@ -54,6 +54,20 @@ scp scripts/provision-instances-runner-host.sh exouser@<RUNNER>:~/
 ssh exouser@<RUNNER> 'bash ~/provision-instances-runner-host.sh'
 ```
 
+The script also **hardens the host** (security review 2026-06: a runner cloned
+from the desktop image inherits services/posture it must not keep):
+
+- **removes Guacamole** (`/opt/guacamole` compose) — required on user instances,
+  but on a runner it is an internet-facing remote-desktop gateway on port 49528
+  that even bypasses ufw (Docker DNAT);
+- **key-only SSH** (`PasswordAuthentication no`, `PermitRootLogin no`, via
+  `/etc/ssh/sshd_config.d/10-morphocloud-hardening.conf` — the `10-` prefix
+  matters: sshd is first-match, so it must sort before `50-cloud-init.conf`);
+- **ufw** enabled, default-deny incoming, allow OpenSSH only.
+
+Verify your key-based SSH still works in a **second session** before closing the
+one that ran the script.
+
 Then place `~/.config/openstack/clouds.yaml` (Exosphere → Credentials →
 clouds.yaml). The allocation name (e.g. `BIO180006_IU`) is the
 `MORPHOCLOUD_OS_CLOUD` repo variable.

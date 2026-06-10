@@ -30,6 +30,26 @@ echo ">> OpenStack venv (~/venv)"
 [[ -d ~/venv ]] || python3 -m venv ~/venv
 ~/venv/bin/python -m pip install --quiet --upgrade pip python-openstackclient
 
+# --- Hardening (security review 2026-06). A runner cloned from the desktop
+# --- image inherits Guacamole + password SSH + no firewall; none belong on
+# --- an infrastructure host.
+
+echo ">> remove Guacamole (desktop-image leftover; internet-facing on :49528, bypasses ufw)"
+if [[ -d /opt/guacamole ]]; then
+  (cd /opt/guacamole && sudo docker compose down 2>/dev/null) || true
+fi
+
+echo ">> sshd: key-only, no root login"
+# 10- prefix is load-bearing: sshd is first-match and must beat 50-cloud-init.conf
+printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\n' \
+  | sudo tee /etc/ssh/sshd_config.d/10-morphocloud-hardening.conf >/dev/null
+sudo sshd -t && sudo systemctl reload ssh
+echo "   (verify key-based SSH from a SECOND session before closing this one)"
+
+echo ">> ufw: default-deny incoming, allow OpenSSH"
+sudo ufw allow OpenSSH >/dev/null
+sudo ufw --force enable
+
 cat <<'NEXT'
 >> Base host done. Still required (see INSTANCES_RUNNER_REBUILD.md):
    - ~/.config/openstack/clouds.yaml  (Exosphere -> allocation -> Credentials -> clouds.yaml)
