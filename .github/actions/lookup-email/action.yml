@@ -62,8 +62,11 @@ runs:
             PAYLOAD=$(jq -n --arg a lookup --arg u "$GITHUB_USERNAME" --arg s "$GAS_SECRET" \
               '{action:$a, github_username:$u, secret:$s}')
           fi
-          RESPONSE=$(curl "${CURL_ARGS[@]}" -X POST -H "Content-Type: application/json" \
-            --data "$PAYLOAD" "$LOOKUP_URL")
+          # -d without -X POST: Apps Script answers with a 302 to
+          # googleusercontent; curl must switch to GET on the redirect
+          # (an explicit -X POST forces POST there and returns HTML).
+          RESPONSE=$(curl "${CURL_ARGS[@]}" -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "$LOOKUP_URL")
         else
           ENCODED_USERNAME=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['GITHUB_USERNAME']))")
           RESPONSE=$(curl "${CURL_ARGS[@]}" "${LOOKUP_URL}?action=lookup&github_username=${ENCODED_USERNAME}")
