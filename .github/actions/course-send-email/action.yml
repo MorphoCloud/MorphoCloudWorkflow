@@ -146,7 +146,7 @@ runs:
         if [[ $INSTANCE_METADATA_OUTCOME == "failure" ]]; then
           error_message="Failed to retrieve metadata"
         elif [[ $LOOKUP_EMAIL_OUTCOME == "failure" ]]; then
-          error_message="Failed to look up email address for course student"
+          error_message="**@${ISSUE_CREATOR}'s GitHub handle was not found in the course roster.** Ask your instructor to add your handle and email to the roster (Google Sheet), then comment \`/email\` here to receive your credentials."
         elif [[ $GUACAMOLE_OUTCOME == "failure" ]]; then
           error_message="Failed to generate connection URL"
         else
@@ -154,6 +154,7 @@ runs:
         fi
         echo "error_message=$error_message" >> $GITHUB_OUTPUT
       env:
+        ISSUE_CREATOR: ${{ inputs.issue_creator }}
         INSTANCE_METADATA_OUTCOME: ${{ steps.instance_metadata.outcome }}
         LOOKUP_EMAIL_OUTCOME: ${{ steps.lookup_email.outcome }}
         GUACAMOLE_OUTCOME: ${{ steps.guacamole.outcome }}

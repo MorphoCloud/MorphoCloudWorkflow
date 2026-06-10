@@ -3,8 +3,8 @@
 # =============================================================================
 #
 # Triggered by:
-#   - Push to students.txt on main (automatic enrollment on file update)
-#   - Manual workflow_dispatch (with usernames input or students.txt fallback)
+#   - Push to roster-handles.txt on main (automatic enrollment on file update)
+#   - Manual workflow_dispatch (with usernames input or roster-handles.txt fallback)
 #
 # What it does for each username:
 #   1. Verifies the GitHub user exists
@@ -37,13 +37,13 @@ name: Enroll Students
 on:
   push:
     branches: [main]
-    paths: [students.txt]
+    paths: [roster-handles.txt]
   workflow_dispatch:
     inputs:
       usernames:
         description:
           "Comma-separated GitHub usernames to enroll (e.g. st1,st2,st3). If
-          blank, falls back to students.txt."
+          blank, falls back to roster-handles.txt."
         required: false
         type: string
         default: ""
@@ -84,13 +84,13 @@ jobs:
             echo "::error::ENROLLMENT_WEBHOOK_SECRET repo secret is not set — the enrollment endpoint requires it."
             exit 1
           fi
-          # Build username list from input or students.txt
+          # Build username list from input or roster-handles.txt
           if [[ -n "$USERNAMES_INPUT" ]]; then
             mapfile -t USERNAMES < <(echo "$USERNAMES_INPUT" | tr ',' '\n' | tr -d ' \r' | grep -v '^$')
-          elif [[ -f students.txt ]]; then
-            mapfile -t USERNAMES < <(grep -v '^\s*#' students.txt | grep -v '^\s*$' | tr -d ' \r')
+          elif [[ -f roster-handles.txt ]]; then
+            mapfile -t USERNAMES < <(grep -v '^\s*#' roster-handles.txt | grep -v '^\s*$' | tr -d ' \r')
           else
-            echo "No usernames provided and students.txt not found — nothing to do."
+            echo "No usernames provided and roster-handles.txt not found — nothing to do."
             exit 0
           fi
 
