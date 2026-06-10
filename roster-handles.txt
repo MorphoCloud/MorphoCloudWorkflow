@@ -3,7 +3,8 @@
 # Paste the github_handle column of your course roster (Google Sheet) here —
 # the two must stay in sync; the roster supplies the matching emails.
 #
-# Add one GitHub username per line.
+# Add the GitHub username of everyone who will be using the course repo
+# (students, TAs, co-instructors) — one per line.
 # Lines starting with # and blank lines are ignored.
 # Usernames are case-insensitive.
 #
@@ -12,11 +13,11 @@
 #   - Go to Actions → Enroll Students → Run workflow (manual / dry run)
 #
 # What happens on enrollment:
-#   - If the student is already in the MorphoCloud org → added to the course team immediately
-#   - If the student is not yet in the org → a GitHub org invitation is sent;
-#     the student must accept it before they can open instance requests
+#   - If the person is already in the MorphoCloud org → added to the course team immediately
+#   - If the person is not yet in the org → a GitHub org invitation is sent;
+#     they must accept it before they can create instances
 #
-# Students already enrolled are skipped (idempotent).
+# Anyone already enrolled is skipped (idempotent).
 #
 # Example:
 #   jdoe-uw
