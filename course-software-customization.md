@@ -59,8 +59,8 @@ no longer risks silently resetting its image pin.
    no MorphoCloudWorkflow branch, no `cloud-config` edit.
 
 **Timing rule:** confirm the suite is custom-and-ready (or confirmed default)
-**before** the instructor pushes `students.txt`. Don't enroll students into an
-unconfirmed image.
+**before** the instructor pushes `roster-handles.txt`. Don't enroll students
+into an unconfirmed image.
 
 ## Validating a new custom image
 

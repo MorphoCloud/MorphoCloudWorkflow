@@ -1,4 +1,7 @@
-# students.txt — Course enrollment list for MC-* repos
+# roster-handles.txt — GitHub handles from the course roster, used for enrollment
+#
+# Paste the github_handle column of your course roster (Google Sheet) here —
+# the two must stay in sync; the roster supplies the matching emails.
 #
 # Add one GitHub username per line.
 # Lines starting with # and blank lines are ignored.
