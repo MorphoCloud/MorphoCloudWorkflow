@@ -4,13 +4,20 @@ on:
   issue_comment:
     types: [created]
 
+# Two-job split (security review M3): authorization runs first on a
+# GitHub-hosted runner; the self-hosted runner is only occupied once /email
+# is authorized. The job-level gate also ensures a comment that merely
+# mentions "/email" mid-sentence (strict prefix match fails -> continue=false)
+# can no longer fall through to the send steps.
 jobs:
-  send-email:
-    runs-on: self-hosted
+  authorize:
+    runs-on: ubuntu-latest
     if:
       ${{ !github.event.issue.pull_request &&
       contains(github.event.issue.labels.*.name, 'instance-request') && (
       contains(github.event.comment.body, '/email') ) }}
+    outputs:
+      continue: ${{ steps.email_command.outputs.continue }}
     steps:
       - uses: actions/checkout@v6
 
@@ -27,6 +34,7 @@ jobs:
           token: ${{ steps.admin-token.outputs.token }}
           org: ${{ github.repository_owner }}
           team_slug: morphocloud-admins
+
       - name: email command
         id: email_command
         uses: github/command@3442f3fa1efe01bdb024b157083c337902d17372 # v2.0.3
@@ -40,6 +48,11 @@ jobs:
             vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
             }}"
 
+  send-email:
+    runs-on: self-hosted
+    needs: authorize
+    if: ${{ needs.authorize.outputs.continue == 'true' }}
+    steps:
       - uses: actions/checkout@v6
 
       - name: Define instance name
@@ -51,16 +64,13 @@ jobs:
 
       - name: Check instance exists
         id: check_instance
-        if: ${{ steps.email_command.outputs.continue == 'true' }}
         uses: ./.github/actions/check-instance-exists
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           instance_name: ${{ steps.define.outputs.instance_name }}
 
       - name: command results comment (Instance does not exist)
-        if:
-          ${{ steps.email_command.outputs.continue == 'true' &&
-          steps.check_instance.outputs.exists == 'false' }}
+        if: ${{ steps.check_instance.outputs.exists == 'false' }}
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}

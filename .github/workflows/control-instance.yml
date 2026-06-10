@@ -10,15 +10,22 @@ permissions:
   checks: read
   contents: read
 
+# Two-job split (security review M3): authorization runs first on a
+# GitHub-hosted runner; nothing executes on the self-hosted runner — no
+# checkout, no privileged steps — until the command is authorized. This keeps
+# unauthorized commenters from occupying the production runners.
 jobs:
-  control:
-    runs-on: self-hosted
+  authorize:
+    runs-on: ubuntu-latest
     if:
       ${{ !github.event.issue.pull_request &&
       contains(github.event.issue.labels.*.name, 'instance-request') && (
       contains(github.event.comment.body, '/unshelve') ||
       contains(github.event.comment.body, '/shelve') ||
       contains(github.event.comment.body, '/delete_instance') ) }}
+    outputs:
+      continue: ${{ steps.command.outputs.continue }}
+      command_name: ${{ steps.command.outputs.command_name }}
     steps:
       - uses: actions/checkout@v6
 
@@ -85,32 +92,33 @@ jobs:
           if [[ "$UNSHELVE_COMMAND_CONTINUE" == "true" ]]; then
             continue="$UNSHELVE_COMMAND_CONTINUE"
             command_name="unshelve"
-            comment_id="${{ steps.unshelve_command.outputs.comment_id }}"
           elif [[ "$SHELVE_COMMAND_CONTINUE" == "true" ]]; then
             continue="$SHELVE_COMMAND_CONTINUE"
             command_name="shelve"
-            comment_id="${{ steps.shelve_command.outputs.comment_id }}"
           elif [[ "$DELETE_COMMAND_CONTINUE" == "true" ]]; then
             continue="$DELETE_COMMAND_CONTINUE"
             command_name="delete"
-            comment_id="${{ steps.delete_command.outputs.comment_id }}"
           else
             continue="false"
             command_name=""
-            comment_id=""
           fi
           echo "continue=$continue" >> $GITHUB_OUTPUT
           echo "command_name=$command_name" >> $GITHUB_OUTPUT
-          echo "comment_id=$comment_id" >> $GITHUB_OUTPUT
         env:
           UNSHELVE_COMMAND_CONTINUE:
             ${{ steps.unshelve_command.outputs.continue }}
           SHELVE_COMMAND_CONTINUE: ${{ steps.shelve_command.outputs.continue }}
           DELETE_COMMAND_CONTINUE: ${{ steps.delete_command.outputs.continue }}
 
+  control:
+    runs-on: self-hosted
+    needs: authorize
+    if: ${{ needs.authorize.outputs.continue == 'true' }}
+    steps:
+      - uses: actions/checkout@v6
+
       - name: Check JS2 status
         id: js2_status
-        if: ${{ steps.command.outputs.continue == 'true' }}
         uses: ./.github/actions/check-js2-status
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -118,12 +126,11 @@ jobs:
 
       - name: Control instance
         id: control_instance
-        if: ${{ steps.command.outputs.continue == 'true' }}
         uses: ./.github/actions/control-instance
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           issue_number: ${{ github.event.issue.number }}
-          command_name: ${{ steps.command.outputs.command_name }}
+          command_name: ${{ needs.authorize.outputs.command_name }}
           instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
           token: ${{ secrets.GITHUB_TOKEN }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}

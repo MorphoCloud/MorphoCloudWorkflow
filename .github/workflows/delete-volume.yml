@@ -4,13 +4,18 @@ on:
   issue_comment:
     types: [created]
 
+# Two-job split (security review M3): authorization runs first on a
+# GitHub-hosted runner; the self-hosted runner is only occupied once
+# /delete_volume is authorized.
 jobs:
-  delete_volume:
-    runs-on: self-hosted
+  authorize:
+    runs-on: ubuntu-latest
     if:
       ${{ !github.event.issue.pull_request &&
       contains(github.event.issue.labels.*.name, 'instance-request') && (
       contains(github.event.comment.body, '/delete_volume') ) }}
+    outputs:
+      continue: ${{ steps.delete_volume_command.outputs.continue }}
     steps:
       - uses: actions/checkout@v6
 
@@ -27,6 +32,7 @@ jobs:
           token: ${{ steps.admin-token.outputs.token }}
           org: ${{ github.repository_owner }}
           team_slug: morphocloud-admins
+
       - name: delete_volume command
         id: delete_volume_command
         uses: github/command@3442f3fa1efe01bdb024b157083c337902d17372 # v2.0.3
@@ -40,11 +46,15 @@ jobs:
             vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
             }}"
 
+  delete_volume:
+    runs-on: self-hosted
+    needs: authorize
+    if: ${{ needs.authorize.outputs.continue == 'true' }}
+    steps:
       - uses: actions/checkout@v6
 
       - name: Delete volume
         id: delete_volume
-        if: ${{ steps.delete_volume_command.outputs.continue == 'true' }}
         uses: ./.github/actions/delete-volume
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}

@@ -4,13 +4,23 @@ on:
   issue_comment:
     types: [created]
 
+# Two-job split (security review M3): authorization runs first on a
+# GitHub-hosted runner; the acquire runner is only occupied — and nothing is
+# checked out or provisioned — once /create is authorized. The job-level gate
+# on the execute job also closes a latent hole: a comment that merely
+# mentioned "/create" mid-sentence used to fall through to provisioning
+# because github/command's strict prefix match returned continue=false
+# without failing the job.
 jobs:
-  create:
-    runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
+  authorize:
+    runs-on: ubuntu-latest
     if:
       ${{ !github.event.issue.pull_request &&
       contains(github.event.issue.labels.*.name, 'request-type:instance') && (
       contains(github.event.comment.body, '/create') ) }}
+    outputs:
+      continue: ${{ steps.create_command.outputs.continue }}
+      admins: ${{ steps.admins.outputs.members }}
     steps:
       - uses: actions/checkout@v6
 
@@ -27,6 +37,7 @@ jobs:
           token: ${{ steps.admin-token.outputs.token }}
           org: ${{ github.repository_owner }}
           team_slug: morphocloud-admins
+
       - name: create command
         id: create_command
         uses: github/command@3442f3fa1efe01bdb024b157083c337902d17372 # v2.0.3
@@ -40,6 +51,11 @@ jobs:
             github.event.issue.user.login }},${{
             join(github.event.issue.assignees.*.login, ',') }}"
 
+  create:
+    runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
+    needs: authorize
+    if: ${{ needs.authorize.outputs.continue == 'true' }}
+    steps:
       - uses: actions/checkout@v6
 
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -113,7 +129,7 @@ jobs:
             'request-creator:workshop') }}
           ASSIGNEES: ${{ join(github.event.issue.assignees.*.login, ',') }}
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
-          ADMINS: ${{ steps.admins.outputs.members }}
+          ADMINS: ${{ needs.authorize.outputs.admins }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -220,7 +236,7 @@ jobs:
             ${{ contains(github.event.issue.labels.*.name,
             'request-creator:workshop') }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ADMINS: ${{ steps.admins.outputs.members }}
+          ADMINS: ${{ needs.authorize.outputs.admins }}
           MAX_PER_USER: ${{ vars.MORPHOCLOUD_MAX_INSTANCES_PER_USER }}
           MAX_TOTAL: ${{ vars.MORPHOCLOUD_MAX_TOTAL_INSTANCES }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
