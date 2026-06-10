@@ -37,6 +37,12 @@ inputs:
       at the morphocloud-intake app)"
     required: false
     default: ""
+  email_lookup_secret:
+    description:
+      "Shared secret for the Apps Script web app (ENROLLMENT_WEBHOOK_SECRET) —
+      required when the course roster lookup is used"
+    required: false
+    default: ""
   issue_creator:
     description:
       "GitHub username of the issue creator (used for email lookup on unshelve)"
@@ -644,6 +650,7 @@ runs:
         os_cloud: ${{ inputs.os_cloud }}
         token: ${{ inputs.token }}
         email_lookup_url: ${{ inputs.email_lookup_url }}
+        email_lookup_secret: ${{ inputs.email_lookup_secret }}
         issue_creator: ${{ inputs.issue_creator }}
         roster_sheet_id: ${{ inputs.roster_sheet_id }}
         mail_server_username: ${{ inputs.mail_server_username }}

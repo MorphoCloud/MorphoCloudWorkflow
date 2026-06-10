@@ -28,6 +28,12 @@ inputs:
   email_lookup_url:
     description: "URL of the Apps Script web app for email lookup"
     required: true
+  email_lookup_secret:
+    description:
+      "Shared secret for the Apps Script web app (ENROLLMENT_WEBHOOK_SECRET) —
+      required by its lookup endpoints"
+    required: false
+    default: ""
   roster_sheet_id:
     description:
       "Google Sheet ID of the instructor-owned course roster shared with
@@ -75,6 +81,7 @@ runs:
         lookup_url: ${{ inputs.email_lookup_url }}
         github_username: ${{ inputs.issue_creator }}
         roster_sheet_id: ${{ inputs.roster_sheet_id }}
+        gas_secret: ${{ inputs.email_lookup_secret }}
 
     - name: Generate Guacamole Connection URL
       id: guacamole

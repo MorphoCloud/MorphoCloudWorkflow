@@ -68,5 +68,6 @@ jobs:
           instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
           token: ${{ secrets.GITHUB_TOKEN }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
+          email_lookup_secret: ${{ secrets.ENROLLMENT_WEBHOOK_SECRET }}
           mail_server_username: ${{secrets.MAIL_USERNAME}}
           mail_server_password: ${{secrets.MAIL_PASSWORD}}

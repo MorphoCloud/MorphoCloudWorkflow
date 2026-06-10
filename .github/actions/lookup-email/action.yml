@@ -22,6 +22,15 @@ inputs:
       points at the morphocloud-intake app; ignored by Apps Script endpoints."
     required: false
     default: ""
+  gas_secret:
+    description:
+      "Shared secret for the Apps Script web app (ENROLLMENT_WEBHOOK_SECRET).
+      Required when lookup_url is the course-intake script.google.com URL — its
+      lookup actions reject unauthenticated calls. Sent as a query parameter
+      because Apps Script cannot read request headers; only ever appended to
+      script.google.com URLs."
+    required: false
+    default: ""
 outputs:
   email:
     description: "The verified email address for the user"
@@ -48,11 +57,18 @@ runs:
           CURL_ARGS+=(-H "X-Api-Key: $API_KEY")
         fi
 
+        # Apps Script cannot read headers, so its shared secret travels as a
+        # query parameter — but never to non-Apps-Script endpoints.
+        SECRET_PARAM=""
+        if [[ -n "$GAS_SECRET" && "$LOOKUP_URL" == *script.google.com* ]]; then
+          SECRET_PARAM="&secret=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['GAS_SECRET']))")"
+        fi
+
         if [[ -n "$ROSTER_SHEET_ID" ]]; then
           ENCODED_SHEET_ID=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['ROSTER_SHEET_ID']))")
-          RESPONSE=$(curl "${CURL_ARGS[@]}" "${LOOKUP_URL}?action=lookup_course_roster&sheet_id=${ENCODED_SHEET_ID}&github_username=${ENCODED_USERNAME}")
+          RESPONSE=$(curl "${CURL_ARGS[@]}" "${LOOKUP_URL}?action=lookup_course_roster&sheet_id=${ENCODED_SHEET_ID}&github_username=${ENCODED_USERNAME}${SECRET_PARAM}")
         else
-          RESPONSE=$(curl "${CURL_ARGS[@]}" "${LOOKUP_URL}?action=lookup&github_username=${ENCODED_USERNAME}")
+          RESPONSE=$(curl "${CURL_ARGS[@]}" "${LOOKUP_URL}?action=lookup&github_username=${ENCODED_USERNAME}${SECRET_PARAM}")
         fi
 
         EMAIL=$(echo "$RESPONSE" | jq -r '.email // empty')
@@ -71,3 +87,4 @@ runs:
         GITHUB_USERNAME: ${{ inputs.github_username }}
         ROSTER_SHEET_ID: ${{ inputs.roster_sheet_id }}
         API_KEY: ${{ inputs.api_key }}
+        GAS_SECRET: ${{ inputs.gas_secret }}

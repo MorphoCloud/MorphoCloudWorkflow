@@ -214,6 +214,7 @@ jobs:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           token: ${{ secrets.GITHUB_TOKEN }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
+          email_lookup_secret: ${{ secrets.ENROLLMENT_WEBHOOK_SECRET }}
           issue_creator: ${{ github.event.issue.user.login }}
           mail_server_username: ${{ secrets.MAIL_USERNAME }}
           mail_server_password: ${{ secrets.MAIL_PASSWORD }}
