@@ -4,6 +4,11 @@ on:
   issue_comment:
     types: [created]
 
+permissions:
+  issues: write
+  checks: read
+  contents: read
+
 # Two-job split (security review M3): authorization runs first on a
 # GitHub-hosted runner; the self-hosted runner is only occupied once /email
 # is authorized. The job-level gate also ensures a comment that merely
