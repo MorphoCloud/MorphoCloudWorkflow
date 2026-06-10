@@ -12,10 +12,11 @@ inputs:
   github_username:
     description: "GitHub username to look up"
     required: true
-  roster_sheet_id:
+  course_team_slug:
     description:
-      "Google Sheet ID of the instructor-owned course roster (when set, uses
-      lookup_course_roster instead of lookup)"
+      "Course team slug (mc-…). When set and lookup_url is an Apps Script
+      endpoint, uses lookup_course_roster — the roster sheet is resolved
+      server-side from the approved course, never named by the caller."
   api_key:
     description:
       "Optional API key sent as X-Api-Key header. Required when lookup_url
@@ -26,8 +27,8 @@ inputs:
     description:
       "Shared secret for the Apps Script web app (ENROLLMENT_WEBHOOK_SECRET).
       Required when lookup_url is the course-intake script.google.com URL — its
-      lookup actions reject unauthenticated calls. Sent as a query parameter
-      because Apps Script cannot read request headers; only ever appended to
+      lookup actions reject unauthenticated calls. Sent in a POST JSON body
+      (Apps Script cannot read request headers); only ever sent to
       script.google.com URLs."
     required: false
     default: ""
@@ -44,31 +45,28 @@ runs:
       run: |
         echo "Looking up email for GitHub user '$GITHUB_USERNAME'"
 
-        ENCODED_USERNAME=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['GITHUB_USERNAME']))")
-
-        # Extract sheet ID if a full Google Sheets URL was pasted instead of just the ID
-        if [[ "$ROSTER_SHEET_ID" =~ /spreadsheets/d/([a-zA-Z0-9_-]+) ]]; then
-          ROSTER_SHEET_ID="${BASH_REMATCH[1]}"
-          echo "Extracted sheet ID from URL: ${ROSTER_SHEET_ID}"
-        fi
-
         CURL_ARGS=(-sL --retry 3 --retry-delay 5 --retry-all-errors)
         if [[ -n "$API_KEY" ]]; then
           CURL_ARGS+=(-H "X-Api-Key: $API_KEY")
         fi
 
-        # Apps Script cannot read headers, so its shared secret travels as a
-        # query parameter — but never to non-Apps-Script endpoints.
-        SECRET_PARAM=""
-        if [[ -n "$GAS_SECRET" && "$LOOKUP_URL" == *script.google.com* ]]; then
-          SECRET_PARAM="&secret=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['GAS_SECRET']))")"
-        fi
-
-        if [[ -n "$ROSTER_SHEET_ID" ]]; then
-          ENCODED_SHEET_ID=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['ROSTER_SHEET_ID']))")
-          RESPONSE=$(curl "${CURL_ARGS[@]}" "${LOOKUP_URL}?action=lookup_course_roster&sheet_id=${ENCODED_SHEET_ID}&github_username=${ENCODED_USERNAME}${SECRET_PARAM}")
+        if [[ "$LOOKUP_URL" == *script.google.com* ]]; then
+          # Apps Script: privileged lookups are POST-only; the shared secret
+          # travels in the JSON body, never the URL. The roster lookup is
+          # keyed by team slug — the sheet is resolved server-side.
+          if [[ -n "$COURSE_TEAM_SLUG" ]]; then
+            PAYLOAD=$(jq -n --arg a lookup_course_roster --arg t "$COURSE_TEAM_SLUG" \
+              --arg u "$GITHUB_USERNAME" --arg s "$GAS_SECRET" \
+              '{action:$a, team_slug:$t, github_username:$u, secret:$s}')
+          else
+            PAYLOAD=$(jq -n --arg a lookup --arg u "$GITHUB_USERNAME" --arg s "$GAS_SECRET" \
+              '{action:$a, github_username:$u, secret:$s}')
+          fi
+          RESPONSE=$(curl "${CURL_ARGS[@]}" -X POST -H "Content-Type: application/json" \
+            --data "$PAYLOAD" "$LOOKUP_URL")
         else
-          RESPONSE=$(curl "${CURL_ARGS[@]}" "${LOOKUP_URL}?action=lookup&github_username=${ENCODED_USERNAME}${SECRET_PARAM}")
+          ENCODED_USERNAME=$(python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['GITHUB_USERNAME']))")
+          RESPONSE=$(curl "${CURL_ARGS[@]}" "${LOOKUP_URL}?action=lookup&github_username=${ENCODED_USERNAME}")
         fi
 
         EMAIL=$(echo "$RESPONSE" | jq -r '.email // empty')
@@ -85,6 +83,6 @@ runs:
       env:
         LOOKUP_URL: ${{ inputs.lookup_url }}
         GITHUB_USERNAME: ${{ inputs.github_username }}
-        ROSTER_SHEET_ID: ${{ inputs.roster_sheet_id }}
+        COURSE_TEAM_SLUG: ${{ inputs.course_team_slug }}
         API_KEY: ${{ inputs.api_key }}
         GAS_SECRET: ${{ inputs.gas_secret }}

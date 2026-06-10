@@ -353,7 +353,7 @@ jobs:
           mail_server_password: ${{ secrets.MAIL_PASSWORD }}
           instance_name: ${{ steps.provision.outputs.instance_name }}
           instance_issue_number: ${{ github.event.issue.number }}
-          roster_sheet_id: ${{ vars.MORPHOCLOUD_STUDENT_ROSTER_SHEET_ID }}
+          course_team_slug: ${{ vars.COURSE_TEAM_SLUG }}
 
       - name: comment (failed to send email)
         if: ${{ steps.send_email.outcome == 'failure' && failure() }}
