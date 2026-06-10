@@ -233,6 +233,11 @@ def vendorize(session: nox.Session) -> None:
         ],
         [
             ".github/dependabot.yml",
+            # Claude PR reviewer — MWF-only (needs the CLAUDE_CODE_OAUTH_TOKEN
+            # secret, which only exists here; downstream repos take direct
+            # pushes, not PRs)
+            ".github/workflows/claude.yml",
+            ".github/workflows/claude-code-review.yml",
             # Course-only issue template — students open issues in MC-* repos, not here
             ".github/ISSUE_TEMPLATE/02-course-instance-request.yml",
             # Course-only workflows — not needed in the individual/workshop repo
@@ -260,6 +265,9 @@ def vendorize_course(session: nox.Session) -> None:
         ],
         [
             ".github/dependabot.yml",
+            # Claude PR reviewer — MWF-only (see vendorize session note)
+            ".github/workflows/claude.yml",
+            ".github/workflows/claude-code-review.yml",
             # Individual/workshop issue templates — not relevant in course repos
             ".github/ISSUE_TEMPLATE/01-individual-instance-request.yml",
             ".github/ISSUE_TEMPLATE/03-workshop-request.yml",

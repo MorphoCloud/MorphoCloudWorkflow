@@ -1,0 +1,67 @@
+name: Claude Code Review
+
+# Automatic review of every human-authored PR. Runs on the repo's free
+# public-repo Actions minutes; Claude usage draws on the maintainer's
+# subscription via CLAUDE_CODE_OAUTH_TOKEN (not a per-token API bill).
+# Re-review after pushing fixes: comment "@claude review" (see claude.yml).
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+
+jobs:
+  review:
+    # Bot PRs (Dependabot version bumps) are skipped — reviewing them is
+    # noise; CI and the changelog cover those.
+    if: github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Claude review
+        uses: anthropics/claude-code-action@b2532c6eeaeae7a645f37943ed5a7e51870d1d90 # v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Review this pull request. This repo is the SOURCE OF TRUTH for
+            MorphoCloud's GitHub Actions workflows and composite actions —
+            everything here is vendorized (copied verbatim) into the
+            production `Instances` repo and the course repos, so a subtle bug
+            ships to production runners. Focus on what has actually bitten
+            this codebase:
+
+            1. **Workflow/YAML correctness (highest value)** — GitHub Actions
+               expression mistakes, shell quoting (especially single-vs-double
+               quotes around variables in `run:` and `sed`/`jq` invocations),
+               event-trigger semantics, `if:` gate logic, and steps that
+               assume a self-hosted runner environment (`~/venv`,
+               `openstack` CLI, `gh` auth) vs `ubuntu-latest`.
+            2. **Secrets & credential handling** — secrets leaking into
+               logs/URLs, missing `::add-mask::`, credentials assumed
+               persisted by `actions/checkout` from a different gitdir.
+            3. **Vendorize blast radius** — changes that behave differently
+               in `Instances` / `Test-Instances` / `MC-*` course repos than
+               here (repo variables that only exist downstream, runner
+               labels, single-runner fallback).
+            4. **Plain bugs** — inverted conditions, unreachable branches,
+               wrong variable names, broken placeholder substitution.
+
+            Report every issue you find, including ones you are uncertain
+            about — include a confidence level and severity for each instead
+            of self-filtering. Use inline comments for specific lines and a
+            top-level comment for overall observations. Do not nitpick style
+            that pre-commit/prettier already enforces.
+
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
