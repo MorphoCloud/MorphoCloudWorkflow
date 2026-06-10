@@ -1,0 +1,76 @@
+name: Guard Issue Close
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  issues: write
+  contents: read
+
+# An instance issue is the control panel for its instance's whole lifetime.
+# When a user closes one while resources still exist, closing means "I'm
+# done for now": an active instance is shelved (allocation burn stops, data
+# and volume preserved, fully reversible), and a comment explains how to
+# resume or release. Bot closes are skipped — automation closes issues only
+# after deletion, so nothing fires for those.
+jobs:
+  guard:
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    if:
+      ${{ contains(github.event.issue.labels.*.name, 'instance-request') &&
+      github.event.sender.type != 'Bot' }}
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Shelve on close
+        shell: bash
+        run: |
+          source ~/venv/bin/activate
+
+          INSTANCE_PREFIX="${INSTANCE_NAME_PREFIX:+${INSTANCE_NAME_PREFIX}_}"
+          INSTANCE_NAME="${INSTANCE_PREFIX}instance-${ISSUE_NUMBER}"
+          VOLUME_NAME="My-Data-${ISSUE_NUMBER}"
+
+          SERVER_STATUS=$(openstack server list --name "^${INSTANCE_NAME}$" -f json | \
+            jq -r '.[0].Status // empty')
+          HAS_VOLUME="false"
+          if openstack volume list -f json | jq -r '.[].Name' | grep -qE "^${VOLUME_NAME}(-.*)?$"; then
+            HAS_VOLUME="true"
+          fi
+
+          if [[ -z "$SERVER_STATUS" && "$HAS_VOLUME" == "false" ]]; then
+            echo "No resources for #${ISSUE_NUMBER} — close is fine."
+            exit 0
+          fi
+
+          if [[ "$SERVER_STATUS" == "ACTIVE" || "$SERVER_STATUS" == "SHUTOFF" ]]; then
+            echo "Shelving $INSTANCE_NAME (status: $SERVER_STATUS) after issue close..."
+            GH_TOKEN="$APP_TOKEN" gh workflow run control-instance-from-workflow.yml \
+              -f issue_number="$ISSUE_NUMBER" \
+              -f command_name=shelve
+            STATE="**${INSTANCE_NAME}** is being shelved — allocation usage stops; your data and volume are preserved"
+          elif [[ -n "$SERVER_STATUS" ]]; then
+            echo "$INSTANCE_NAME is $SERVER_STATUS — nothing to shelve."
+            STATE="**${INSTANCE_NAME}** remains shelved; your data and volume are preserved"
+          else
+            STATE="the **${VOLUME_NAME}** data volume is preserved"
+          fi
+
+          gh issue comment "$ISSUE_NUMBER" --body "### Issue closed with resources still allocated
+
+          Closing this issue does not delete anything: ${STATE}, and the expiration policy still applies.
+
+          - To resume working: reopen this issue and comment \`/unshelve\`.
+          - To release the resources permanently: comment \`/delete_all\`."
+        env:
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          INSTANCE_NAME_PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
