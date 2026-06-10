@@ -70,10 +70,9 @@ Notes:
 
 ### Stuck Dependabot PRs
 
-Branch protection requires PR branches to be **up to date with `main`**, and
-Dependabot branches don't update themselves — so after `main` moves, an older
-Dependabot PR shows "out of date" with a stale check and auto-merge appears
-unavailable. The recipe:
+Branch protection no longer requires PR branches to be up to date with `main`
+(the `strict` flag was dropped 2026-06-10), so Dependabot PRs rarely get stuck
+anymore. If one does (e.g. a real merge conflict after `main` moves):
 
 1. Optionally comment `@claude review` first (worth it on major bumps).
 2. Comment **`@dependabot rebase`** — Dependabot recreates the branch on current
