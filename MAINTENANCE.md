@@ -204,6 +204,27 @@ cd $PROJECTS_DIR/Instances
 git push origin main
 ```
 
+## Custom Course Software (per-course exosphere image)
+
+A course needing a software suite different from the standard SlicerMorph image
+is handled by a `course/<slug>` branch of `exosphere` plus **one repo variable**
+on the course repo — `MORPHOCLOUD_EXOSPHERE_REF` (full commit SHA, validated at
+`/create` time). No MorphoCloudWorkflow branch, no `cloud-config` edit, and the
+variable survives `vendorize-course`.
+
+Full procedure (setup, validation, mid-course updates, branch lifetime,
+between-term re-baseline):
+[course-software-customization.md](course-software-customization.md).
+
+Which courses are customized — the variable doubles as the registry:
+
+```bash
+for r in $(gh repo list MorphoCloud --json name --jq '.[].name | select(startswith("MC-"))'); do
+  echo -n "$r: "
+  gh variable get MORPHOCLOUD_EXOSPHERE_REF --repo "MorphoCloud/$r" 2>/dev/null || echo "(standard)"
+done
+```
+
 ## Updating Slicer Version
 
 The version of Slicer is defined in the Ansible script maintained in `exosphere`
