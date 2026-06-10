@@ -5,3 +5,11 @@ updates:
     schedule:
       # Check for updates to GitHub Actions every week
       interval: "weekly"
+  # Composite actions are not covered by the "/" entry — without this,
+  # bumps land in workflows but silently skip .github/actions/* (this is
+  # how send-mail v9/v17 skew happened).
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/.github/actions/*"
+    schedule:
+      interval: "weekly"
