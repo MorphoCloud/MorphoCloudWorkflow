@@ -232,8 +232,16 @@ jobs:
                     echo "Renewal notice ${notice_label} already sent for ${instance_name} (${days_until_expiration} days left); skipping."
                   else
                     echo "Instance ${instance_name} will expire soon. Sending warning (${notice_label})..."
+                    # Match the email's renewal check: only suggest /renew when a
+                    # higher rung of the expiration ladder actually remains.
+                    expiration_count=$(echo "$lifespan_list" | grep -c . || true)
+                    if [[ "$expiration_count" -gt $((renewed_count + 1)) ]]; then
+                      renew_hint='Comment `/renew` to extend.'
+                    else
+                      renew_hint='No renewals remain.'
+                    fi
                     gh issue comment "$issue_number" \
-                      --body '⚠️ Instance and volume will be deleted in '"$days_until_expiration"' days. Request an extension using the `renew` command if needed.'
+                      --body '⚠️ Instance and volume will be deleted in '"$days_until_expiration"' days. '"$renew_hint
                     set +e
                     gh workflow run send-renewal-email.yml \
                       -f issue_number=$issue_number \
