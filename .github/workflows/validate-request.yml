@@ -71,7 +71,7 @@ jobs:
       # --- Validation result comments ---
 
       - name: find command results comment
-        uses: peter-evans/find-comment@v4
+        uses: peter-evans/find-comment@b30e6a3c0ed37e7c023ccd3f1db5c6c0b0c23aad # v4
         id: fc
         with:
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
@@ -79,7 +79,7 @@ jobs:
 
       - name: command results comment (instance - success)
         if: ${{ steps.request_type.outputs.is_workshop != 'true' && success() }}
-        uses: peter-evans/create-or-update-comment@v5.0.0
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
@@ -91,7 +91,7 @@ jobs:
 
       - name: command results comment (failure)
         if: ${{ failure() }}
-        uses: peter-evans/create-or-update-comment@v5.0.0
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
           comment-id: ${{ steps.fc.outputs.comment-id }}
@@ -105,7 +105,7 @@ jobs:
 
       - name: command results comment (workshop - success)
         if: ${{ steps.request_type.outputs.is_workshop == 'true' && success() }}
-        uses: peter-evans/create-or-update-comment@v5.0.0
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}

@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/create-github-app-token@v3.2.0
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: admin-token
         with:
           app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
@@ -29,7 +29,7 @@ jobs:
           team_slug: morphocloud-admins
       - name: delete_instance_and_volume command
         id: delete_instance_and_volume_command
-        uses: github/command@v2.0.3
+        uses: github/command@3442f3fa1efe01bdb024b157083c337902d17372 # v2.0.3
         with:
           command: "/delete_all"
           reaction: "rocket"

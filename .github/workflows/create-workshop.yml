@@ -18,7 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/create-github-app-token@v3.2.0
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: admin-token
         with:
           app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
@@ -33,7 +33,7 @@ jobs:
           team_slug: morphocloud-admins
       - name: create command
         id: create_command
-        uses: github/command@v2.0.3
+        uses: github/command@3442f3fa1efe01bdb024b157083c337902d17372 # v2.0.3
         with:
           command: "/create"
           reaction: "rocket"
@@ -55,7 +55,7 @@ jobs:
 
       - name: command results comment (Workflow management not approved)
         if: ${{ ! fromJSON(steps.check_approval.outputs.is_approved) }}
-        uses: peter-evans/create-or-update-comment@v5.0.0
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
