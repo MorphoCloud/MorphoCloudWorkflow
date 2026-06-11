@@ -135,7 +135,14 @@ jobs:
           MAX_PER_USER: ${{ vars.MORPHOCLOUD_MAX_INSTANCES_PER_USER }}
 
   call-validate-request:
-    needs: [check-instance-team-membership, check-instance-quota]
+    # initial-comments first so the "you may now use /create" go-signal is the
+    # LAST thing the user reads, after the command list (tester feedback)
+    needs:
+      [
+        check-instance-team-membership,
+        check-instance-quota,
+        call-request-initial-comments,
+      ]
     if:
       ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.issue.labels.*.name, 'request-creator:user') }}
