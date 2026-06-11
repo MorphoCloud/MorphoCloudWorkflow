@@ -21,3 +21,9 @@ body:
             I am enrolled in this course and I am requesting a cloud computing
             instance.
           required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        > **Note:** the **Create** button below only opens your request — your instance is not built yet.
+        > On the page that opens, type `/create` in the comment box and press the green **Comment** button to build it.
