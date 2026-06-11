@@ -1,7 +1,8 @@
 ### Supported Issue Commands
 
-_The commands described below may be added as issue comments. Only one command
-may be entered per comment._
+_Type a command below as a comment and press the green **Comment** button to
+submit it — pressing Enter only adds a new line. Only one command may be entered
+per comment._
 
 | Command      | Description                                               | Who                  |
 | ------------ | --------------------------------------------------------- | -------------------- |
