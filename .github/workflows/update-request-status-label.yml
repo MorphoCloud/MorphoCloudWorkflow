@@ -26,13 +26,20 @@ jobs:
           instance_prefix=${PREFIX:+${PREFIX}_}
           instance_basename="${instance_prefix}instance"
 
-          openstack server list --name "^${instance_basename}-\d+" -f json | \
-          jq -r '.[] | [.Name, .Status] | @tsv' | \
-            while IFS=$'\t' read -r instance_name status; do
+          openstack server list --name "^${instance_basename}-\d+" --long -f json | \
+          jq -r '.[] | [.Name, .Status, ((.Properties.exoSetup // "") | tostring)] | @tsv' | \
+            while IFS=$'\t' read -r instance_name status exosetup; do
               issue_number=${instance_name##*-}
               status_lowercase=${status,,}
 
               add_label="status:$status_lowercase"
+
+              # An OpenStack-ACTIVE server is still installing until the
+              # exoSetup marker reports complete — labeling it "active" misled
+              # users into thinking the instance was ready (tester feedback).
+              if [[ "$status" == "ACTIVE" && "$exosetup" != *complete* ]]; then
+                add_label="status:building"
+              fi
 
               remove_labels=$(gh issue view $issue_number --json labels | \
                 jq \

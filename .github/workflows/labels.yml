@@ -46,6 +46,7 @@ jobs:
           {"name": "workflow:instances-created", "color": "5319E7", "description": "All workshop instances were created"},
           {"name": "workflow:instances-deleted", "color": "5319E7", "description": "Workshop instances were deleted"},
           {"name": "status:active", "color": "CFD3D7", "description": "The server is active."},
+          {"name": "status:building", "color": "FBCA04", "description": "The server is booting and installing software."},
           {"name": "status:build", "color": "CFD3D7", "description": "The server has not yet finished the original build process."},
           {"name": "status:deleted", "color": "CFD3D7", "description": "The server is deleted."},
           {"name": "status:error", "color": "CFD3D7", "description": "The server is in error."},
