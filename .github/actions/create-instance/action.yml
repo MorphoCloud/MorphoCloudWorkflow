@@ -15,6 +15,13 @@ inputs:
   volume_name_suffix:
     description: "Volume name suffix"
     required: true
+  default_session_timeout_hrs:
+    description:
+      "Fallback session timeout (hours) for the in-instance shelving popup when
+      the issue has no timeout:<N>hrs label (workflows pass the repo's
+      INSTANCE_SHELVING_TIMEOUT_HRS variable); blank falls back to 4."
+    required: false
+    default: ""
   volume_size_gb:
     description: "Volume size in GB"
     required: false
@@ -244,6 +251,22 @@ runs:
         fi
         sed -i "s|{runner-ssh-public-key}|$(cat "$RUNNER_PUBKEY")|g" ./cloud-config
 
+        # Session timeout for the in-instance shelving popup: highest
+        # timeout:<N>hrs label on the issue, else the repo default, else 4.
+        # Keeps the guest's warning window aligned with the cloud-side
+        # shelving cron, which reads the same label.
+        TIMEOUT_HRS=$(gh issue view "$ISSUE_NUMBER" --json labels \
+          --jq '[.labels[].name | select(test("^timeout:[0-9]+hrs$"))
+                | capture(":(?<n>[0-9]+)hrs$").n | tonumber] | max // empty' || true)
+        if ! [[ "$TIMEOUT_HRS" =~ ^[0-9]+$ ]]; then
+          TIMEOUT_HRS="${DEFAULT_SESSION_TIMEOUT_HRS:-4}"
+        fi
+        if ! [[ "$TIMEOUT_HRS" =~ ^[0-9]+$ ]]; then
+          TIMEOUT_HRS=4
+        fi
+        echo "Session timeout for this instance: ${TIMEOUT_HRS}h"
+        sed -i "s|{session-timeout-hrs}|${TIMEOUT_HRS}|g" ./cloud-config
+
 
         openstack server create "$INSTANCE_NAME" \
           --nic net-id="auto_allocated_network" \
@@ -270,6 +293,10 @@ runs:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         INSTANCE_FLAVOR: ${{ steps.labels.outputs.instance_flavor }}
         FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        DEFAULT_SESSION_TIMEOUT_HRS: ${{ inputs.default_session_timeout_hrs }}
 
     - name: Wait for instance to reach stable state
       id: wait_instance_state

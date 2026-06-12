@@ -119,6 +119,7 @@ jobs:
           instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
           volume_name_suffix: ${{ vars.VOLUME_NAME_PREFIX }}
           volume_size_gb: ${{ vars.VOLUME_SIZE_GB || '100' }}
+          default_session_timeout_hrs: ${{ vars.INSTANCE_SHELVING_TIMEOUT_HRS }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # Job B — setup lane (cloud-init wait, volume mount, reboot, email). Runs on the
