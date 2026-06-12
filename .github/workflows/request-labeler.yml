@@ -62,6 +62,35 @@ jobs:
           NUMBER: ${{ steps.collect_inputs.outputs.issue_number }}
           LABELS: flavor:${{ steps.extract.outputs.instance_flavor }}
 
+      # Flavor-based session-timeout policy. The mapping lives in the repo
+      # variable MORPHOCLOUD_FLAVOR_TIMEOUT_OVERRIDES (e.g.
+      # "g3.xl=2,g4.xl=2,r3.large=2,r3.xl=2"): matching flavors get a
+      # timeout:<N>hrs label, which automatic-instance-shelving already honors
+      # over the repo default. Empty/absent variable = stock behavior —
+      # REVERT by clearing the variable; no code change needed.
+      - name: Add flavor timeout label
+        if:
+          ${{ steps.extract.outputs.instance_flavor != '' &&
+          steps.extract.outputs.instance_flavor != 'null' &&
+          vars.MORPHOCLOUD_FLAVOR_TIMEOUT_OVERRIDES != '' }}
+        run: |
+          IFS=',' read -ra PAIRS <<< "$OVERRIDES"
+          for pair in "${PAIRS[@]}"; do
+            f="$(echo "${pair%%=*}" | xargs)"
+            hrs="$(echo "${pair##*=}" | xargs)"
+            if [[ "$FLAVOR" == "$f" && "$hrs" =~ ^[0-9]+$ ]]; then
+              echo "Flavor $FLAVOR -> timeout:${hrs}hrs (from MORPHOCLOUD_FLAVOR_TIMEOUT_OVERRIDES)"
+              gh issue edit "$NUMBER" --add-label "timeout:${hrs}hrs"
+              break
+            fi
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ steps.collect_inputs.outputs.issue_number }}
+          FLAVOR: ${{ steps.extract.outputs.instance_flavor }}
+          OVERRIDES: ${{ vars.MORPHOCLOUD_FLAVOR_TIMEOUT_OVERRIDES }}
+
       - name: Add expiration labels
         run: |
           # Check if issue already has an expiration label (e.g., from workshop creation)
