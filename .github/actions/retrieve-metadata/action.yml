@@ -41,14 +41,29 @@ runs:
 
         echo Retrieving instance "$INSTANCE_NAME" metadata
 
-        # Get instance IP
-        instance_ip=$(
-          openstack server show $INSTANCE_NAME -c addresses -f json | \
-          jq -r '.addresses.auto_allocated_network[1]'
-        )
-        echo "instance_ip [$instance_ip]"
-        if [[ "$instance_ip" == "null" ]]; then
-          echo "::error ::Failed to retrieve $INSTANCE_NAME IP"
+        # Get instance floating IP, with a retry budget. After a /unshelve the
+        # VM returns to ACTIVE a few seconds before OpenStack reassociates its
+        # floating IP, so a single read can see 'null' (or only the fixed IP)
+        # and a credential email would fail spuriously. Retry until the
+        # floating IP is attached, mirroring the password retry below.
+        ip_max_wait=120
+        ip_interval=10
+        ip_start=$SECONDS
+        instance_ip=""
+        while (( SECONDS - ip_start < ip_max_wait )); do
+          instance_ip=$(
+            openstack server show $INSTANCE_NAME -c addresses -f json | \
+            jq -r '.addresses.auto_allocated_network[1] // empty'
+          )
+          if [[ -n "$instance_ip" && "$instance_ip" != "null" ]]; then
+            echo "instance_ip [$instance_ip] (after $((SECONDS - ip_start))s)"
+            break
+          fi
+          echo "floating IP not attached yet (waited $((SECONDS - ip_start))s of ${ip_max_wait}s); retrying in ${ip_interval}s..."
+          sleep "$ip_interval"
+        done
+        if [[ -z "$instance_ip" || "$instance_ip" == "null" ]]; then
+          echo "::error ::Failed to retrieve $INSTANCE_NAME IP within ${ip_max_wait}s (floating IP never reassociated?)"
           exit 1
         fi
         echo "instance_ip=$instance_ip" >> $GITHUB_OUTPUT
