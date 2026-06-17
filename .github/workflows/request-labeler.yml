@@ -80,8 +80,9 @@ jobs:
             hrs="$(echo "${pair##*=}" | xargs)"
             if [[ "$FLAVOR" == "$f" && "$hrs" =~ ^[1-9][0-9]*$ ]]; then
               echo "Flavor $FLAVOR -> timeout:${hrs}hrs (from MORPHOCLOUD_FLAVOR_TIMEOUT_OVERRIDES)"
-              gh label create "timeout:${hrs}hrs" --color "5319E7" --description "Instance shelves after ${hrs}h uptime" --force >/dev/null 2>&1 || true
-              gh issue edit "$NUMBER" --add-label "timeout:${hrs}hrs"
+              gh label create "timeout:${hrs}hrs" --color "5319E7" --description "Session timeout: ${hrs} hours" --force >/dev/null 2>&1 || true
+              gh issue edit "$NUMBER" --add-label "timeout:${hrs}hrs" \
+                || echo "::warning ::Could not apply timeout:${hrs}hrs to #$NUMBER; instance keeps the default session timeout"
               break
             fi
           done
