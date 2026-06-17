@@ -86,6 +86,9 @@ jobs:
           fi
 
           if [[ -z "$COURSE_TEAM_SLUG" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
+
+          This course repo is not fully configured (\`COURSE_TEAM_SLUG\` is unset), so \`/create\` cannot proceed. Please tag @MorphoCloud/morphocloud-admins."
             echo "::error ::COURSE_TEAM_SLUG is not configured for this repo"
             exit 1
           fi

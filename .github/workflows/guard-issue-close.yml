@@ -54,9 +54,12 @@ jobs:
               -f issue_number="$ISSUE_NUMBER" \
               -f command_name=shelve
             STATE="**${INSTANCE_NAME}** is being shelved — allocation usage stops; your data and volume are preserved"
+          elif [[ "$SERVER_STATUS" == "SHELVED" || "$SERVER_STATUS" == "SHELVED_OFFLOADED" ]]; then
+            echo "$INSTANCE_NAME is $SERVER_STATUS — already shelved."
+            STATE="**${INSTANCE_NAME}** remains shelved; your data and volume are preserved"
           elif [[ -n "$SERVER_STATUS" ]]; then
             echo "$INSTANCE_NAME is $SERVER_STATUS — nothing to shelve."
-            STATE="**${INSTANCE_NAME}** remains shelved; your data and volume are preserved"
+            STATE="**${INSTANCE_NAME}** (status: ${SERVER_STATUS}); your data and volume are preserved"
           else
             STATE="the **${VOLUME_NAME}** data volume is preserved"
           fi
