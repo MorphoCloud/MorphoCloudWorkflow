@@ -52,7 +52,7 @@ runs:
         instance_ip=""
         while (( SECONDS - ip_start < ip_max_wait )); do
           instance_ip=$(
-            openstack server show $INSTANCE_NAME -c addresses -f json | \
+            openstack server show "$INSTANCE_NAME" -c addresses -f json | \
             jq -r '.addresses.auto_allocated_network[1] // empty'
           )
           if [[ -n "$instance_ip" && "$instance_ip" != "null" ]]; then
@@ -70,7 +70,7 @@ runs:
 
         # Get instance password from tags
         instance_pwd=$(
-          openstack server show $INSTANCE_NAME -c tags -f json | \
+          openstack server show "$INSTANCE_NAME" -c tags -f json | \
           jq -r '.tags[] | select(startswith("exoPw")) | sub("^exoPw:"; "")'
         )
 
