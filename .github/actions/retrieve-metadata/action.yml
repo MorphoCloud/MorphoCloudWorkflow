@@ -46,7 +46,7 @@ runs:
         # floating IP, so a single read can see 'null' (or only the fixed IP)
         # and a credential email would fail spuriously. Retry until the
         # floating IP is attached, mirroring the password retry below.
-        ip_max_wait=120
+        ip_max_wait=300   # JS2 floating-IP reassociation after unshelve can be slow under load
         ip_interval=10
         ip_start=$SECONDS
         instance_ip=""
