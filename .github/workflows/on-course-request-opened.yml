@@ -9,15 +9,16 @@ permissions:
   contents: read
   checks: read
 
-# Serialize automation for a single issue so this handler (which may reject
-# and close an over-quota request) never runs concurrently with a /create on
-# the same issue. Without this, opening an issue and immediately commenting
-# /create raced: this handler closed the issue while /create — briefly seeing
-# the user's just-deleted resources as freed — provisioned into the now-closed
-# issue, orphaning the resources and permanently inflating the per-user count.
-# cancel-in-progress: false queues rather than dropping, so no command is lost.
+# Serialize per-issue automation: this handler may reject and close an
+# over-quota request, and must not run concurrently with a /create on the same
+# issue — the original race provisioned into a just-closed issue and orphaned
+# resources. The group is namespaced by request type because the instance and
+# course workflows each also fire (as no-ops) on the other type's issues; a
+# shared namespace would let those no-op runs evict the real open->create pair
+# from the single queue slot. cancel-in-progress: false queues rather than
+# dropping, so the real command is not lost.
 concurrency:
-  group: morphocloud-issue-${{ github.event.issue.number }}
+  group: morphocloud-course-issue-${{ github.event.issue.number }}
   cancel-in-progress: false
 
 jobs:

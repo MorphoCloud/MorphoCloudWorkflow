@@ -9,16 +9,16 @@ permissions:
   checks: read
   contents: read
 
-# Serialize automation for a single issue so the request-opened handler
-# (which may reject and close an over-quota request) never runs concurrently
-# with a /create on the same issue. Without this, opening an issue and
-# immediately commenting /create raced: the open handler closed the issue
-# while /create — briefly seeing the user's just-deleted resources as freed —
-# provisioned into the now-closed issue, orphaning the resources and
-# permanently inflating the per-user count. cancel-in-progress: false queues
-# rather than dropping, so no command is lost.
+# Serialize per-issue automation: the request-opened handler may reject and
+# close an over-quota request, and must not run concurrently with a /create on
+# the same issue — the original race provisioned into a just-closed issue and
+# orphaned resources. The group is namespaced by request type because the
+# instance and course workflows each also fire (as no-ops) on the other type's
+# issues; a shared namespace would let those no-op runs evict the real
+# open->create pair from the single queue slot. cancel-in-progress: false
+# queues rather than dropping, so the real command is not lost.
 concurrency:
-  group: morphocloud-issue-${{ github.event.issue.number }}
+  group: morphocloud-instance-issue-${{ github.event.issue.number }}
   cancel-in-progress: false
 
 # Two-job split (security review M3): authorization runs first on a
@@ -85,7 +85,7 @@ jobs:
         run: |
           STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state')
           echo "Issue #$ISSUE_NUMBER state: $STATE"
-          if [[ "$STATE" == "CLOSED" ]]; then
+          if [[ "${STATE^^}" == "CLOSED" ]]; then
             gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
 
           This request has been closed, so \`/create\` cannot provision into it. Closed requests are not tracked and would leave orphaned resources. To get a new instance, open a fresh instance request."
