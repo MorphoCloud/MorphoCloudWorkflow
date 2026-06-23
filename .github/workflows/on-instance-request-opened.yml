@@ -9,6 +9,18 @@ permissions:
   contents: read
   checks: read
 
+# Serialize per-issue automation: this handler may reject and close an
+# over-quota request, and must not run concurrently with a /create on the same
+# issue — the original race provisioned into a just-closed issue and orphaned
+# resources. The group is namespaced by request type because the instance and
+# course workflows each also fire (as no-ops) on the other type's issues; a
+# shared namespace would let those no-op runs evict the real open->create pair
+# from the single queue slot. cancel-in-progress: false queues rather than
+# dropping, so the real command is not lost.
+concurrency:
+  group: morphocloud-instance-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 jobs:
   check-instance-team-membership:
     runs-on: ubuntu-latest

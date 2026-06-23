@@ -9,6 +9,18 @@ permissions:
   checks: read
   contents: read
 
+# Serialize per-issue automation: the request-opened handler may reject and
+# close an over-quota request, and must not run concurrently with a /create on
+# the same issue — the original race provisioned into a just-closed issue and
+# orphaned resources. The group is namespaced by request type because the
+# instance and course workflows each also fire (as no-ops) on the other type's
+# issues; a shared namespace would let those no-op runs evict the real
+# open->create pair from the single queue slot. cancel-in-progress: false
+# queues rather than dropping, so the real command is not lost.
+concurrency:
+  group: morphocloud-instance-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
 # Two-job split (security review M3): authorization runs first on a
 # GitHub-hosted runner; the acquire runner is only occupied — and nothing is
 # checked out or provisioned — once /create is authorized. The job-level gate
@@ -55,6 +67,31 @@ jobs:
             "${{ steps.admins.outputs.members }},${{
             github.event.issue.user.login }},${{
             join(github.event.issue.assignees.*.login, ',') }}"
+
+      # Refuse /create on a closed request. A closed request was already
+      # rejected or retired (e.g. the request-opened handler closed it as
+      # over-quota), so provisioning into it would orphan resources on an issue
+      # nobody tracks and inflate the per-user count. github.event.issue.state
+      # is stale during the open+/create race, so query the live state. The
+      # shared per-issue concurrency group ensures the request-opened handler
+      # has already finished (and possibly closed the issue) before this runs.
+      - name: Refuse /create on a closed request
+        if: ${{ steps.create_command.outputs.continue == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          STATE=$(gh issue view "$ISSUE_NUMBER" --json state --jq '.state')
+          echo "Issue #$ISSUE_NUMBER state: $STATE"
+          if [[ "${STATE^^}" == "CLOSED" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
+
+          This request has been closed, so \`/create\` cannot provision into it. Closed requests are not tracked and would leave orphaned resources. To get a new instance, open a fresh instance request."
+            echo "::error ::/create refused on closed issue #$ISSUE_NUMBER"
+            exit 1
+          fi
 
   create:
     runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
