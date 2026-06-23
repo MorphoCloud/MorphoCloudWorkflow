@@ -675,7 +675,10 @@ runs:
         steps.send_email_course.outcome == 'failure' }}
       shell: bash
       run: |
-        source ~/venv/bin/activate
+        # '|| true' so a broken venv can't abort this step with no output set:
+        # openstack would then be missing, the show below falls to UNKNOWN, and
+        # we surface a visible "failed" result rather than a silent green job.
+        source ~/venv/bin/activate || true
         status=$(openstack server show "$INSTANCE_NAME" -c status -f value 2>/dev/null || echo UNKNOWN)
         echo "Instance $INSTANCE_NAME status after failed email: $status"
         if [[ "$status" == "ACTIVE" ]]; then
