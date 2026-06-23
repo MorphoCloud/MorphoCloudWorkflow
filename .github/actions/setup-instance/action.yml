@@ -228,10 +228,13 @@ runs:
         vol_status=$(openstack volume show "$volume_id" -c status -f value)
         if [[ "$vol_status" == "reserved" ]]; then
           echo "::warning ::Volume $volume_id is stuck in 'reserved'; clearing dangling attachment(s)."
-          for att in $(openstack volume attachment list -f json | \
-              jq -r --arg v "$volume_id" '.[] | select(.["Volume ID"] == $v) | .ID'); do
+          att_list=$(openstack volume attachment list -f json | \
+            jq -r --arg v "$volume_id" '.[] | select(.["Volume ID"] == $v) | .ID') \
+            || { echo "::warning ::Failed to list volume attachments; skipping self-heal."; att_list=""; }
+          for att in $att_list; do
             echo "Deleting dangling attachment $att"
-            openstack volume attachment delete "$att" || true
+            openstack volume attachment delete "$att" \
+              || echo "::warning ::Failed to delete attachment $att (may already be gone)"
           done
           for i in $(seq 1 12); do
             vol_status=$(openstack volume show "$volume_id" -c status -f value)
@@ -239,6 +242,10 @@ runs:
             [[ "$vol_status" == "available" ]] && break
             sleep 5
           done
+          if [[ "$vol_status" != "available" ]]; then
+            echo "::error ::Volume $volume_id is still in '$vol_status' after cleanup; giving up on self-heal."
+            exit 1
+          fi
         fi
 
         openstack server set \
