@@ -422,9 +422,12 @@ runs:
       run: |
         source ~/venv/bin/activate
 
-        max_wait_time=600  # 10 min — unshelve from offloaded can be slow under JS2 load
+        max_wait_time=600  # default (e.g. /create build+boot) — JS2 can be slow under load
         if [[ "$EXPECTED_STATUS" == "SHELVED_OFFLOADED" ]]; then
           max_wait_time=900  # 15 min — offload to object storage is the slowest transition
+        elif [[ "$COMMAND_NAME" == "unshelve" ]]; then
+          max_wait_time=300  # 5 min — a healthy unshelve from offloaded is quick; fail fast
+                             # so a stuck/corrupt instance surfaces in 5 min, not 10
         fi
 
         echo "Polling '$INSTANCE_NAME' status [max_wait_time=${max_wait_time}s]"
