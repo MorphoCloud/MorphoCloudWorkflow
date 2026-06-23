@@ -94,7 +94,19 @@ runs:
               exouser@"$instance_ip" \
               'curl --silent --retry 3 --retry-delay 5 --retry-all-errors http://169.254.169.254/openstack/latest/password' 2>/dev/null || true)
             if [[ -n "$instance_pwd" ]]; then
+              echo "::add-mask::$instance_pwd"
               echo "Retrieved password after $((SECONDS - start))s."
+              # Cache the passphrase as an 'exoPw' tag so subsequent /unshelve and
+              # /email reads resolve it instantly (the tag branch above) and skip
+              # this SSH path. The exouser passphrase is immutable for the life of
+              # the server -- a MorphoCloud instance is destroyed+recreated, never
+              # rebuilt in place -- so the cached tag never goes stale. Best-effort:
+              # a failure here is non-fatal since we already have the password.
+              if openstack server set --tag "exoPw:$instance_pwd" "$INSTANCE_NAME"; then
+                echo "Cached 'exoPw' tag on $INSTANCE_NAME for future reads."
+              else
+                echo "::warning ::Failed to cache 'exoPw' tag on $INSTANCE_NAME (non-fatal)."
+              fi
               break
             fi
             echo "sshd/password not ready yet (waited $((SECONDS - start))s of ${max_wait}s); retrying in ${interval}s..."
