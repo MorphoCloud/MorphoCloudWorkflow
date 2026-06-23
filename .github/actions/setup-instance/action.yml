@@ -216,6 +216,31 @@ runs:
           jq -r '.ID' | tail -1)
         echo "volume_id [$volume_id]"
 
+        # Self-heal a volume stuck in 'reserved' from a prior failed/incomplete
+        # attach -- e.g. when a wedged instance was deleted without a clean
+        # detach, Cinder can leave a dangling attachment that pins the volume.
+        # That reservation blocks 'server add volume' with HTTP 400 "status must
+        # be available". Clear any dangling attachment so the volume returns to
+        # 'available' before we attach. An 'in-use' volume is deliberately left
+        # alone -- that's a real conflict (attached elsewhere), not a stuck
+        # reservation. Note: 'volume show' does not list a dangling reservation,
+        # so we query 'volume attachment list'.
+        vol_status=$(openstack volume show "$volume_id" -c status -f value)
+        if [[ "$vol_status" == "reserved" ]]; then
+          echo "::warning ::Volume $volume_id is stuck in 'reserved'; clearing dangling attachment(s)."
+          for att in $(openstack volume attachment list -f json | \
+              jq -r --arg v "$volume_id" '.[] | select(.["Volume ID"] == $v) | .ID'); do
+            echo "Deleting dangling attachment $att"
+            openstack volume attachment delete "$att" || true
+          done
+          for i in $(seq 1 12); do
+            vol_status=$(openstack volume show "$volume_id" -c status -f value)
+            echo "volume status after cleanup attempt $i: $vol_status"
+            [[ "$vol_status" == "available" ]] && break
+            sleep 5
+          done
+        fi
+
         openstack server set \
           --property "exoVolumes::$volume_id={\"name\":\"MyData\"}" \
           $instance_id

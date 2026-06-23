@@ -172,6 +172,46 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+    - name: Detect corrupt shelved state (unshelve)
+      id: check_corrupt_shelved
+      if: ${{ inputs.command_name == 'unshelve' }}
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        # A failed shelve can leave an instance as vm_state=shelved with NO host
+        # (status SHELVED, host null). 'unshelve' is then accepted by Nova but
+        # never transitions to ACTIVE, so without this check the poll below just
+        # times out opaquely (and a floating IP gets churned for nothing). Detect
+        # it up front and fail fast with an actionable message. A normally
+        # shelved-but-not-yet-offloaded instance still has a host, so
+        # SHELVED + host=null is an unambiguous corruption signal.
+        j=$(openstack server show "$INSTANCE_NAME" -f json)
+        status=$(echo "$j" | jq -r '.status')
+        host=$(echo "$j" | jq -r '."OS-EXT-SRV-ATTR:host" // "null"')
+        echo "status [$status] host [$host]"
+        if [[ "$status" == "SHELVED" && ( "$host" == "null" || "$host" == "None" || -z "$host" ) ]]; then
+          echo "::error ::$INSTANCE_NAME is in a corrupt shelved state (SHELVED with no host); unshelve cannot recover it."
+          exit 1
+        fi
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+    - name: comment (corrupt shelved state)
+      if: ${{ steps.check_corrupt_shelved.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Command Results ❌
+
+          Instance **${{ steps.define.outputs.instance_name }}** is in a **corrupt shelved state** (shelved, but with no host) — typically the result of a failed shelve. `/unshelve` cannot recover it.
+
+          @MorphoCloud/morphocloud-admins — this instance needs an admin `shelveOffload` (push it to `SHELVED_OFFLOADED`, then unshelve) or a delete + rebuild from the data volume. The data volume is preserved either way.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
     - name: Check if instance has a floating IP
       if:
         ${{ steps.check_instance.outputs.exists == 'true' &&
@@ -411,7 +451,9 @@ runs:
         body: |
           ### Command Results ❌
 
-          `${{ inputs.command_name }}` command failed to applied to **${{ steps.define.outputs.instance_name }}** instance.
+          `${{ inputs.command_name }}` command failed to be applied to **${{ steps.define.outputs.instance_name }}** instance.
+
+          @MorphoCloud/morphocloud-admins — the OpenStack `${{ inputs.command_name }}` action failed; the instance may need attention.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -498,6 +540,8 @@ runs:
           ### Command Results ❌
 
           Maximum wait time for command `${{ inputs.command_name }}` command to complete exceeded.
+
+          @MorphoCloud/morphocloud-admins — `${{ inputs.command_name }}` did not complete in time for **${{ steps.define.outputs.instance_name }}**; the instance may be stuck and need attention.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
