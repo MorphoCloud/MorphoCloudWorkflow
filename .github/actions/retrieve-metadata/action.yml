@@ -73,6 +73,9 @@ runs:
           openstack server show $INSTANCE_NAME -c tags -f json | \
           jq -r '.tags[] | select(startswith("exoPw")) | sub("^exoPw:"; "")'
         )
+        # Mask immediately so the passphrase is never eligible for logging,
+        # regardless of which branch below produces it.
+        [[ -n "$instance_pwd" ]] && echo "::add-mask::$instance_pwd"
 
         # Retry logic for SSH-based password retrieval
         if [[ -z "$instance_pwd" ]]; then
@@ -94,7 +97,26 @@ runs:
               exouser@"$instance_ip" \
               'curl --silent --retry 3 --retry-delay 5 --retry-all-errors http://169.254.169.254/openstack/latest/password' 2>/dev/null || true)
             if [[ -n "$instance_pwd" ]]; then
+              echo "::add-mask::$instance_pwd"
               echo "Retrieved password after $((SECONDS - start))s."
+              # Cache the passphrase as an 'exoPw' tag so subsequent /unshelve and
+              # /email reads resolve it instantly (the tag branch above) and skip
+              # this SSH path. The exouser passphrase is immutable for the life of
+              # the server -- a MorphoCloud instance is destroyed+recreated, never
+              # rebuilt in place -- so the cached tag never goes stale. Best-effort:
+              # a failure here is non-fatal since we already have the password.
+              #
+              # 'server set --tag' is additive (per-tag PUT) in python-openstack
+              # client >= 5.0.0; the runner installs it unpinned/latest (see
+              # README and provision-instances-runner-host.sh), so other tags
+              # (e.g. Exosphere's) are preserved. Nova also caps a tag at 60
+              # chars; if 'exoPw:'+passphrase exceeds it the call 400s and we
+              # fall back to SSH next time, hence the length in the warning.
+              if openstack server set --tag "exoPw:$instance_pwd" "$INSTANCE_NAME"; then
+                echo "Cached 'exoPw' tag on $INSTANCE_NAME for future reads."
+              else
+                echo "::warning ::Failed to cache 'exoPw' tag on $INSTANCE_NAME (non-fatal; tag is ${#instance_pwd}+6 chars, Nova limit is 60)."
+              fi
               break
             fi
             echo "sshd/password not ready yet (waited $((SECONDS - start))s of ${max_wait}s); retrying in ${interval}s..."

@@ -624,6 +624,10 @@ runs:
 
     - name: Send email (individual)
       id: send_email_individual
+      # Failure is handled gracefully below ("Triage email failure"): an
+      # unshelve whose connection email could not be sent must NOT mask the
+      # fact that the instance itself is up and running (and billing).
+      continue-on-error: true
       if:
         ${{ steps.check_instance.outputs.exists == 'true' && success() &&
         inputs.command_name == 'unshelve' && inputs.course_team_slug == '' }}
@@ -641,6 +645,8 @@ runs:
 
     - name: Send email (course)
       id: send_email_course
+      # See note on "Send email (individual)" above.
+      continue-on-error: true
       if:
         ${{ steps.check_instance.outputs.exists == 'true' && success() &&
         inputs.command_name == 'unshelve' && inputs.course_team_slug != '' }}
@@ -657,10 +663,45 @@ runs:
         instance_name: ${{ steps.define.outputs.instance_name }}
         instance_issue_number: ${{ inputs.issue_number }}
 
-    - name: comment (failed to send email)
+    # When the email send fails, decide whether this is a benign timing issue
+    # (the instance is ACTIVE -- the email just raced a slow boot and could not
+    # read the passphrase in time) or a genuine failure. Only the latter should
+    # surface as a red command result; the former leaves the user with a running
+    # instance and a clear next step.
+    - name: Triage email failure
+      id: email_followup
       if:
-        ${{ (steps.send_email_individual.outcome == 'failure' ||
-        steps.send_email_course.outcome == 'failure') && failure() }}
+        ${{ steps.send_email_individual.outcome == 'failure' ||
+        steps.send_email_course.outcome == 'failure' }}
+      shell: bash
+      run: |
+        # '|| true' so a broken venv can't abort this step with no output set:
+        # openstack would then be missing, the show below falls to UNKNOWN, and
+        # we surface a visible "failed" result rather than a silent green job.
+        source ~/venv/bin/activate || true
+        status=$(openstack server show "$INSTANCE_NAME" -c status -f value 2>/dev/null || echo UNKNOWN)
+        echo "Instance $INSTANCE_NAME status after failed email: $status"
+        if [[ "$status" == "ACTIVE" ]]; then
+          echo "mode=pending" >> "$GITHUB_OUTPUT"
+        else
+          echo "mode=failed" >> "$GITHUB_OUTPUT"
+        fi
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+    - name: comment (instance up, email pending)
+      if: ${{ steps.email_followup.outputs.mode == 'pending' }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          Instance **${{ steps.define.outputs.instance_name }}** is unshelved and running ✅
+
+          We couldn't generate your connection email automatically (the instance was still finishing boot). Run `/email` in a couple of minutes to get your connection link.
+
+    - name: comment (failed to send email)
+      if: ${{ steps.email_followup.outputs.mode == 'failed' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
@@ -671,8 +712,15 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+    - name: Fail job on unrecoverable email error
+      if: ${{ steps.email_followup.outputs.mode == 'failed' }}
+      shell: bash
+      run: exit 1
+
     - name: command results comment (success)
-      if: ${{ steps.check_instance.outputs.exists == 'true' && success() }}
+      if:
+        ${{ steps.check_instance.outputs.exists == 'true' && success() &&
+        steps.email_followup.outputs.mode != 'pending' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
