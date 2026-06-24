@@ -18,7 +18,7 @@ jobs:
       contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       startsWith(github.event.comment.body, '/') }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Validate instance command
         id: validate-instance
