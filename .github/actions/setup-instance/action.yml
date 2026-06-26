@@ -108,6 +108,14 @@ runs:
             exit 1
         fi
 
+        # Setup completed. Surface any extensions that failed to install but were
+        # skipped (non-fatal). The completion status line carries the list, so it
+        # arrives as reliably as the "complete" signal itself; warn on the issue.
+        ext_failed=$(printf '%s\n' "$status_line" | tail -n1 | jq -r '.failed_extensions // empty')
+        if [ -n "$ext_failed" ]; then
+            { echo "extensions_warning<<EXT_WARNING_EOF"; echo "$ext_failed"; echo "EXT_WARNING_EOF"; } >> "$GITHUB_OUTPUT"
+        fi
+
         # Explicitly set status to "complete"
         exoSetup='{"status":"complete", "epoch": '$(date '+%s')'000}'
 
@@ -133,6 +141,19 @@ runs:
           @MorphoCloud/morphocloud-admins — please check the failed step in the console log of the linked run.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: comment (extensions skipped, setup completed)
+      if:
+        ${{ success() && steps.instance_poll.outputs.extensions_warning != '' }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation: extensions skipped ⚠️
+
+          Instance **${{ inputs.instance_name }}** finished provisioning, but the following Slicer extension(s) failed to install and were skipped: **${{ steps.instance_poll.outputs.extensions_warning }}**.
+
+          The instance is usable; only the listed extension(s) are missing — usually a server-side packaging issue on the Slicer extensions catalog. @MorphoCloud/morphocloud-admins — please investigate.
 
     - name: comment (progress)
       uses: ./.github/actions/comment-progress
