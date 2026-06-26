@@ -54,7 +54,8 @@ runs:
 
             # Get the log; bail if openstack itself fails
             log_output=$(openstack console log show "$INSTANCE_NAME") || {
-              echo "ERROR: failed to fetch console log for $INSTANCE_NAME" >&2
+              echo "failure_detail=could not fetch the instance console log (OpenStack error)" >> "$GITHUB_OUTPUT"
+              echo "::error ::failed to fetch console log for $INSTANCE_NAME"
               exit 1
             }
 
@@ -71,7 +72,16 @@ runs:
                 echo "Setup complete."
                 break
             elif [[ "$status" == "error" ]]; then
-                echo "::error ::Instance setup reported 'error'. Check the instance console log / cloud-init output for the failed step."
+                # Real setup failure. Extract the failed ansible task (and loop
+                # item, e.g. the extension name) from the console so the comment
+                # says exactly where it failed -- not a generic timeout message.
+                clean=$(printf '%s\n' "$log_output" | sed -E 's/\x1b\[[0-9;]*m//g')
+                failed_task=$(printf '%s\n' "$clean" | grep -oE 'TASK \[[^]]+\]' | tail -1 | sed -E 's/^TASK \[//; s/\]$//')
+                failed_item=$(printf '%s\n' "$clean" | grep -E 'failed:' | grep -oE '\(item=[^)]+\)' | tail -1 | sed -E 's/^\(item=//; s/\)$//')
+                detail="setup FAILED at ansible task \`${failed_task:-unknown}\`"
+                if [ -n "$failed_item" ]; then detail="$detail (item \`$failed_item\`)"; fi
+                { echo "failure_detail<<EOF"; echo "$detail"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+                echo "::error ::$detail"
                 exit 1
             else
                 echo "Waiting for completion..."
@@ -80,7 +90,11 @@ runs:
         done
 
         if [[ "$status" != "complete" ]]; then
-            echo "::error ::Maximum wait time ($max_wait_time seconds) exceeded before setup completed (last status: $status)."
+            clean=$(printf '%s\n' "$log_output" | sed -E 's/\x1b\[[0-9;]*m//g')
+            last_task=$(printf '%s\n' "$clean" | grep -oE 'TASK \[[^]]+\]' | tail -1 | sed -E 's/^TASK \[//; s/\]$//')
+            detail="setup did NOT finish within ${max_wait_time}s (timed out); last task seen was \`${last_task:-unknown}\`"
+            { echo "failure_detail<<EOF"; echo "$detail"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+            echo "::error ::$detail"
             exit 1
         fi
 
@@ -96,7 +110,7 @@ runs:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ inputs.instance_name }}
 
-    - name: comment (maximum wait time exceeded)
+    - name: comment (setup failed)
       if: ${{ steps.instance_poll.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -104,7 +118,9 @@ runs:
         body: |
           ### Instance Creation Results ❌
 
-          Maximum wait time for instance **${{ inputs.instance_name }}** setup to complete exceeded.
+          Instance **${{ inputs.instance_name }}** ${{ steps.instance_poll.outputs.failure_detail || 'setup failed' }}.
+
+          @MorphoCloud/morphocloud-admins — please check the failed step in the console log of the linked run.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
