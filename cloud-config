@@ -89,8 +89,12 @@ ansible-playbook \
   /opt/instance-config-mgt/ansible/playbook.yml
 ANSIBLE_RETURN_CODE=$?
 if [ $ANSIBLE_RETURN_CODE -eq 0 ]; then STATUS="complete"; else STATUS="error"; fi
+# Slicer extensions that fail to install are non-fatal; the playbook records them
+# in this file so the completion status line carries the list to the workflow as
+# reliably as the status itself (no separate console line to scroll out of view).
+FAILED_EXTENSIONS=$(cat /opt/instance-config-support/slicer_failed_extensions 2>/dev/null || true)
 sleep 1  # Ensures that console log output from any previous commands complete before the following command begins
-echo '{"status":"'$STATUS'", "epoch": '$(date '+%s')'000}' | tee --append /dev/console > /dev/kmsg || true
+echo '{"status":"'$STATUS'", "epoch": '$(date '+%s')'000, "failed_extensions": "'"$FAILED_EXTENSIONS"'"}' | tee --append /dev/console > /dev/kmsg || true
 
 
 --=================exosphere-user-data====
