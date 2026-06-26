@@ -50,11 +50,23 @@ runs:
         start_time=$SECONDS
         status="pending"
 
+        # Emit a multi-line-safe failure_detail output. The heredoc delimiter is
+        # chosen so it cannot collide with an ansible task/extension name or any
+        # console line (a bare "EOF" line would otherwise truncate the value).
+        set_failure_detail() {
+          { printf 'failure_detail<<FAILURE_DETAIL_EOF\n%s\nFAILURE_DETAIL_EOF\n' "$1"; } >> "$GITHUB_OUTPUT"
+        }
+        # Last ansible 'TASK [...]' name seen in the console (ANSI-stripped).
+        last_ansible_task() {
+          printf '%s\n' "$1" | sed -E 's/\x1b\[[0-9;]*m//g' \
+            | grep -oE 'TASK \[[^]]+\]' | tail -1 | sed -E 's/^TASK \[//; s/\]$//'
+        }
+
         while (( SECONDS - start_time < max_wait_time )); do
 
             # Get the log; bail if openstack itself fails
             log_output=$(openstack console log show "$INSTANCE_NAME") || {
-              echo "failure_detail=could not fetch the instance console log (OpenStack error)" >> "$GITHUB_OUTPUT"
+              set_failure_detail "setup status could not be read: the instance console log could not be fetched (OpenStack error)"
               echo "::error ::failed to fetch console log for $INSTANCE_NAME"
               exit 1
             }
@@ -75,12 +87,11 @@ runs:
                 # Real setup failure. Extract the failed ansible task (and loop
                 # item, e.g. the extension name) from the console so the comment
                 # says exactly where it failed -- not a generic timeout message.
-                clean=$(printf '%s\n' "$log_output" | sed -E 's/\x1b\[[0-9;]*m//g')
-                failed_task=$(printf '%s\n' "$clean" | grep -oE 'TASK \[[^]]+\]' | tail -1 | sed -E 's/^TASK \[//; s/\]$//')
-                failed_item=$(printf '%s\n' "$clean" | grep -E 'failed:' | grep -oE '\(item=[^)]+\)' | tail -1 | sed -E 's/^\(item=//; s/\)$//')
+                failed_task=$(last_ansible_task "$log_output")
+                failed_item=$(printf '%s\n' "$log_output" | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E 'failed:' | grep -oE '\(item=[^)]+\)' | tail -1 | sed -E 's/^\(item=//; s/\)$//')
                 detail="setup FAILED at ansible task \`${failed_task:-unknown}\`"
                 if [ -n "$failed_item" ]; then detail="$detail (item \`$failed_item\`)"; fi
-                { echo "failure_detail<<EOF"; echo "$detail"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+                set_failure_detail "$detail"
                 echo "::error ::$detail"
                 exit 1
             else
@@ -90,10 +101,9 @@ runs:
         done
 
         if [[ "$status" != "complete" ]]; then
-            clean=$(printf '%s\n' "$log_output" | sed -E 's/\x1b\[[0-9;]*m//g')
-            last_task=$(printf '%s\n' "$clean" | grep -oE 'TASK \[[^]]+\]' | tail -1 | sed -E 's/^TASK \[//; s/\]$//')
+            last_task=$(last_ansible_task "$log_output")
             detail="setup did NOT finish within ${max_wait_time}s (timed out); last task seen was \`${last_task:-unknown}\`"
-            { echo "failure_detail<<EOF"; echo "$detail"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+            set_failure_detail "$detail"
             echo "::error ::$detail"
             exit 1
         fi
