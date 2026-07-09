@@ -24,7 +24,7 @@ jobs:
     outputs:
       continue: ${{ steps.email_command.outputs.continue }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: admin-token
@@ -63,7 +63,7 @@ jobs:
       group: morphocloud-instance-issue-${{ github.event.issue.number }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Define instance name
         id: define
