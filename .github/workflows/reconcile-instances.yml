@@ -72,8 +72,7 @@ jobs:
               status=$(echo "$j" | jq -r '.status // ""')
               task_state=$(echo "$j" | jq -r '."OS-EXT-STS:task_state" // ""')
               updated=$(echo "$j" | jq -r '.updated // ""')
-              addr_count=$(echo "$j" | jq -r '.addresses.auto_allocated_network | length')
-              echo "instance_name [$instance_name] status [$status] task_state [$task_state] updated [$updated] addresses [$addr_count]"
+              echo "instance_name [$instance_name] status [$status] task_state [$task_state] updated [$updated]"
 
               # Skip in-flight instances: a pending Nova task, or any change
               # within the grace window (covers gaps where a command workflow
@@ -87,21 +86,26 @@ jobs:
                 continue
               fi
 
+              # Floating-IP presence is judged from the Neutron port binding
+              # (same as the action's verify_end_state step), not from Nova's
+              # addresses view: the latter hardcodes a network name that can
+              # differ in downstream repos and lags the real Neutron state.
+              port_id=$(openstack port list --server "$instance_name" -f json | jq -r '.[0].ID // ""')
+              fip_count=0
+              if [[ -n "$port_id" ]]; then
+                fip_count=$(echo "$floating_ips" | jq --arg port "$port_id" '[.[] | select(.Port == $port)] | length')
+              fi
+              echo "port [$port_id] floating IPs bound [$fip_count]"
+
               reason=""
-              if [[ "$status" == "ACTIVE" && "$addr_count" -lt 2 ]]; then
+              if [[ "$status" == "ACTIVE" && "$fip_count" -lt 1 ]]; then
                 reason="the instance is ACTIVE but has no floating IP — it is unreachable (users cannot connect, auto-shelving cannot measure uptime) while still consuming SUs"
               elif [[ "$status" == "SHELVED" ]]; then
                 reason="the instance is stuck in SHELVED — the offload never completed, typically a failed shelve that /unshelve cannot recover"
               elif [[ "$status" == "ERROR" ]]; then
                 reason="the instance is in ERROR state"
-              elif [[ "$status" == "SHELVED_OFFLOADED" ]]; then
-                port_id=$(openstack port list --server "$instance_name" -f json | jq -r '.[0].ID // ""')
-                if [[ -n "$port_id" ]]; then
-                  fip_count=$(echo "$floating_ips" | jq --arg port "$port_id" '[.[] | select(.Port == $port)] | length')
-                  if [[ "$fip_count" -ne 0 ]]; then
-                    reason="the instance is shelved but a floating IP is still bound to its port — it leaks a pool IP and can break the next /unshelve"
-                  fi
-                fi
+              elif [[ "$status" == "SHELVED_OFFLOADED" && "$fip_count" -ne 0 ]]; then
+                reason="the instance is shelved but a floating IP is still bound to its port — it leaks a pool IP and can break the next /unshelve"
               fi
 
               issue_number=${instance_name##*-}

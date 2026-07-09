@@ -60,7 +60,7 @@ runs:
       shell: bash
       run: |
         if [[ ! $COMMAND_NAME =~ ^(create|delete|shelve|unshelve)$ ]]; then
-          echo "::error ::Unknown command name 'COMMAND_NAME'. Valid commands are 'create', 'delete', 'shelve' or 'unshelve'."
+          echo "::error ::Unknown command name '$COMMAND_NAME'. Valid commands are 'create', 'delete', 'shelve' or 'unshelve'."
           exit 1
         fi
         if [[ ! $UNAPPROVE_AFTER_DELETE =~ ^(false|true)$ ]]; then
@@ -185,9 +185,44 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+    - name: Check if instance is already in the requested state
+      id: check_noop
+      if:
+        ${{ steps.check_instance.outputs.exists == 'true' &&
+        (inputs.command_name == 'unshelve' || inputs.command_name == 'shelve')
+        }}
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        # A redundant command (double /unshelve, /shelve of an already-shelved
+        # instance) must not re-run the state transition: acting on an
+        # already-transitioned instance mutates network state from stale
+        # snapshots (see Instances#166 postmortem, where a duplicate /unshelve
+        # released the floating IP of a running instance and left it
+        # unreachable). Record the no-op so the execute/poll steps below are
+        # skipped. The floating-IP repair, email, and post-condition steps
+        # still run, so a redundant command degrades to a harmless
+        # "ensure and report" operation.
+        status=$(openstack server show "$INSTANCE_NAME" -c status -f value)
+        echo "status [$status] expected [$EXPECTED_STATUS]"
+        if [[ "$status" == "$EXPECTED_STATUS" ]]; then
+          noop=true
+        else
+          noop=false
+        fi
+        echo "noop [$noop]"
+        echo "noop=$noop" >> $GITHUB_OUTPUT
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+        EXPECTED_STATUS: ${{ steps.expected_status.outputs.value }}
+
     - name: Detect corrupt shelved state (unshelve)
       id: check_corrupt_shelved
-      if: ${{ inputs.command_name == 'unshelve' }}
+      if:
+        ${{ steps.check_instance.outputs.exists == 'true' && inputs.command_name
+        == 'unshelve' && steps.check_noop.outputs.noop != 'true' }}
       shell: bash
       run: |
         source ~/venv/bin/activate
@@ -224,39 +259,6 @@ runs:
           @MorphoCloud/morphocloud-admins — this instance needs an admin `shelveOffload` (push it to `SHELVED_OFFLOADED`, then unshelve) or a delete + rebuild from the data volume. The data volume is preserved either way.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-    - name: Check if instance is already in the requested state
-      id: check_noop
-      if:
-        ${{ steps.check_instance.outputs.exists == 'true' &&
-        (inputs.command_name == 'unshelve' || inputs.command_name == 'shelve')
-        }}
-      shell: bash
-      run: |
-        source ~/venv/bin/activate
-
-        # A redundant command (double /unshelve, /shelve of an already-shelved
-        # instance) must not re-run the state transition: acting on an
-        # already-transitioned instance mutates network state from stale
-        # snapshots (see Instances#166 postmortem, where a duplicate /unshelve
-        # released the floating IP of a running instance and left it
-        # unreachable). Record the no-op so the execute/poll steps below are
-        # skipped. The floating-IP repair, email, and post-condition steps
-        # still run, so a redundant command degrades to a harmless
-        # "ensure and report" operation.
-        status=$(openstack server show "$INSTANCE_NAME" -c status -f value)
-        echo "status [$status] expected [$EXPECTED_STATUS]"
-        if [[ "$status" == "$EXPECTED_STATUS" ]]; then
-          noop=true
-        else
-          noop=false
-        fi
-        echo "noop [$noop]"
-        echo "noop=$noop" >> $GITHUB_OUTPUT
-      env:
-        OS_CLOUD: ${{ inputs.os_cloud }}
-        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
-        EXPECTED_STATUS: ${{ steps.expected_status.outputs.value }}
 
     - name: Check if instance has a floating IP
       if:
