@@ -59,7 +59,7 @@ runs:
     - name: Validate command
       shell: bash
       run: |
-        if [[ ! $COMMAND_NAME =~ ^create|delete|shelve|unshelve$ ]]; then
+        if [[ ! $COMMAND_NAME =~ ^(create|delete|shelve|unshelve)$ ]]; then
           echo "::error ::Unknown command name 'COMMAND_NAME'. Valid commands are 'create', 'delete', 'shelve' or 'unshelve'."
           exit 1
         fi
@@ -139,8 +139,21 @@ runs:
 
           `${{ inputs.command_name }}` command failed because **${{ steps.define.outputs.instance_name }}** instance does not exist.
 
+    - name: instance does not exist (failure)
+      if: ${{ steps.check_instance.outputs.exists == 'false' }}
+      shell: bash
+      run: |
+        # Fail fast: without this, later unguarded steps run 'openstack server
+        # show' against the missing instance and fail with misleading errors
+        # (e.g. a spurious "server action already in progress" comment).
+        echo "::error ::Instance $INSTANCE_NAME does not exist"
+        exit 1
+      env:
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
     - name: Check if server action already in progress
       id: check_task_state
+      if: ${{ steps.check_instance.outputs.exists == 'true' }}
       shell: bash
       run: |
         source ~/venv/bin/activate
@@ -211,6 +224,39 @@ runs:
           @MorphoCloud/morphocloud-admins — this instance needs an admin `shelveOffload` (push it to `SHELVED_OFFLOADED`, then unshelve) or a delete + rebuild from the data volume. The data volume is preserved either way.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Check if instance is already in the requested state
+      id: check_noop
+      if:
+        ${{ steps.check_instance.outputs.exists == 'true' &&
+        (inputs.command_name == 'unshelve' || inputs.command_name == 'shelve')
+        }}
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        # A redundant command (double /unshelve, /shelve of an already-shelved
+        # instance) must not re-run the state transition: acting on an
+        # already-transitioned instance mutates network state from stale
+        # snapshots (see Instances#166 postmortem, where a duplicate /unshelve
+        # released the floating IP of a running instance and left it
+        # unreachable). Record the no-op so the execute/poll steps below are
+        # skipped. The floating-IP repair, email, and post-condition steps
+        # still run, so a redundant command degrades to a harmless
+        # "ensure and report" operation.
+        status=$(openstack server show "$INSTANCE_NAME" -c status -f value)
+        echo "status [$status] expected [$EXPECTED_STATUS]"
+        if [[ "$status" == "$EXPECTED_STATUS" ]]; then
+          noop=true
+        else
+          noop=false
+        fi
+        echo "noop [$noop]"
+        echo "noop=$noop" >> $GITHUB_OUTPUT
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+        EXPECTED_STATUS: ${{ steps.expected_status.outputs.value }}
 
     - name: Check if instance has a floating IP
       if:
@@ -302,9 +348,16 @@ runs:
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     - name: Release stuck floating IP from port before unshelve
+      # Only when the IP check above found NO healthy assignment: a floating IP
+      # bound to the port while the instance shows no address is stuck (e.g.
+      # left behind by a failed unshelve) and would make 'associate_ip' fail.
+      # When has_ip_assigned is true the binding is healthy — releasing it
+      # would strand a running instance without connectivity, because the
+      # re-associate steps below are skipped in that case (Instances#166).
       if:
         ${{ steps.check_instance.outputs.exists == 'true' && inputs.command_name
-        == 'unshelve' }}
+        == 'unshelve' && steps.check_instance_has_ip.outputs.has_ip_assigned ==
+        'false' }}
       id: release_stuck_ip
       shell: bash
       run: |
@@ -313,7 +366,7 @@ runs:
         # SHELVED_OFFLOADED instances have empty addresses in 'openstack server show',
         # but their Neutron port persists. A previously failed unshelve can leave a
         # floating IP stuck on that port, causing the subsequent 'associate_ip' step
-        # to fail. Release any such stuck IP unconditionally before proceeding.
+        # to fail. Release any such stuck IP before proceeding.
 
         port_id=$(openstack port list --server "$INSTANCE_NAME" -f json | jq -r '.[0].ID // ""')
         echo "port_id [$port_id]"
@@ -432,7 +485,11 @@ runs:
 
     - name: Execute command
       id: execute_command
-      if: ${{ steps.check_instance.outputs.exists == 'true' }}
+      # noop is only set for shelve/unshelve; for delete it is empty and the
+      # command always executes.
+      if:
+        ${{ steps.check_instance.outputs.exists == 'true' &&
+        steps.check_noop.outputs.noop != 'true' }}
       shell: bash
       run: |
         source ~/venv/bin/activate
@@ -459,7 +516,9 @@ runs:
 
     - name: Poll instance status
       id: instance_poll
-      if: ${{ steps.expected_status.outputs.value != '' }}
+      if:
+        ${{ steps.expected_status.outputs.value != '' &&
+        steps.check_noop.outputs.noop != 'true' }}
       shell: bash
       run: |
         source ~/venv/bin/activate
@@ -666,6 +725,59 @@ runs:
           ### Command Results ❌
 
           Failed to set instance properties while unshelving.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    # Post-condition check: a green run must mean a working instance. Verify
+    # the end state against Nova and Neutron before reporting success (or
+    # sending a connection email that could never work). This turns a bug like
+    # the Instances#166 floating-IP release into a loud failure instead of a
+    # silent multi-hour outage on a billing instance.
+    - name: Verify instance end state
+      id: verify_end_state
+      if:
+        ${{ steps.check_instance.outputs.exists == 'true' && success() &&
+        (inputs.command_name == 'unshelve' || inputs.command_name == 'shelve')
+        }}
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        status=$(openstack server show "$INSTANCE_NAME" -c status -f value)
+        port_id=$(openstack port list --server "$INSTANCE_NAME" -f json | jq -r '.[0].ID // ""')
+        fip_count=0
+        if [[ -n "$port_id" ]]; then
+          fip_count=$(openstack floating ip list -f json | jq --arg port "$port_id" '[.[] | select(.Port == $port)] | length')
+        fi
+        echo "status [$status] port [$port_id] floating IPs bound [$fip_count]"
+
+        if [[ "$COMMAND_NAME" == "unshelve" ]]; then
+          if [[ "$status" != "ACTIVE" || "$fip_count" -lt 1 ]]; then
+            echo "::error ::Post-condition failed after unshelve: status=$status, floating IPs bound to port=$fip_count (expected ACTIVE with a floating IP)."
+            exit 1
+          fi
+        else
+          if [[ "$status" != "SHELVED_OFFLOADED" || "$fip_count" -ne 0 ]]; then
+            echo "::error ::Post-condition failed after shelve: status=$status, floating IPs bound to port=$fip_count (expected SHELVED_OFFLOADED with no floating IP)."
+            exit 1
+          fi
+        fi
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+        COMMAND_NAME: ${{ inputs.command_name }}
+
+    - name: comment (post-condition failed)
+      if: ${{ steps.verify_end_state.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Command Results ❌
+
+          `${{ inputs.command_name }}` completed, but **${{ steps.define.outputs.instance_name }}** did not end up in a working state.
+
+          @MorphoCloud/morphocloud-admins — the post-condition check failed (see log); the instance likely needs attention.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
