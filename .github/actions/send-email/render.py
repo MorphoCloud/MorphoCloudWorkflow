@@ -9,6 +9,7 @@ markdown all pass through untouched.
 import json
 import os
 import sys
+import uuid
 from pathlib import Path
 
 t = json.loads(Path(sys.argv[1]).read_text())
@@ -31,10 +32,11 @@ def render(text: str) -> str:
     return text
 
 
+delimiter = f"__RENDER_EOF_{uuid.uuid4().hex}__"
 with Path(os.environ["GITHUB_OUTPUT"]).open("a") as out:
-    out.write("subject<<__RENDER_EOF__\n")
+    out.write(f"subject<<{delimiter}\n")
     out.write(render(t["credentials_subject"]) + "\n")
-    out.write("__RENDER_EOF__\n")
-    out.write("body<<__RENDER_EOF__\n")
+    out.write(f"{delimiter}\n")
+    out.write(f"body<<{delimiter}\n")
     out.write(render(t["credentials_body"]) + "\n")
-    out.write("__RENDER_EOF__\n")
+    out.write(f"{delimiter}\n")

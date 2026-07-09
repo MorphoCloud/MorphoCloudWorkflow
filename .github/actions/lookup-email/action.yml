@@ -17,6 +17,8 @@ inputs:
       "Course team slug (mc-…). When set and lookup_url is an Apps Script
       endpoint, uses lookup_course_roster — the roster sheet is resolved
       server-side from the approved course, never named by the caller."
+    required: false
+    default: ""
   api_key:
     description:
       "Optional API key sent as X-Api-Key header. Required when lookup_url
