@@ -59,6 +59,12 @@ permissions:
 jobs:
   control:
     runs-on: self-hosted
+    # Shared per-issue group (see control-instance.yml). Job-level so it
+    # applies on both invocation paths: workflow-level concurrency is ignored
+    # when a reusable workflow is invoked via workflow_call.
+    concurrency:
+      group: morphocloud-instance-issue-${{ inputs.issue_number }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
 

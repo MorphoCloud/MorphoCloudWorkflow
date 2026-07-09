@@ -57,6 +57,11 @@ jobs:
     runs-on: self-hosted
     needs: authorize
     if: ${{ needs.authorize.outputs.continue == 'true' }}
+    # Shared per-issue group (see control-instance.yml): /email must not read
+    # instance metadata while a shelve/unshelve is mid-flight on the same issue.
+    concurrency:
+      group: morphocloud-instance-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
 

@@ -113,6 +113,17 @@ jobs:
     runs-on: self-hosted
     needs: authorize
     if: ${{ needs.authorize.outputs.continue == 'true' }}
+    # Serialize all state-mutating work per issue. The group is shared with
+    # create-instance, send-email, delete-instance-and-volume and
+    # control-instance-from-workflow: without it, rapid duplicate commands (or
+    # a user command racing the auto-shelve cron) mutate the same OpenStack
+    # resources concurrently — a redundant /unshelve once released the floating
+    # IP of a running instance and left it unreachable (#166 postmortem).
+    # Job-level (not workflow-level) so the authorize job still runs
+    # immediately and the command reaction is not delayed.
+    concurrency:
+      group: morphocloud-instance-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
 

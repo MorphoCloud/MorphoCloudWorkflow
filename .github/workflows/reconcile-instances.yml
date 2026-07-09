@@ -1,0 +1,143 @@
+name: Reconcile Instances
+
+# Level-triggered safety net for the edge-triggered command workflows: each
+# run checks that every instance's actual OpenStack state still satisfies the
+# invariants the commands are supposed to maintain, and alerts admins on the
+# instance's issue when it does not. Motivated by the Instances#166
+# postmortem: a redundant /unshelve released the floating IP of a running
+# (billing) GPU instance and nothing noticed for 11 hours — auto-shelving
+# could not see it either, because it measures uptime over SSH via the very
+# floating IP that was missing.
+#
+# Invariants (instances with a pending task_state, or updated within the
+# grace window, are skipped as in-flight):
+#   ACTIVE            -> has a floating IP
+#   SHELVED_OFFLOADED -> no floating IP left bound to its port
+#   SHELVED           -> transient; persisting means a failed/corrupt shelve
+#   ERROR             -> always a violation
+#
+# Alert dedup: the instance's issue gets the 'invariant-violation' label
+# together with the alert comment; the label is removed silently once the
+# instance is healthy again, re-arming the alert.
+
+on:
+  schedule:
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ vars.MORPHOCLOUD_OS_CLOUD }}
+  cancel-in-progress: false
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # App token (not GITHUB_TOKEN) so the alert comment triggers the
+      # on-admin-mention workflow, which emails the admins.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Check instance invariants
+        run: |
+          source ~/venv/bin/activate
+
+          instance_prefix=${PREFIX:+${PREFIX}_}
+          instance_basename="${instance_prefix}instance"
+
+          grace_seconds=1800
+          now_epoch=$(date +%s)
+
+          # One snapshot for all port-binding lookups below; a slightly stale
+          # view is fine — a violation that appears mid-run is caught by the
+          # next scheduled run.
+          floating_ips=$(openstack floating ip list -f json)
+
+          openstack server list --name "^${instance_basename}-\d+" -f json | \
+          jq -r '.[].Name' | \
+            while read -r instance_name; do
+              if ! j=$(openstack server show "$instance_name" -f json); then
+                echo "::warning ::Failed to retrieve details for [$instance_name]; skipping."
+                continue
+              fi
+              status=$(echo "$j" | jq -r '.status // ""')
+              task_state=$(echo "$j" | jq -r '."OS-EXT-STS:task_state" // ""')
+              updated=$(echo "$j" | jq -r '.updated // ""')
+              echo "instance_name [$instance_name] status [$status] task_state [$task_state] updated [$updated]"
+
+              # Skip in-flight instances: a pending Nova task, or any change
+              # within the grace window (covers gaps where a command workflow
+              # is between OpenStack calls with no task_state set).
+              if [[ -n "$task_state" ]]; then
+                continue
+              fi
+              updated_epoch=$(date -d "$updated" +%s 2>/dev/null || echo 0)
+              if (( now_epoch - updated_epoch < grace_seconds )); then
+                echo "Updated within grace window; skipping."
+                continue
+              fi
+
+              # Floating-IP presence is judged from the Neutron port binding
+              # (same as the action's verify_end_state step), not from Nova's
+              # addresses view: the latter hardcodes a network name that can
+              # differ in downstream repos and lags the real Neutron state.
+              port_id=$(openstack port list --server "$instance_name" -f json | jq -r '.[0].ID // ""')
+              fip_count=0
+              if [[ -n "$port_id" ]]; then
+                fip_count=$(echo "$floating_ips" | jq --arg port "$port_id" '[.[] | select(.Port == $port)] | length')
+              fi
+              echo "port [$port_id] floating IPs bound [$fip_count]"
+
+              reason=""
+              if [[ "$status" == "ACTIVE" && "$fip_count" -lt 1 ]]; then
+                reason="the instance is ACTIVE but has no floating IP — it is unreachable (users cannot connect, auto-shelving cannot measure uptime) while still consuming SUs"
+              elif [[ "$status" == "SHELVED" ]]; then
+                reason="the instance is stuck in SHELVED — the offload never completed, typically a failed shelve that /unshelve cannot recover"
+              elif [[ "$status" == "ERROR" ]]; then
+                reason="the instance is in ERROR state"
+              elif [[ "$status" == "SHELVED_OFFLOADED" && "$fip_count" -ne 0 ]]; then
+                reason="the instance is shelved but a floating IP is still bound to its port — it leaks a pool IP and can break the next /unshelve"
+              fi
+
+              issue_number=${instance_name##*-}
+              if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+                echo "::warning ::Failed to extract valid issue number from instance name [$instance_name]"
+                continue
+              fi
+
+              if ! has_label=$(gh issue view "$issue_number" --json labels --jq 'any(.labels[].name; . == "invariant-violation")'); then
+                echo "::warning ::Failed to retrieve labels for issue $issue_number (instance $instance_name); skipping."
+                continue
+              fi
+
+              if [[ -n "$reason" ]]; then
+                echo "::warning ::$instance_name violates an invariant: $reason"
+                if [[ "$has_label" == "true" ]]; then
+                  echo "Issue #$issue_number already flagged; not re-alerting."
+                  continue
+                fi
+                printf '### Instance state alert\n\nAutomated reconciliation found **%s** in an inconsistent state: %s.\n\n@MorphoCloud/morphocloud-admins — please take a look.\n\nSee details at %s\n' "$instance_name" "$reason" "$RUN_URL" > /tmp/reconcile-comment.md
+                gh issue edit "$issue_number" --add-label "invariant-violation" || echo "::warning ::Failed to add label to issue $issue_number"
+                gh issue comment "$issue_number" --body-file /tmp/reconcile-comment.md || echo "::warning ::Failed to comment on issue $issue_number"
+              elif [[ "$has_label" == "true" ]]; then
+                echo "Instance $instance_name is healthy again; clearing label on issue #$issue_number."
+                gh issue edit "$issue_number" --remove-label "invariant-violation" || echo "::warning ::Failed to remove label from issue $issue_number"
+              fi
+            done
+        env:
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
+          RUN_URL:
+            https://github.com/${{ github.repository }}/actions/runs/${{
+            github.run_id }}
