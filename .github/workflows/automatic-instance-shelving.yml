@@ -71,6 +71,42 @@ jobs:
               issue_number=${instance_name##*-}
               echo "issue_number [$issue_number]"
 
+              # --- Workshop instances: wall-clock shelve (issue #254) ---
+              # Workshop sub-issues carry an absolute "shelve-at:<epoch>" label
+              # (stamped by create-workshop.yml = workshop end + 1h grace). For
+              # these, shelve purely on wall-clock via the control plane: NO SSH,
+              # no uptime, no timeout read. This is reboot- and outage-immune -- a
+              # mid-workshop reboot resets guest uptime and would defer the old
+              # uptime-based shelve indefinitely (incident: workshop #144). The
+              # presence of the label IS the workshop discriminator; individual
+              # instances have none and fall through to the uptime/SSH path below,
+              # unchanged.
+              if ! shelve_at="$(
+                gh issue view "$issue_number" --json labels \
+                  --jq '[.labels[].name
+                        | select(test("^shelve-at:[0-9]+$"))
+                        | capture(":(?<n>[0-9]+)$").n
+                        | tonumber] | max // empty'
+              )"; then
+                echo "::warning ::Failed to retrieve labels for issue $issue_number (instance $instance_name). Skipping."
+                continue
+              fi
+
+              if [[ -n "$shelve_at" ]]; then
+                now=$(date +%s)
+                if (( now >= shelve_at )); then
+                  echo "Workshop instance [$instance_name] (issue #$issue_number) due to shelve (now=$now >= shelve-at=$shelve_at). Shelving."
+                  if ! gh workflow run control-instance-from-workflow.yml \
+                    -f issue_number=$issue_number \
+                    -f command_name=shelve; then
+                    echo "::warning ::Failed to trigger shelve workflow for workshop instance [$instance_name] (issue #$issue_number)"
+                  fi
+                else
+                  echo "Workshop instance [$instance_name] (issue #$issue_number) not yet due (now=$now < shelve-at=$shelve_at). Skipping."
+                fi
+                continue
+              fi
+
               # Retrieve the IP address of the instance
               instance_ip=$(
                 openstack server show $instance_name -c addresses -f json | \

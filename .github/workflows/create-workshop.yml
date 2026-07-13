@@ -187,9 +187,15 @@ jobs:
             # fail-open fallback: anchor to create time (original behavior)
             timeout_hours=$(( DURATION_DAYS * 24 ))
             expiration_days=$(( DURATION_DAYS + 1 ))
+            shelve_at=$(( now + timeout_hours * 3600 ))
           fi
           timeout_label="timeout:${timeout_hours}hrs"
           expiration_label="expiration:${expiration_days}d"
+          # Absolute wall-clock shelve time (workshop end + 1h grace). This label
+          # is the workshop discriminator read by automatic-instance-shelving.yml:
+          # workshop instances shelve purely on this epoch (reboot/outage-immune),
+          # never on guest uptime. Always present on workshop sub-issues.
+          shelve_at_label="shelve-at:${shelve_at}"
 
           declare -a requested_instance_issues=()
 
@@ -202,6 +208,7 @@ jobs:
 
           gh label create "$timeout_label" --color "5319E7" --description "Instance shelves after ${timeout_hours}h uptime (workshop end + 1h)" --force >/dev/null 2>&1 || true
           gh label create "$expiration_label" --color "892368" --description "Instance deleted ${expiration_days}d after creation (workshop end + 24h)" --force >/dev/null 2>&1 || true
+          gh label create "$shelve_at_label" --color "0E8A16" --description "Workshop instance shelves at this wall-clock epoch (workshop end + 1h grace)" --force >/dev/null 2>&1 || true
 
           for idx in $(seq 1 "$NUMBER_OF_INSTANCES"); do
             issue_title="Instance: Workshop ${ISSUE_NUMBER} - Participant ${idx} (${REQUEST_TITLE})"
@@ -250,6 +257,7 @@ jobs:
                 -f "labels[]=flavor:$INSTANCE_FLAVOR" \
                 -f "labels[]=$timeout_label" \
                 -f "labels[]=$expiration_label" \
+                -f "labels[]=$shelve_at_label" \
                 -f "assignees[]=$ORGANIZER_USERNAME"
             )
 
