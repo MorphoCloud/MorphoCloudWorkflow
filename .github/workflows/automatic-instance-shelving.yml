@@ -71,6 +71,52 @@ jobs:
               issue_number=${instance_name##*-}
               echo "issue_number [$issue_number]"
 
+              # Validate issue number extraction (mirrors the SHUTOFF path above)
+              # so the label read below fails on a real problem, not a bad name.
+              if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+                echo "::warning ::Failed to extract valid issue number from instance name [$instance_name]"
+                continue
+              fi
+
+              # Read this instance's issue labels ONCE and reuse them for both the
+              # workshop shelve-at discriminator (below) and the individual
+              # timeout:Nhrs lookup (further down) -- avoids a second gh API call
+              # per individual instance on every 5-min tick.
+              if ! issue_labels="$(gh issue view "$issue_number" --json labels)"; then
+                echo "::warning ::Failed to retrieve labels for issue $issue_number (instance $instance_name). Skipping."
+                continue
+              fi
+
+              # --- Workshop instances: wall-clock shelve (issue #254) ---
+              # Workshop sub-issues carry an absolute "shelve-at:<epoch>" label
+              # (stamped by create-workshop.yml = workshop end + 1h grace). For
+              # these, shelve purely on wall-clock via the control plane: NO SSH,
+              # no uptime, no timeout read. This is reboot- and outage-immune -- a
+              # mid-workshop reboot resets guest uptime and would defer the old
+              # uptime-based shelve indefinitely (incident: workshop #144). The
+              # presence of the label IS the workshop discriminator; individual
+              # instances have none and fall through to the uptime/SSH path below,
+              # unchanged.
+              shelve_at="$(jq -r '[.labels[].name
+                    | select(test("^shelve-at:[0-9]+$"))
+                    | capture(":(?<n>[0-9]+)$").n
+                    | tonumber] | max // empty' <<<"$issue_labels")"
+
+              if [[ -n "$shelve_at" ]]; then
+                now=$(date +%s)
+                if (( now >= shelve_at )); then
+                  echo "Workshop instance [$instance_name] (issue #$issue_number) due to shelve (now=$now >= shelve-at=$shelve_at). Shelving."
+                  if ! gh workflow run control-instance-from-workflow.yml \
+                    -f issue_number=$issue_number \
+                    -f command_name=shelve; then
+                    echo "::warning ::Failed to trigger shelve workflow for workshop instance [$instance_name] (issue #$issue_number)"
+                  fi
+                else
+                  echo "Workshop instance [$instance_name] (issue #$issue_number) not yet due (now=$now < shelve-at=$shelve_at). Skipping."
+                fi
+                continue
+              fi
+
               # Retrieve the IP address of the instance
               instance_ip=$(
                 openstack server show $instance_name -c addresses -f json | \
@@ -124,17 +170,12 @@ jobs:
                 uptime_hours=$(echo "scale=2; $uptime_seconds / 3600" | bc)
               fi
 
-              # Derive timeout_hrs from labels like "timeout:24hrs"
-              if ! timeout_hrs="$(
-                gh issue view "$issue_number" --json labels \
-                  --jq '[.labels[].name
-                        | select(test("^timeout:[0-9]+hrs$"))
-                        | capture(":(?<n>[0-9]+)hrs$").n
-                        | tonumber] | max // empty'
-              )"; then
-                echo "::warning ::Failed to retrieve labels for issue $issue_number (instance $instance_name). Skipping."
-                continue
-              fi
+              # Derive timeout_hrs from labels like "timeout:24hrs", reusing the
+              # labels fetched once above (no second gh issue view).
+              timeout_hrs="$(jq -r '[.labels[].name
+                    | select(test("^timeout:[0-9]+hrs$"))
+                    | capture(":(?<n>[0-9]+)hrs$").n
+                    | tonumber] | max // empty' <<<"$issue_labels")"
 
               if [[ -z "$timeout_hrs" ]]; then
                 # Fall back to repo variable INSTANCE_SHELVING_TIMEOUT_HRS, then hardcoded 4.
