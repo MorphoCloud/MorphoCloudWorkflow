@@ -940,6 +940,44 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+    - name: Detect misconfigured course repo
+      id: course_config
+      if:
+        ${{ steps.check_instance.outputs.exists == 'true' && success() &&
+        inputs.command_name == 'unshelve' && inputs.course_team_slug == '' }}
+      shell: bash
+      run: |
+        # A course repo (structurally: it ships create-course-instance.yml)
+        # whose course_team_slug variable is unset would otherwise fall
+        # through silently to the individual-email path below — the student
+        # gets a credentials email built for the wrong flow (#228 / review
+        # of #205). Detect it so the routing fails loudly instead.
+        if [[ -f ".github/workflows/create-course-instance.yml" ]]; then
+          echo "course_misconfigured=true" >> $GITHUB_OUTPUT
+        else
+          echo "course_misconfigured=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: comment (course repo missing configuration)
+      id: comment_course_misconfig
+      if: ${{ steps.course_config.outputs.course_misconfigured == 'true' }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Command Results ❌
+
+          Instance **${{ steps.define.outputs.instance_name }}** is up and running, but this course repository is missing its `COURSE_TEAM_SLUG` configuration, so the connection email could not be sent. @MorphoCloud/morphocloud-admins — please set the repository variable, then re-run `/unshelve`.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: course repo missing configuration (failure)
+      if: ${{ steps.course_config.outputs.course_misconfigured == 'true' }}
+      shell: bash
+      run: |
+        echo "::error ::Course repo without course_team_slug — refusing the individual-email fallback"
+        exit 1
+
     - name: Send email (individual)
       id: send_email_individual
       # Failure is handled gracefully below ("Triage email failure"): an
@@ -1094,6 +1132,7 @@ runs:
         steps.comment_disassociate_failed.outcome != 'success' &&
         steps.comment_set_properties_failed.outcome != 'success' &&
         steps.comment_postcondition_failed.outcome != 'success' &&
+        steps.comment_course_misconfig.outcome != 'success' &&
         steps.comment_email_failed.outcome != 'success' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
