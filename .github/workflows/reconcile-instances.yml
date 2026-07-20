@@ -37,7 +37,7 @@ jobs:
   reconcile:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # App token (not GITHUB_TOKEN) so the alert comment triggers the
       # on-admin-mention workflow, which emails the admins.

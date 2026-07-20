@@ -16,7 +16,7 @@ jobs:
       contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
       contains(github.event.comment.body, '/create') }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: admin-token
@@ -43,7 +43,7 @@ jobs:
             "${{ steps.admins.outputs.members }},${{
             github.event.issue.user.login }}"
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: ${{ steps.create_command.outputs.continue == 'true' }}
 
       - name: Check workflow management approval
