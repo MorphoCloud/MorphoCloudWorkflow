@@ -123,6 +123,11 @@ jobs:
           fi
 
           if [[ -z "$COURSE_TEAM_SLUG" ]]; then
+            # Without this comment the student saw only a failed run with no
+            # explanation, unlike the "not enrolled" branch below (#228).
+            gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
+
+          This course repository is not fully configured yet, so \`/create\` cannot proceed. @MorphoCloud/morphocloud-admins — the \`COURSE_TEAM_SLUG\` repository variable is not set."
             echo "::error ::COURSE_TEAM_SLUG is not configured for this repo"
             exit 1
           fi

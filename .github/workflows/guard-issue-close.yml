@@ -48,15 +48,28 @@ jobs:
             exit 0
           fi
 
+          dispatch_failed=false
           if [[ "$SERVER_STATUS" == "ACTIVE" || "$SERVER_STATUS" == "SHUTOFF" ]]; then
             echo "Shelving $INSTANCE_NAME (status: $SERVER_STATUS) after issue close..."
-            GH_TOKEN="$APP_TOKEN" gh workflow run control-instance-from-workflow.yml \
+            # Guard the dispatch: an unguarded failure used to still post
+            # "is being shelved" while the instance kept running (#228).
+            if GH_TOKEN="$APP_TOKEN" gh workflow run control-instance-from-workflow.yml \
               -f issue_number="$ISSUE_NUMBER" \
-              -f command_name=shelve
-            STATE="**${INSTANCE_NAME}** is being shelved — allocation usage stops; your data and volume are preserved"
-          elif [[ -n "$SERVER_STATUS" ]]; then
+              -f command_name=shelve; then
+              STATE="**${INSTANCE_NAME}** is being shelved — allocation usage stops; your data and volume are preserved"
+            else
+              echo "::error ::Failed to dispatch the shelve workflow for ${INSTANCE_NAME}"
+              dispatch_failed=true
+              STATE="**${INSTANCE_NAME}** could not be shelved automatically and is still running (@MorphoCloud/morphocloud-admins — the shelve dispatch failed, please shelve it manually); your data and volume are preserved"
+            fi
+          elif [[ "$SERVER_STATUS" == "SHELVED" || "$SERVER_STATUS" == "SHELVED_OFFLOADED" ]]; then
             echo "$INSTANCE_NAME is $SERVER_STATUS — nothing to shelve."
             STATE="**${INSTANCE_NAME}** remains shelved; your data and volume are preserved"
+          elif [[ -n "$SERVER_STATUS" ]]; then
+            # ERROR/BUILD/PAUSED/… — saying "remains shelved" here would be
+            # untrue (#228); report the actual state.
+            echo "$INSTANCE_NAME is $SERVER_STATUS — nothing to shelve."
+            STATE="**${INSTANCE_NAME}** is currently in \`${SERVER_STATUS}\` state and was not shelved; your data and volume are preserved"
           else
             STATE="the **${VOLUME_NAME}** data volume is preserved"
           fi
@@ -67,6 +80,10 @@ jobs:
 
           - To resume working: reopen this issue and comment \`/unshelve\`.
           - To release the resources permanently: comment \`/delete_all\`."
+
+          if [[ "$dispatch_failed" == "true" ]]; then
+            exit 1
+          fi
         env:
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           INSTANCE_NAME_PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
