@@ -151,6 +151,20 @@ configure the necessary infrastructure:
    The OpenStack cloud allocation name (e.g., `BIO180006_IU`) will be used to
    set the `MORPHOCLOUD_OS_CLOUD` repository variable.
 
+   Then add fail-fast settings under the cloud entry (same indentation level as
+   `auth:`):
+
+   ```yaml
+   api_timeout: 60
+   connect_retries: 2
+   ```
+
+   Without `api_timeout`, a request routed to a hung Jetstream2 API backend
+   waits on the server-side gateway timeout (~10 minutes) before erroring;
+   workflows then burn their entire polling budget on a single call
+   (Instances#168, 2026-07-20). With it, the call fails in one minute and the
+   workflow reports the failure while a retry is still worth attempting.
+
 9. Install `jq`:
 
    ```bash

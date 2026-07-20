@@ -104,6 +104,7 @@ runs:
         issue_number: ${{ inputs.issue_number }}
 
     - name: command results comment (Instance management not approved)
+      id: comment_not_approved
       if: ${{ ! fromJSON(steps.check_approval.outputs.is_approved) }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -133,6 +134,7 @@ runs:
     # 504 during the JS2 brownout diagnosed in Instances#168) fails the job
     # with no comment at all — the user sees only the command reaction.
     - name: comment (failed to check instance exists)
+      id: comment_check_instance_failed
       if: ${{ steps.check_instance.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -146,6 +148,7 @@ runs:
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     - name: command results comment (Instance does not exist)
+      id: comment_not_exist
       if: ${{ steps.check_instance.outputs.exists == 'false' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -189,6 +192,7 @@ runs:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (server action already in progress)
+      id: comment_task_state
       if: ${{ steps.check_task_state.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -263,6 +267,7 @@ runs:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (corrupt shelved state)
+      id: comment_corrupt_shelved
       if: ${{ steps.check_corrupt_shelved.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -353,6 +358,7 @@ runs:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (failed to check instance IP)
+      id: comment_ip_check_failed
       if: ${{ steps.check_instance_has_ip.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -425,6 +431,7 @@ runs:
           ${{ steps.check_instance_has_ip.outputs.instance_ip }}
 
     - name: comment (failed to retrieve or create floating IP)
+      id: comment_ip_create_failed
       if: ${{ steps.ip_create.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -489,6 +496,7 @@ runs:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (failed to associate floating IP with unshelved instance)
+      id: comment_associate_ip_failed
       if: ${{ steps.associate_ip.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -519,6 +527,7 @@ runs:
         COMMAND_NAME: ${{ inputs.command_name }}
 
     - name: command results comment (failure)
+      id: comment_execute_failed
       if: ${{ steps.execute_command.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -607,6 +616,7 @@ runs:
         COMMAND_NAME: ${{ inputs.command_name }}
 
     - name: comment (maximum wait time exceeded)
+      id: comment_max_wait
       if:
         ${{ steps.instance_poll.outcome == 'failure' && failure() &&
         steps.instance_poll.outputs.capacity_error != 'true' }}
@@ -650,6 +660,7 @@ runs:
         ISSUE_NUMBER: ${{ inputs.issue_number }}
 
     - name: comment (no capacity available)
+      id: comment_no_capacity
       if: ${{ steps.instance_poll.outputs.capacity_error == 'true' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -702,6 +713,7 @@ runs:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (failed to disassociate floating IP from unshelved instance)
+      id: comment_disassociate_failed
       if: ${{ steps.disassociate_ip.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -735,6 +747,7 @@ runs:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (failed to set instance properties)
+      id: comment_set_properties_failed
       if: ${{ steps.set_instance_properties.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -786,6 +799,7 @@ runs:
         COMMAND_NAME: ${{ inputs.command_name }}
 
     - name: comment (post-condition failed)
+      id: comment_postcondition_failed
       if: ${{ steps.verify_end_state.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -868,6 +882,7 @@ runs:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (instance up, email pending)
+      id: comment_email_pending
       if: ${{ steps.email_followup.outputs.mode == 'pending' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -878,6 +893,7 @@ runs:
           We couldn't generate your connection email automatically (the instance was still finishing boot). Run `/email` in a couple of minutes to get your connection link.
 
     - name: comment (failed to send email)
+      id: comment_email_failed
       if: ${{ steps.email_followup.outputs.mode == 'failed' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -924,3 +940,43 @@ runs:
         instance_name: ${{ steps.define.outputs.instance_name }}
         instance_status:
           ${{ inputs.command_name == 'delete' && 'DELETED' || '' }}
+
+    # Safety net: every failure MUST surface on the issue. Steps without a
+    # dedicated failure comment (e.g. release_stuck_ip hanging on a wedged
+    # nova-api backend, Instances#168 2026-07-20) previously failed the job in
+    # complete silence — the user saw only the command-accepted reaction and
+    # reasonably assumed success. Fires only when no dedicated FAILURE comment
+    # above was posted; keep the outcome list in sync when adding comment
+    # steps, but never add success-flavored comments (e.g.
+    # comment_email_pending) — those would suppress the safety net after a
+    # later-step failure.
+    - name: comment (unhandled failure)
+      if:
+        ${{ failure() && steps.comment_not_approved.outcome != 'success' &&
+        steps.comment_check_instance_failed.outcome != 'success' &&
+        steps.comment_not_exist.outcome != 'success' &&
+        steps.comment_task_state.outcome != 'success' &&
+        steps.comment_corrupt_shelved.outcome != 'success' &&
+        steps.comment_ip_check_failed.outcome != 'success' &&
+        steps.comment_ip_create_failed.outcome != 'success' &&
+        steps.comment_associate_ip_failed.outcome != 'success' &&
+        steps.comment_execute_failed.outcome != 'success' &&
+        steps.comment_max_wait.outcome != 'success' &&
+        steps.comment_no_capacity.outcome != 'success' &&
+        steps.comment_disassociate_failed.outcome != 'success' &&
+        steps.comment_set_properties_failed.outcome != 'success' &&
+        steps.comment_postcondition_failed.outcome != 'success' &&
+        steps.comment_email_failed.outcome != 'success' }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Command Results ❌
+
+          `${{ inputs.command_name }}` command failed unexpectedly for instance **${{ steps.define.outputs.instance_name || 'unknown' }}** — the instance may not be in the requested state. If the failure happened after the state change, the command itself may have completed — check the run log before retrying.
+
+          This is often a transient OpenStack API error on Jetstream2 — retrying the command may succeed.
+
+          @MorphoCloud/morphocloud-admins — unhandled failure, please check the run log.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}

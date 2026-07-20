@@ -150,3 +150,14 @@ jobs:
           course_team_slug: ${{ vars.COURSE_TEAM_SLUG }}
           mail_server_username: ${{secrets.MAIL_USERNAME}}
           mail_server_password: ${{secrets.MAIL_PASSWORD}}
+
+      # The 👍 added by github/command on the triggering comment means
+      # "accepted", but users read it as "succeeded". On failure, contradict
+      # it visibly on the same comment so the ack cannot be mistaken for a
+      # result (Instances#168: two silent unshelve failures read as success).
+      - name: React to command comment (failure)
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=confused
