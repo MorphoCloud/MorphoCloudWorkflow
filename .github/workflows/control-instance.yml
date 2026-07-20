@@ -137,7 +137,8 @@ jobs:
         run: |
           rid=$(gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" --jq '[.[] | select(.content == "+1" and .user.login == "github-actions[bot]") | .id][0] // ""')
           if [ -n "$rid" ]; then
-            gh api -X DELETE "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions/$rid"
+            # Best-effort: a failed delete must not abort the command run.
+            gh api -X DELETE "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions/$rid" || true
           fi
 
       - name: Check JS2 status
