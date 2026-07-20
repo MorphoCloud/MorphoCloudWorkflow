@@ -22,7 +22,11 @@ runs:
       run: |
         source ~/venv/bin/activate
 
-        instance=$(openstack server list -f json | \
+        # Filter server-side: '--name' is a Nova regex match, so anchor it.
+        # An unfiltered listing is the heaviest Nova query and 504'd during a
+        # transient JS2 API brownout (Instances#168); the exact-match jq below
+        # stays as the authoritative check.
+        instance=$(openstack server list --name "^${INSTANCE_NAME}$" -f json | \
           jq \
             --arg instance_name "$INSTANCE_NAME" \
             -c '.[] | select(.Name == $instance_name)' | \

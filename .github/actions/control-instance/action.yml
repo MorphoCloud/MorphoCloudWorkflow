@@ -129,6 +129,22 @@ runs:
         os_cloud: ${{ inputs.os_cloud }}
         instance_name: ${{ steps.define.outputs.instance_name }}
 
+    # Without this, an OpenStack API error in the existence check (e.g. the
+    # 504 during the JS2 brownout diagnosed in Instances#168) fails the job
+    # with no comment at all — the user sees only the command reaction.
+    - name: comment (failed to check instance exists)
+      if: ${{ steps.check_instance.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Command Results ❌
+
+          `${{ inputs.command_name }}` command failed to be applied to **${{ steps.define.outputs.instance_name }}** instance.
+          Failed to check if the instance exists (OpenStack API error — possibly a transient Jetstream2 issue; retrying the command may succeed).
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
     - name: command results comment (Instance does not exist)
       if: ${{ steps.check_instance.outputs.exists == 'false' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
