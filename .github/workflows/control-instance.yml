@@ -127,6 +127,20 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # github/command adds 👍 when the command is merely ACCEPTED, minutes
+      # before anything runs — but users read 👍 as "completed". Remove it
+      # here and re-add it only on success below, so 👍 exclusively means
+      # the command finished (Instances#168: silent failures read as done).
+      - name: Remove accepted reaction from command comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rid=$(gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" --jq '[.[] | select(.content == "+1" and .user.login == "github-actions[bot]") | .id][0] // ""')
+          if [ -n "$rid" ]; then
+            # Best-effort: a failed delete must not abort the command run.
+            gh api -X DELETE "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions/$rid" || true
+          fi
+
       - name: Check JS2 status
         id: js2_status
         uses: ./.github/actions/check-js2-status
@@ -151,13 +165,18 @@ jobs:
           mail_server_username: ${{secrets.MAIL_USERNAME}}
           mail_server_password: ${{secrets.MAIL_PASSWORD}}
 
-      # The 👍 added by github/command on the triggering comment means
-      # "accepted", but users read it as "succeeded". On failure, contradict
-      # it visibly on the same comment so the ack cannot be mistaken for a
-      # result (Instances#168: two silent unshelve failures read as success).
+      # Completion semantics: 👍 = the command finished successfully,
+      # 👎 = it failed. The accepted-ack 👍 was removed at job start.
+      - name: React to command comment (success)
+        if: ${{ success() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=+1
+
       - name: React to command comment (failure)
         if: ${{ failure() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=confused
+          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=-1

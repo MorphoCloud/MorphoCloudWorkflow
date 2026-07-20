@@ -170,23 +170,40 @@ runs:
       env:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
-    - name: Check if server action already in progress
+    - name: Wait for in-flight server action to settle
       id: check_task_state
       if: ${{ steps.check_instance.outputs.exists == 'true' }}
       shell: bash
       run: |
         source ~/venv/bin/activate
 
-        task_state=$(openstack server show $INSTANCE_NAME -f json | \
-          jq -r '.["OS-EXT-STS:task_state"]')
-
-        echo "task_state [$task_state]"
-        echo "task_state=$task_state" >> $GITHUB_OUTPUT
-
-        if [[ "$task_state" != "null" ]]; then
-            echo "::error ::Server action already in progress. Task state is '$task_state'."
+        # A non-null task_state means another actor (an Exosphere session, a
+        # prior command, a JS2-side retry) has an action in flight. Failing
+        # immediately here surfaced a useless "action already in progress"
+        # message that told the user nothing actionable (Instances#168).
+        # Instead, wait for the action to settle: the steps below then see
+        # the settled state — already in the requested state → the noop
+        # ensure-and-report path posts a truthful success; otherwise a
+        # normal attempt proceeds, and for unshelve the in-flight failure
+        # is counted by the failure-history step.
+        max_wait=600
+        waited=0
+        while :; do
+          task_state=$(openstack server show $INSTANCE_NAME -f json | \
+            jq -r '.["OS-EXT-STS:task_state"]')
+          echo "task_state [$task_state] waited [${waited}s]"
+          if [[ "$task_state" == "null" ]]; then
+            break
+          fi
+          if [ $waited -ge $max_wait ]; then
+            echo "task_state=$task_state" >> $GITHUB_OUTPUT
+            echo "::error ::Server action still in progress after ${max_wait}s (task_state '$task_state')."
             exit 1
-        fi
+          fi
+          sleep 20
+          waited=$((waited + 20))
+        done
+        echo "task_state=null" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
@@ -200,8 +217,7 @@ runs:
         body: |
           ### Command Results ❌
 
-          `${{ inputs.command_name }}` command failed to be applied to **${{ steps.define.outputs.instance_name }}** instance.
-          A server action is already in progress. Task state is `${{ steps.check_task_state.outputs.task_state }}`.
+          Another operation on **${{ steps.define.outputs.instance_name }}** has been running on Jetstream2's side for over 10 minutes and appears stuck (task state `${{ steps.check_task_state.outputs.task_state }}`), so the `${{ inputs.command_name }}` command could not run. **There is nothing you need to do.** @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed. Your instance and data remain safely stored.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -280,6 +296,32 @@ runs:
           @MorphoCloud/morphocloud-admins — this instance needs an admin `shelveOffload` (push it to `SHELVED_OFFLOADED`, then unshelve) or a delete + rebuild from the data volume. The data volume is preserved either way.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Collect unshelve failure history
+      id: unshelve_history
+      if:
+        ${{ steps.check_instance.outputs.exists == 'true' && inputs.command_name
+        == 'unshelve' && steps.check_noop.outputs.noop != 'true' }}
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        # The poll step's auto-retry only makes sense when a failure would
+        # be the first one — if the action log already shows a recent failed
+        # unshelve, this command IS the retry, and a second automatic
+        # attempt would only delay telling the user and admins the truth.
+        cutoff=$(date -u -d "60 minutes ago" +%Y-%m-%dT%H:%M:%S)
+        events=$(openstack server event list "$INSTANCE_NAME" --long -f json)
+        recent_failures=$(echo "$events" | jq -r --arg cutoff "$cutoff" \
+          '[.[] | select(.Action == "unshelve" and .Message == "Error" and ."Start Time" > $cutoff)] | length')
+        baseline_reqs=$(echo "$events" | jq -r \
+          '[.[] | select(.Action == "unshelve" and .Message == "Error") | ."Request ID"] | join(",")')
+        echo "recent_failures [$recent_failures]"
+        echo "recent_failures=$recent_failures" >> $GITHUB_OUTPUT
+        echo "baseline_error_reqs=$baseline_reqs" >> $GITHUB_OUTPUT
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: Check if instance has a floating IP
       if:
@@ -558,11 +600,32 @@ runs:
                              # so a stuck/corrupt instance surfaces in 5 min, not 10
         fi
 
-        echo "Polling '$INSTANCE_NAME' status [max_wait_time=${max_wait_time}s]"
+        # unshelve gets one automatic retry, but only when the action log
+        # showed no recent failure before this run — with prior failures the
+        # user's command already IS the retry, and a second automatic attempt
+        # would only delay the terminal report (see unshelve_history step).
+        attempt=1
+        max_attempts=1
+        if [[ "$COMMAND_NAME" == "unshelve" && "${RECENT_FAILURES:-0}" -eq 0 ]]; then
+          max_attempts=2
+        fi
+        known_error_reqs=",${BASELINE_ERROR_REQS},"
+
+        # Prints the request id of an unshelve action that ended in Error and
+        # is not in the pre-attempt baseline; empty otherwise.
+        check_new_unshelve_error() {
+          openstack server event list "$INSTANCE_NAME" --long -f json 2>/dev/null | \
+            jq -r --arg known "$known_error_reqs" \
+              '[.[] | select(.Action == "unshelve" and .Message == "Error")
+                   | ."Request ID" | select(($known | contains("," + . + ",")) | not)][0] // ""'
+        }
+
+        echo "Polling '$INSTANCE_NAME' status [max_wait_time=${max_wait_time}s per attempt, max_attempts=${max_attempts}]"
 
         wait_interval=5    # Interval between status checks in seconds
         total_wait_time=0
         capacity_error=false
+        failure_mode=""
 
         while [ $total_wait_time -lt $max_wait_time ]; do
 
@@ -595,40 +658,104 @@ runs:
             if [[ "$status" == "$EXPECTED_STATUS" ]]; then
                 echo "Exiting loop."
                 break
-            else
-                echo "Waiting for completion..."
-                sleep $wait_interval
-                total_wait_time=$((total_wait_time + wait_interval))
             fi
+
+            # A host-side unshelve failure reverts the instance to
+            # SHELVED_OFFLOADED (never ERROR), which plain status polling
+            # cannot distinguish from "not started yet" — it used to burn
+            # the full poll budget and die as a generic timeout. The action
+            # log can distinguish: a new unshelve action with Message=Error
+            # means this attempt is dead (Instances#168, #111, #114).
+            if [[ "$COMMAND_NAME" == "unshelve" && $total_wait_time -gt 0 && $((total_wait_time % 30)) -eq 0 ]]; then
+                failed_req=$(check_new_unshelve_error)
+                if [[ -n "$failed_req" ]]; then
+                    echo ""
+                    echo "Attempt $attempt failed on the compute host (request $failed_req)."
+                    known_error_reqs="${known_error_reqs}${failed_req},"
+                    if [ $attempt -lt $max_attempts ]; then
+                        attempt=$((attempt + 1))
+                        gh issue comment "$ISSUE_NUMBER" --body "⏳ The first unshelve attempt failed on Jetstream2's side — retrying automatically. A final result will be posted here in a few minutes." || echo "::warning ::Failed to post retry notification comment."
+                        openstack server unshelve "$INSTANCE_NAME"
+                        total_wait_time=0
+                        continue
+                    fi
+                    failure_mode="host_error"
+                    break
+                fi
+            fi
+
+            echo "Waiting for completion..."
+            sleep $wait_interval
+            total_wait_time=$((total_wait_time + wait_interval))
         done
+
+        echo "status=$status" >> $GITHUB_OUTPUT
+        echo "capacity_error=$capacity_error" >> $GITHUB_OUTPUT
+        echo "failure_mode=$failure_mode" >> $GITHUB_OUTPUT
+
+        if [[ "$failure_mode" == "host_error" ]]; then
+            total_failures=$(( ${RECENT_FAILURES:-0} + attempt ))
+            events=$(openstack server event list "$INSTANCE_NAME" --long -f json)
+            # Same 60-min window as unshelve_history, so the "N attempts
+            # since HH:MM" sentence counts and dates the same set of events.
+            cutoff_ts=$(date -u -d "60 minutes ago" +%Y-%m-%dT%H:%M:%S)
+            first_failure=$(echo "$events" | jq -r --arg cutoff "$cutoff_ts" \
+              '[.[] | select(.Action == "unshelve" and .Message == "Error" and ."Start Time" > $cutoff) | ."Start Time"] | sort | .[0][0:16] // "unknown"')
+            {
+              printf '%s\n\n' '### Command Results ❌'
+              printf '%s\n\n' "Unshelving **${INSTANCE_NAME}** is failing on Jetstream2's side — ${total_failures} attempt(s) since ${first_failure} UTC failed on the compute host. **There is nothing you need to do.** @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed. Your instance and data remain safely stored."
+              printf '%s\n\n' '<details><summary>Diagnostics for admins</summary>'
+              printf '%s\n' 'Failed unshelve requests (openstack server event list):'
+              printf '%s\n' '```'
+              echo "$events" | jq -r '.[] | select(.Action == "unshelve" and .Message == "Error") | "\(."Start Time")  \(."Request ID")"'
+              printf '%s\n\n' '```'
+              printf '%s\n\n' "Run: https://github.com/${GH_REPO}/actions/runs/${RUN_ID}"
+              printf '%s\n' '</details>'
+            } > /tmp/unshelve_failure_body.md
+            echo "::error ::unshelve failed on the compute host after $attempt attempt(s) this run ($total_failures recent failures total)."
+            exit 1
+        fi
 
         if [ $total_wait_time -ge $max_wait_time ]; then
             echo "::error ::Maximum wait time ($max_wait_time seconds) exceeded."
             exit 1
         fi
-
-        echo "status=$status" >> $GITHUB_OUTPUT
-        echo "capacity_error=$capacity_error" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         EXPECTED_STATUS: ${{ steps.expected_status.outputs.value }}
         COMMAND_NAME: ${{ inputs.command_name }}
+        RECENT_FAILURES: ${{ steps.unshelve_history.outputs.recent_failures }}
+        BASELINE_ERROR_REQS:
+          ${{ steps.unshelve_history.outputs.baseline_error_reqs }}
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+        RUN_ID: ${{ github.run_id }}
+
+    - name: comment (unshelve failed on Jetstream2 host)
+      id: comment_unshelve_host_failure
+      if:
+        ${{ steps.instance_poll.outcome == 'failure' && failure() &&
+        steps.instance_poll.outputs.failure_mode == 'host_error' }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body-path: /tmp/unshelve_failure_body.md
 
     - name: comment (maximum wait time exceeded)
       id: comment_max_wait
       if:
         ${{ steps.instance_poll.outcome == 'failure' && failure() &&
-        steps.instance_poll.outputs.capacity_error != 'true' }}
+        steps.instance_poll.outputs.capacity_error != 'true' &&
+        steps.instance_poll.outputs.failure_mode != 'host_error' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
           ### Command Results ❌
 
-          Maximum wait time for command `${{ inputs.command_name }}` command to complete exceeded.
-
-          @MorphoCloud/morphocloud-admins — `${{ inputs.command_name }}` did not complete in time for **${{ steps.define.outputs.instance_name }}**; the instance may be stuck and need attention.
+          The `${{ inputs.command_name }}` command for **${{ steps.define.outputs.instance_name }}** did not complete within the expected time — it may be stuck on Jetstream2's side. **There is nothing you need to do.** @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed. Your instance and data remain safely stored.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -961,6 +1088,7 @@ runs:
         steps.comment_ip_create_failed.outcome != 'success' &&
         steps.comment_associate_ip_failed.outcome != 'success' &&
         steps.comment_execute_failed.outcome != 'success' &&
+        steps.comment_unshelve_host_failure.outcome != 'success' &&
         steps.comment_max_wait.outcome != 'success' &&
         steps.comment_no_capacity.outcome != 'success' &&
         steps.comment_disassociate_failed.outcome != 'success' &&
