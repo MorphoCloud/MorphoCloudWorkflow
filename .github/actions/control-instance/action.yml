@@ -613,11 +613,17 @@ runs:
 
         # Prints the request id of an unshelve action that ended in Error and
         # is not in the pre-attempt baseline; empty otherwise.
+        # NOTE the '. as $r' binding: piping into '$known | contains(...)'
+        # rebinds '.' to $known, so the naive form compared the list against
+        # itself and never excluded anything — on 127 that re-matched attempt
+        # 1's failure and declared attempt 2 dead while it was still booting
+        # (it succeeded 8s after the report posted).
         check_new_unshelve_error() {
           openstack server event list "$INSTANCE_NAME" --long -f json 2>/dev/null | \
             jq -r --arg known "$known_error_reqs" \
               '[.[] | select(.Action == "unshelve" and .Message == "Error")
-                   | ."Request ID" | select(($known | contains("," + . + ",")) | not)][0] // ""'
+                   | ."Request ID"
+                   | select(. as $r | ($known | contains("," + $r + ",")) | not)][0] // ""'
         }
 
         echo "Polling '$INSTANCE_NAME' status [max_wait_time=${max_wait_time}s per attempt, max_attempts=${max_attempts}]"
@@ -631,8 +637,9 @@ runs:
 
             instance_json=$(openstack server show $INSTANCE_NAME -f json)
             status=$(echo "$instance_json" | jq -r '.status // "PENDING"')
+            task_state=$(echo "$instance_json" | jq -r '.["OS-EXT-STS:task_state"] // "null"')
 
-            echo -n "status [$status]. "
+            echo -n "status [$status] task [$task_state]. "
 
             # Check for capacity error (only for unshelve command)
             if [[ "$status" == "ERROR" && "$COMMAND_NAME" == "unshelve" ]]; then
@@ -666,7 +673,12 @@ runs:
             # the full poll budget and die as a generic timeout. The action
             # log can distinguish: a new unshelve action with Message=Error
             # means this attempt is dead (Instances#168, #111, #114).
-            if [[ "$COMMAND_NAME" == "unshelve" && $total_wait_time -gt 0 && $((total_wait_time % 30)) -eq 0 ]]; then
+            # Gated on task_state==null: while our attempt is mid-flight
+            # (spawning/unshelving) any Error found in the log cannot belong
+            # to it, so declaring failure then would be premature (#127:
+            # attempt 2 was declared dead while still booting; it came up
+            # ACTIVE 8s after the failure report posted).
+            if [[ "$COMMAND_NAME" == "unshelve" && "$task_state" == "null" && $total_wait_time -gt 0 && $((total_wait_time % 30)) -eq 0 ]]; then
                 failed_req=$(check_new_unshelve_error)
                 if [[ -n "$failed_req" ]]; then
                     echo ""
