@@ -53,6 +53,12 @@ inputs:
       "Course team slug (course repos only; leave blank for individual repos)"
     required: false
     default: ""
+  admin_emails:
+    description:
+      "Comma-separated admin recipients for failure alerts
+      (MORPHOCLOUD_GITHUB_ADMIN_EMAILS). Leave blank to disable the alert."
+    required: false
+    default: ""
 runs:
   using: "composite"
   steps:
@@ -1159,3 +1165,44 @@ runs:
           @MorphoCloud/morphocloud-admins — unhandled failure, please check the run log.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    # The "@MorphoCloud/morphocloud-admins" mentions in the comments above
+    # cannot reach anyone: every comment here is posted with GITHUB_TOKEN, and
+    # comments made with GITHUB_TOKEN raise no issue_comment event, so
+    # on-admin-mention.yml is never even queued for them. Nothing else watched
+    # this path either, so "have been notified" was false for every failure
+    # comment the action posts — Instances#110 (2026-07-28) sat in ERROR for
+    # hours, through two more /unshelve attempts, with no alert. Email the
+    # admins straight from the action so the claim is true by construction.
+    #
+    # Fires on any failure except the two the user caused and can fix
+    # themselves (unapproved instance management, instance does not exist) —
+    # those are not admin-actionable and would only add noise. Deliberately
+    # not an allowlist of comment steps: a failure with no dedicated comment
+    # must still alert, which is the same reason the safety net above exists.
+    - name: Notify admins by email (failure)
+      # A mail outage must never replace the real failure in the run log.
+      continue-on-error: true
+      if:
+        ${{ failure() && inputs.admin_emails != '' &&
+        steps.comment_not_approved.outcome != 'success' &&
+        steps.comment_not_exist.outcome != 'success' }}
+      uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
+      with:
+        server_address: webhost.dynadot.com
+        server_port: 587
+        secure: false
+        username: ${{ inputs.mail_server_username }}
+        password: ${{ inputs.mail_server_password }}
+        from: MorphoCloudPortal <no-reply@morphocloud.org>
+        to: ${{ inputs.admin_emails }}
+        subject:
+          "[${{ github.repository }}] ${{ inputs.command_name }} failed for ${{
+          steps.define.outputs.instance_name || 'unknown' }} (issue #${{
+          inputs.issue_number }})"
+        body: |
+          The `${{ inputs.command_name }}` command failed and needs admin attention.
+
+          Instance: ${{ steps.define.outputs.instance_name || 'unknown' }}
+          Issue:    https://github.com/${{ github.repository }}/issues/${{ inputs.issue_number }}
+          Run log:  https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
