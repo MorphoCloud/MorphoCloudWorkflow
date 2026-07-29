@@ -26,6 +26,7 @@ jobs:
     outputs:
       continue: ${{ steps.command.outputs.continue }}
       command_name: ${{ steps.command.outputs.command_name }}
+      reaction_id: ${{ steps.command.outputs.reaction_id }}
     steps:
       - uses: actions/checkout@v6
 
@@ -49,6 +50,9 @@ jobs:
         with:
           command: "/unshelve"
           reaction: "rocket"
+          # Keep the 🚀 on the comment and skip the post-run 👍. See the
+          # reaction-semantics note on the `control` job below.
+          skip_completing: "true"
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
@@ -62,6 +66,7 @@ jobs:
         with:
           command: "/shelve"
           reaction: "rocket"
+          skip_completing: "true"
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
@@ -75,6 +80,7 @@ jobs:
         with:
           command: "/delete_instance"
           reaction: "rocket"
+          skip_completing: "true"
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
@@ -91,23 +97,36 @@ jobs:
           if [[ "$UNSHELVE_COMMAND_CONTINUE" == "true" ]]; then
             continue="$UNSHELVE_COMMAND_CONTINUE"
             command_name="unshelve"
+            reaction_id="$UNSHELVE_REACTION_ID"
           elif [[ "$SHELVE_COMMAND_CONTINUE" == "true" ]]; then
             continue="$SHELVE_COMMAND_CONTINUE"
             command_name="shelve"
+            reaction_id="$SHELVE_REACTION_ID"
           elif [[ "$DELETE_COMMAND_CONTINUE" == "true" ]]; then
             continue="$DELETE_COMMAND_CONTINUE"
             command_name="delete"
+            reaction_id="$DELETE_REACTION_ID"
           else
             continue="false"
             command_name=""
+            reaction_id=""
           fi
           echo "continue=$continue" >> $GITHUB_OUTPUT
           echo "command_name=$command_name" >> $GITHUB_OUTPUT
+          echo "reaction_id=$reaction_id" >> $GITHUB_OUTPUT
         env:
           UNSHELVE_COMMAND_CONTINUE:
             ${{ steps.unshelve_command.outputs.continue }}
           SHELVE_COMMAND_CONTINUE: ${{ steps.shelve_command.outputs.continue }}
           DELETE_COMMAND_CONTINUE: ${{ steps.delete_command.outputs.continue }}
+          # Id of the 🚀 the matching command step left on the comment, so the
+          # `control` job can clear exactly that reaction when it finishes.
+          UNSHELVE_REACTION_ID:
+            ${{ steps.unshelve_command.outputs.initial_reaction_id }}
+          SHELVE_REACTION_ID:
+            ${{ steps.shelve_command.outputs.initial_reaction_id }}
+          DELETE_REACTION_ID:
+            ${{ steps.delete_command.outputs.initial_reaction_id }}
 
   control:
     runs-on: self-hosted
@@ -126,20 +145,6 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
-
-      # github/command adds 👍 when the command is merely ACCEPTED, minutes
-      # before anything runs — but users read 👍 as "completed". Remove it
-      # here and re-add it only on success below, so 👍 exclusively means
-      # the command finished (Instances#168: silent failures read as done).
-      - name: Remove accepted reaction from command comment
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          rid=$(gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" --jq '[.[] | select(.content == "+1" and .user.login == "github-actions[bot]") | .id][0] // ""')
-          if [ -n "$rid" ]; then
-            # Best-effort: a failed delete must not abort the command run.
-            gh api -X DELETE "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions/$rid" || true
-          fi
 
       - name: Check JS2 status
         id: js2_status
@@ -166,18 +171,35 @@ jobs:
           mail_server_password: ${{secrets.MAIL_PASSWORD}}
           admin_emails: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
 
-      # Completion semantics: 👍 = the command finished successfully,
-      # 👎 = it failed. The accepted-ack 👍 was removed at job start.
-      - name: React to command comment (success)
-        if: ${{ success() }}
+      # Reaction semantics on the command comment:
+      #   🚀 accepted — queued or running   👍 finished successfully
+      #   👎 failed, or the run was cancelled before it finished
+      #
+      # The 🚀 is added by github/command in `authorize`, and `skip_completing`
+      # keeps it there so it stays visible for the whole run — including time
+      # spent queued behind the concurrency group above. Previously the
+      # post-run of `authorize` swapped 🚀 for 👍 as soon as authorization
+      # passed and this job stripped that 👍 at startup, so a running command
+      # carried NO reaction for minutes and read as never picked up
+      # (Instances#168). 👍 still means finished, never merely accepted.
+      - name: Report command outcome on the comment
+        if: ${{ always() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REACTIONS_API:
+            repos/${{ github.repository }}/issues/comments/${{
+            github.event.comment.id }}/reactions
+          REACTION_ID: ${{ needs.authorize.outputs.reaction_id }}
+          JOB_STATUS: ${{ job.status }}
         run: |
-          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=+1
-
-      - name: React to command comment (failure)
-        if: ${{ failure() }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api "repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions" -f content=-1
+          # Add the outcome before clearing 🚀 so the comment is never left
+          # bare, even if one of the two API calls fails.
+          if [ "$JOB_STATUS" = "success" ]; then
+            gh api "$REACTIONS_API" -f content=+1
+          else
+            gh api "$REACTIONS_API" -f content=-1
+          fi
+          # Best-effort: a failed cleanup must not mask the command's outcome.
+          if [ -n "$REACTION_ID" ]; then
+            gh api -X DELETE "$REACTIONS_API/$REACTION_ID" || true
+          fi
