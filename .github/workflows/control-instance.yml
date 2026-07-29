@@ -121,6 +121,13 @@ jobs:
           DELETE_COMMAND_CONTINUE: ${{ steps.delete_command.outputs.continue }}
           # Id of the 🚀 the matching command step left on the comment, so the
           # `control` job can clear exactly that reaction when it finishes.
+          # `initial_reaction_id` is declared in github/command's action.yml
+          # `outputs:` block and set in src/main.js immediately after the
+          # reaction is created — populated only for the step whose command
+          # actually matched, which is what the branching above relies on.
+          # Re-verify both when bumping the pinned SHA (now 3442f3f / v2.0.3):
+          # if the name ever changes, REACTION_ID goes silently empty and every
+          # command leaves a 🚀 behind forever.
           UNSHELVE_REACTION_ID:
             ${{ steps.unshelve_command.outputs.initial_reaction_id }}
           SHELVE_REACTION_ID:
@@ -192,12 +199,18 @@ jobs:
           REACTION_ID: ${{ needs.authorize.outputs.reaction_id }}
           JOB_STATUS: ${{ job.status }}
         run: |
-          # Add the outcome before clearing 🚀 so the comment is never left
-          # bare, even if one of the two API calls fails.
           if [ "$JOB_STATUS" = "success" ]; then
-            gh api "$REACTIONS_API" -f content=+1
+            outcome="+1"
           else
-            gh api "$REACTIONS_API" -f content=-1
+            outcome="-1"
+          fi
+          # Order matters: add the outcome first and clear 🚀 only once that
+          # has succeeded, so a failing API call leaves a stale 🚀 rather than
+          # a bare comment. Guarded explicitly instead of leaning on the
+          # runner's default `bash -e {0}`, which would also abort here.
+          if ! gh api "$REACTIONS_API" -f "content=$outcome"; then
+            echo "::error::Could not add the '$outcome' outcome reaction to comment ${{ github.event.comment.id }}; leaving 🚀 in place."
+            exit 1
           fi
           # Best-effort: a failed cleanup must not mask the command's outcome.
           if [ -n "$REACTION_ID" ]; then
