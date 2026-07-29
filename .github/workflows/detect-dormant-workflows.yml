@@ -40,6 +40,13 @@ jobs:
       - name: Scan workflow run history
         id: scan
         run: |
+          # Without pipefail, a failed `gh api | while` leaves the loop with no
+          # input, exiting 0 with an empty findings file — the scan would
+          # report all-clear having listed nothing. Third variant of this bug
+          # found in this file; the default runner shell sets -e but not
+          # pipefail (review #267).
+          set -o pipefail
+
           since=$(date -u -d "$WINDOW_DAYS days ago" +%Y-%m-%d)
           now_epoch=$(date -u +%s)
 
@@ -59,12 +66,17 @@ jobs:
           # below runs in a subshell and cannot export back out.
           : > /tmp/dormant.txt
 
+          # Normalized once. Whitespace is stripped so that a hand-typed
+          # "a.yml, b.yml" allowlist does not silently fail to match on the
+          # entries that picked up a leading space.
+          allow=",$(printf '%s' "$ALLOWLIST" | tr -d '[:space:]'),"
+
           gh api --paginate "repos/$GH_REPO/actions/workflows?per_page=100" \
             --jq '.workflows[] | select(.state == "active") | [.id, .name, .path] | @tsv' \
           | while IFS=$'\t' read -r id name path; do
               base="${path##*/}"
 
-              case ",$ALLOWLIST," in
+              case "$allow" in
                 *",$base,"*)
                   echo "$name: allowlisted, skipping"
                   continue
@@ -93,8 +105,19 @@ jobs:
                 echo "::warning ::Failed to read successful runs for $name; skipping."
                 continue
               fi
-              succ=$(echo "$succ_json" | jq -r '.total_count')
-              last=$(echo "$succ_json" | jq -r '.workflow_runs[0].created_at // ""')
+              # Here-strings, not pipes: under pipefail a jq hiccup mid-pipe
+              # would abort the whole scan instead of skipping one workflow.
+              succ=$(jq -r '.total_count' <<<"$succ_json") || succ=""
+              last=$(jq -r '.workflow_runs[0].created_at // ""' <<<"$succ_json") || last=""
+
+              # Validated for the same reason as $total: an unparsed count
+              # must not fall through into the arithmetic below, where it
+              # would read as either a spurious stale alert or a missed
+              # zero-success one.
+              if [[ ! "$succ" =~ ^[0-9]+$ ]]; then
+                echo "::warning ::Unexpected success count '$succ' for $name; skipping."
+                continue
+              fi
 
               if (( succ == 0 )); then
                 echo "::warning ::$name: $total runs in ${WINDOW_DAYS}d, never succeeded"
@@ -141,10 +164,15 @@ jobs:
           fi
           echo "found=true" >> $GITHUB_OUTPUT
           echo "count=$(wc -l < /tmp/dormant.txt | tr -d ' ')" >> $GITHUB_OUTPUT
+
+          # Unguessable delimiter: a fixed one could in principle appear in a
+          # workflow name, which would truncate the mail body and drop the
+          # remaining findings without a trace.
+          delim="DORMANT_EOF_$(date +%s)_${RANDOM}"
           {
-            echo "details<<DORMANT_EOF"
+            echo "details<<$delim"
             cat /tmp/dormant.txt
-            echo "DORMANT_EOF"
+            echo "$delim"
           } >> $GITHUB_OUTPUT
           cat /tmp/dormant.txt
 
