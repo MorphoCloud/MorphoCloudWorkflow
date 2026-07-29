@@ -164,6 +164,7 @@ jobs:
           course_team_slug: ${{ vars.COURSE_TEAM_SLUG }}
           mail_server_username: ${{secrets.MAIL_USERNAME}}
           mail_server_password: ${{secrets.MAIL_PASSWORD}}
+          admin_emails: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
 
       # Completion semantics: 👍 = the command finished successfully,
       # 👎 = it failed. The accepted-ack 👍 was removed at job start.

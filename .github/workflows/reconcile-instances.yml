@@ -40,7 +40,11 @@ jobs:
       - uses: actions/checkout@v6
 
       # App token (not GITHUB_TOKEN) so the alert comment triggers the
-      # on-admin-mention workflow, which emails the admins.
+      # on-admin-mention workflow, which emails the admins. Both halves are
+      # load-bearing and neither is visible from here: GITHUB_TOKEN comments
+      # raise no issue_comment event, and on-admin-mention must keep allowing
+      # this bot's login through its author gate — it excluded all bots until
+      # 2026-07-28, which silently dropped every alert this job posted.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
@@ -56,6 +60,11 @@ jobs:
 
           grace_seconds=1800
           now_epoch=$(date +%s)
+
+          # Newly-flagged violations accumulate here for the direct admin
+          # email below. Written from inside the `while read` pipeline, so it
+          # has to be a file — that subshell cannot export variables out.
+          : > /tmp/reconcile-violations.txt
 
           # One snapshot for all port-binding lookups below; a slightly stale
           # view is fine — a violation that appears mid-run is caught by the
@@ -128,6 +137,7 @@ jobs:
                 printf '### Instance state alert\n\nAutomated reconciliation found **%s** in an inconsistent state: %s.\n\n@MorphoCloud/morphocloud-admins — please take a look.\n\nSee details at %s\n' "$instance_name" "$reason" "$RUN_URL" > /tmp/reconcile-comment.md
                 gh issue edit "$issue_number" --add-label "invariant-violation" || echo "::warning ::Failed to add label to issue $issue_number"
                 gh issue comment "$issue_number" --body-file /tmp/reconcile-comment.md || echo "::warning ::Failed to comment on issue $issue_number"
+                printf -- '- %s (issue #%s): %s\n' "$instance_name" "$issue_number" "$reason" >> /tmp/reconcile-violations.txt
               elif [[ "$has_label" == "true" ]]; then
                 echo "Instance $instance_name is healthy again; clearing label on issue #$issue_number."
                 gh issue edit "$issue_number" --remove-label "invariant-violation" || echo "::warning ::Failed to remove label from issue $issue_number"
@@ -141,3 +151,50 @@ jobs:
           RUN_URL:
             https://github.com/${{ github.repository }}/actions/runs/${{
             github.run_id }}
+
+      # Second, independent path to the admins. The comment above reaches them
+      # only via on-admin-mention.yml, which is a different workflow gated on a
+      # different `if:` — exactly the coupling that let every reconcile alert
+      # vanish until 2026-07-28. This job is the only thing that notices an
+      # instance rotting in ERROR (Instances#139 sat there 8 days), so it does
+      # not get to depend on a second workflow staying correct.
+      - name: Summarize new violations
+        id: violations
+        if: ${{ always() }}
+        run: |
+          if [[ ! -s /tmp/reconcile-violations.txt ]]; then
+            echo "found=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          echo "found=true" >> $GITHUB_OUTPUT
+          echo "count=$(wc -l < /tmp/reconcile-violations.txt | tr -d ' ')" >> $GITHUB_OUTPUT
+          {
+            echo "details<<RECONCILE_EOF"
+            cat /tmp/reconcile-violations.txt
+            echo "RECONCILE_EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Notify admins by email (new violations)
+        # The mail step is the whole point of this step, so a send failure must
+        # turn the run red rather than be swallowed.
+        if:
+          ${{ always() && steps.violations.outputs.found == 'true' &&
+          vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS != '' }}
+        uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
+        with:
+          server_address: webhost.dynadot.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: MorphoCloudPortal <no-reply@morphocloud.org>
+          to: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          subject:
+            "[${{ github.repository }}] ${{ steps.violations.outputs.count }}
+            instance(s) in an inconsistent state"
+          body: |
+            Automated reconciliation flagged the following:
+
+            ${{ steps.violations.outputs.details }}
+
+            Run log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}

@@ -86,3 +86,4 @@ jobs:
           email_lookup_secret: ${{ secrets.ENROLLMENT_WEBHOOK_SECRET }}
           mail_server_username: ${{secrets.MAIL_USERNAME}}
           mail_server_password: ${{secrets.MAIL_PASSWORD}}
+          admin_emails: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
