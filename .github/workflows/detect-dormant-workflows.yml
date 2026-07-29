@@ -1,0 +1,175 @@
+name: Detect Dormant Workflows
+
+# Alerting fails to silence, and silence looks exactly like health. That is how
+# on-admin-mention.yml stayed a no-op for ~4 months: its author gate excluded
+# bots, so every automated admin alert was dropped, and nobody could tell —
+# a workflow that never runs a single step still reports a tidy green
+# "skipped" run. Instances#110 sat in ERROR for hours as a result (2026-07-28).
+#
+# This job watches for that shape. Note what it deliberately does NOT alert on:
+# a high skip rate. Skipping is completely normal here — every issue_comment
+# fires every command workflow and all but one of them skip, so several healthy
+# workflows sit above 90% skipped. Measured over 90 days on Instances, the
+# discriminator is the absence of *any* success:
+#
+#   Control Instance          734 runs   272 success   healthy, 54% skipped
+#   Create Instance           734 runs    61 success   healthy, 86% skipped
+#   Approve Workshop Mgmt     734 runs    14 success   healthy, 98% skipped
+#   Notify Admins of Mention  734 runs     0 success   BROKEN (pre-fix)
+#   Process /renew Command    734 runs     0 success   never once succeeded
+#
+# So: flag a workflow that is being triggered often yet has never succeeded
+# (dead), or that used to succeed and stopped (regressed). Both are questions
+# for a human, not verdicts — "never succeeded" can also mean "nobody uses this
+# command", which is itself worth knowing.
+
+on:
+  schedule:
+    # Mondays, 13:23 UTC. Off the hour to avoid GitHub's cron rush.
+    - cron: "23 13 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scan workflow run history
+        id: scan
+        run: |
+          since=$(date -u -d "$WINDOW_DAYS days ago" +%Y-%m-%d)
+          now_epoch=$(date -u +%s)
+
+          # Fail loudly on a bad window. An empty $since makes every
+          # total_count come back 0, so every workflow reads as "too few runs
+          # to judge" and the whole scan reports all-clear while having checked
+          # nothing — this detector's own version of the bug it looks for.
+          # Caught in dry-run on a BSD `date`, which has no -d.
+          if [[ ! "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo "::error ::Could not compute the window start date (got '$since')"
+            exit 1
+          fi
+
+          echo "Window: $since .. today | min_runs=$MIN_RUNS stale_days=$STALE_DAYS"
+
+          # Findings accumulate in a file, not a variable: the `while read`
+          # below runs in a subshell and cannot export back out.
+          : > /tmp/dormant.txt
+
+          gh api --paginate "repos/$GH_REPO/actions/workflows?per_page=100" \
+            --jq '.workflows[] | select(.state == "active") | [.id, .name, .path] | @tsv' \
+          | while IFS=$'\t' read -r id name path; do
+              base="${path##*/}"
+
+              case ",$ALLOWLIST," in
+                *",$base,"*)
+                  echo "$name: allowlisted, skipping"
+                  continue
+                  ;;
+              esac
+
+              # per_page=1 — only total_count is needed, so never paginate.
+              if ! total=$(gh api "repos/$GH_REPO/actions/workflows/$id/runs?per_page=1&created=%3E%3D$since" --jq '.total_count'); then
+                echo "::warning ::Failed to read run history for $name; skipping."
+                continue
+              fi
+
+              # Same reasoning as the window guard: a non-numeric total must
+              # not silently degrade into "0 runs, nothing to see here".
+              if [[ ! "$total" =~ ^[0-9]+$ ]]; then
+                echo "::warning ::Unexpected run count '$total' for $name; skipping."
+                continue
+              fi
+
+              if (( total < MIN_RUNS )); then
+                echo "$name: $total runs — below $MIN_RUNS, not enough signal to judge"
+                continue
+              fi
+
+              if ! succ_json=$(gh api "repos/$GH_REPO/actions/workflows/$id/runs?per_page=1&status=success&created=%3E%3D$since"); then
+                echo "::warning ::Failed to read successful runs for $name; skipping."
+                continue
+              fi
+              succ=$(echo "$succ_json" | jq -r '.total_count')
+              last=$(echo "$succ_json" | jq -r '.workflow_runs[0].created_at // ""')
+
+              if (( succ == 0 )); then
+                echo "::warning ::$name: $total runs in ${WINDOW_DAYS}d, never succeeded"
+                printf -- '- %s (%s): triggered %d times in %d days, never succeeded\n' \
+                  "$name" "$base" "$total" "$WINDOW_DAYS" >> /tmp/dormant.txt
+                continue
+              fi
+
+              last_epoch=$(date -u -d "$last" +%s 2>/dev/null || echo 0)
+              age_days=$(( (now_epoch - last_epoch) / 86400 ))
+              if (( last_epoch > 0 && age_days > STALE_DAYS )); then
+                echo "::warning ::$name: last succeeded ${age_days}d ago"
+                printf -- '- %s (%s): triggered %d times in %d days, but last success was %d days ago (%s)\n' \
+                  "$name" "$base" "$total" "$WINDOW_DAYS" "$age_days" "${last%%T*}" >> /tmp/dormant.txt
+                continue
+              fi
+
+              echo "$name: $total runs, $succ success, last $last — healthy"
+            done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          WINDOW_DAYS: "90"
+          # Below this many triggers in the window there is not enough signal:
+          # a rarely-fired workflow with no successes is ambiguous, not broken.
+          MIN_RUNS: "20"
+          # A workflow that succeeded inside this many days is working, however
+          # rarely. Set above the longest legitimate quiet spell (semester
+          # breaks leave the workshop workflows idle for weeks).
+          STALE_DAYS: "45"
+          # Comma-separated workflow filenames that are expected to lie dormant
+          # (e.g. "test-workshop-deletion.yml"). Repo variable, so a downstream
+          # repo can tune it without a vendorize.
+          ALLOWLIST: ${{ vars.MORPHOCLOUD_DORMANT_WORKFLOW_ALLOWLIST }}
+
+      - name: Summarize findings
+        id: findings
+        if: ${{ always() }}
+        run: |
+          if [[ ! -s /tmp/dormant.txt ]]; then
+            echo "found=false" >> $GITHUB_OUTPUT
+            echo "No dormant workflows."
+            exit 0
+          fi
+          echo "found=true" >> $GITHUB_OUTPUT
+          echo "count=$(wc -l < /tmp/dormant.txt | tr -d ' ')" >> $GITHUB_OUTPUT
+          {
+            echo "details<<DORMANT_EOF"
+            cat /tmp/dormant.txt
+            echo "DORMANT_EOF"
+          } >> $GITHUB_OUTPUT
+          cat /tmp/dormant.txt
+
+      - name: Notify admins by email (dormant workflows)
+        # No continue-on-error: mail is this step's only purpose, so a send
+        # failure must turn the run red rather than be swallowed. Swallowing it
+        # would recreate the exact bug this workflow exists to detect.
+        if:
+          ${{ always() && steps.findings.outputs.found == 'true' &&
+          vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS != '' }}
+        uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
+        with:
+          server_address: webhost.dynadot.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: MorphoCloudPortal <no-reply@morphocloud.org>
+          to: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          subject:
+            "[${{ github.repository }}] ${{ steps.findings.outputs.count }}
+            workflow(s) not succeeding"
+          body: |
+            These workflows are being triggered but are not producing successful runs. Each is a question, not a verdict — a workflow whose command nobody uses looks the same from here as one whose gate is broken.
+
+            ${{ steps.findings.outputs.details }}
+
+            Run log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
