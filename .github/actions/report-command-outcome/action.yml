@@ -28,10 +28,15 @@ inputs:
     description: Id of the comment that carried the command.
     required: true
   status:
+    # NOTE: no template expressions anywhere in this file outside runs.steps.*
+    # — not even inside a description. The runner template-parses the whole
+    # manifest on load, and contexts that are legal in a workflow (job, needs,
+    # secrets) are not legal here. One of those in a description string is
+    # enough to make the action fail to load at EVERY call site.
     description:
-      Job status — pass `${{ job.status }}`. Anything other than "success"
-      reports 👎, so a cancelled run is reported as not-finished rather than
-      silently leaving the 🚀 behind.
+      Job status. Callers pass the job.status context. Anything other than
+      "success" reports 👎, so a cancelled run is reported as not-finished
+      rather than silently leaving the 🚀 behind.
     required: true
   reaction_id:
     description:
