@@ -49,3 +49,16 @@ repos:
       - id: ruff
         args: [--fix, --show-fixes]
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      # actionlint and check-github-actions both pass an action.yml carrying a
+      # ${{ job.status }} in an input description, but the runner fails to load
+      # it at every call site. That took down every IssueOps command once
+      # already — see the script's docstring.
+      - id: check-action-manifest-expressions
+        name: No template expressions outside runs.steps in action manifests
+        entry: python scripts/check-action-manifest-expressions.py
+        language: python
+        additional_dependencies: [pyyaml]
+        files: ^\.github/actions/.*/action\.ya?ml$
