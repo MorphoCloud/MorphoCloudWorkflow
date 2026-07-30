@@ -53,6 +53,7 @@ runs:
           }}/reactions
         REACTION_ID: ${{ inputs.reaction_id }}
         JOB_STATUS: ${{ inputs.status }}
+        COMMENT_ID: ${{ inputs.comment_id }}
       run: |
         if [ "$JOB_STATUS" = "success" ]; then
           outcome="+1"
@@ -64,7 +65,7 @@ runs:
         # comment. Guarded explicitly rather than leaning on the runner's
         # default `bash -e`, which would also abort here.
         if ! gh api "$REACTIONS_API" -f "content=$outcome"; then
-          echo "::error::Could not add the '$outcome' outcome reaction to comment ${{ inputs.comment_id }}; leaving 🚀 in place."
+          echo "::error::Could not add the '$outcome' outcome reaction to comment $COMMENT_ID; leaving 🚀 in place."
           exit 1
         fi
         # Best-effort: a failed cleanup must not mask the command's outcome.
