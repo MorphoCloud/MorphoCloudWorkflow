@@ -23,6 +23,7 @@ jobs:
       contains(github.event.comment.body, '/email') ) }}
     outputs:
       continue: ${{ steps.email_command.outputs.continue }}
+      reaction_id: ${{ steps.email_command.outputs.initial_reaction_id }}
     steps:
       - uses: actions/checkout@v6
 
@@ -46,6 +47,9 @@ jobs:
         with:
           command: "/email"
           reaction: "rocket"
+          # Keep the 🚀 and skip the post-run 👍; the worker job below reports
+          # the real outcome. See .github/actions/report-command-outcome.
+          skip_completing: "true"
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
@@ -90,6 +94,22 @@ jobs:
             `email` command failed because **${{ steps.define.outputs.instance_name }}** instance does not exist.
 
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      # The comment above already tells the user the command failed, but the
+      # job used to carry on and could still finish green — which now reads as
+      # 👍 "finished successfully" on the command comment. Fail explicitly so
+      # the reaction matches what the user was just told. Safe to treat as
+      # definitive: check-instance-exists runs under `-eo pipefail`, so a
+      # transient OpenStack error fails that step outright rather than
+      # reporting a spurious exists=false.
+      - name: Fail when the instance does not exist
+        if: ${{ steps.check_instance.outputs.exists == 'false' }}
+        shell: bash
+        env:
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+        run: |
+          echo "::error ::/email requires an existing instance; $INSTANCE_NAME was not found."
+          exit 1
 
       - name: Determine issue type
         id: check_type
@@ -204,3 +224,12 @@ jobs:
           issue-number: ${{ github.event.issue.number }}
           body: |
             `email` command successfully completed for **${{ steps.define.outputs.instance_name }}** instance ✅
+
+      - name: Report command outcome on the comment
+        if: ${{ always() }}
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ needs.authorize.outputs.reaction_id }}
+          status: ${{ job.status }}

@@ -21,6 +21,9 @@ jobs:
       contains(github.event.comment.body, '/delete_all') ) }}
     outputs:
       continue: ${{ steps.delete_instance_and_volume_command.outputs.continue }}
+      reaction_id:
+        ${{ steps.delete_instance_and_volume_command.outputs.initial_reaction_id
+        }}
     steps:
       - uses: actions/checkout@v6
 
@@ -44,6 +47,9 @@ jobs:
         with:
           command: "/delete_all"
           reaction: "rocket"
+          # Keep the 🚀 and skip the post-run 👍; the worker job below reports
+          # the real outcome. See .github/actions/report-command-outcome.
+          skip_completing: "true"
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
@@ -87,3 +93,12 @@ jobs:
           mail_server_username: ${{secrets.MAIL_USERNAME}}
           mail_server_password: ${{secrets.MAIL_PASSWORD}}
           admin_emails: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+
+      - name: Report command outcome on the comment
+        if: ${{ always() }}
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ needs.authorize.outputs.reaction_id }}
+          status: ${{ job.status }}

@@ -1,0 +1,74 @@
+name: "Report command outcome"
+
+# Reaction semantics on an IssueOps command comment, shared by every command
+# workflow:
+#
+#   🚀  accepted — queued or running
+#   👍  finished successfully
+#   👎  failed, or cancelled before finishing
+#
+# github/command declares a `post:` entry point, so its own completion logic
+# runs when the JOB that declared the step ends — not the workflow. With the
+# security-review M3 split (cheap `authorize` job → long worker job) that fires
+# seconds in, marking a command "done" while the real work has barely started.
+# Every caller therefore sets `skip_completing: "true"` on the command step and
+# calls this action as the last step of the worker job instead.
+#
+# See MorphoCloud/Instances#168: 👍 must never mean merely accepted.
+
+description:
+  Replace the 🚀 accepted-and-running reaction on an IssueOps command comment
+  with the final outcome — 👍 on success, 👎 on failure or cancellation.
+
+inputs:
+  token:
+    description: Token carrying issues-write permission on this repository.
+    required: true
+  comment_id:
+    description: Id of the comment that carried the command.
+    required: true
+  status:
+    description:
+      Job status — pass `${{ job.status }}`. Anything other than "success"
+      reports 👎, so a cancelled run is reported as not-finished rather than
+      silently leaving the 🚀 behind.
+    required: true
+  reaction_id:
+    description:
+      Id of the 🚀 to clear, from the command step's `initial_reaction_id`
+      output. Empty is tolerated (nothing is cleared) so callers can wire this
+      up before every path provides it.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Replace the running reaction with the outcome
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REACTIONS_API:
+          repos/${{ github.repository }}/issues/comments/${{ inputs.comment_id
+          }}/reactions
+        REACTION_ID: ${{ inputs.reaction_id }}
+        JOB_STATUS: ${{ inputs.status }}
+        COMMENT_ID: ${{ inputs.comment_id }}
+      run: |
+        if [ "$JOB_STATUS" = "success" ]; then
+          outcome="+1"
+        else
+          outcome="-1"
+        fi
+        # Order matters: add the outcome first and clear 🚀 only once that has
+        # succeeded, so a failing API call leaves a stale 🚀 rather than a bare
+        # comment. Guarded explicitly rather than leaning on the runner's
+        # default `bash -e`, which would also abort here.
+        if ! gh api "$REACTIONS_API" -f "content=$outcome"; then
+          echo "::error::Could not add the '$outcome' outcome reaction to comment $COMMENT_ID; leaving 🚀 in place."
+          exit 1
+        fi
+        # Best-effort: a failed cleanup must not mask the command's outcome.
+        if [ -n "$REACTION_ID" ]; then
+          gh api -X DELETE "$REACTIONS_API/$REACTION_ID" || true
+        fi
