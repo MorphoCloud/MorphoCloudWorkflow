@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
-"""Reject template expressions outside ``runs.steps.*`` in composite action manifests.
+"""Catch template expressions an action manifest cannot resolve.
 
 The Actions runner template-parses a whole ``action.yml`` when it loads the
-action, not just the parts that look executable. Contexts that are perfectly
-legal in a *workflow* -- ``job``, ``needs``, ``secrets`` -- are not legal in an
-*action manifest*, and one of them anywhere outside ``runs.steps.*`` makes the
-action fail to load at **every** call site with::
+action. Two mistakes make the load fail at **every** call site with something
+like ``Unrecognized named-value: 'job'``, taking down every workflow that uses
+the action:
 
-    Unrecognized named-value: 'job'
+1. A workflow-only context (``job``, ``needs``, ``secrets``, ``vars``) used
+   anywhere in the manifest. These exist in workflows but not in actions.
+2. Any expression in a metadata field -- ``description``, ``name``, ``author``,
+   ``branding``. The runner evaluates those strings too, so an expression
+   written purely as *documentation* is still parsed and still fatal.
 
-That is a production outage across every workflow that uses the action, and it
-is invisible to the rest of the toolchain: prettier, check-jsonschema's
+Both shipped once: ``report-command-outcome`` documented its input as
+"pass ``${{ job.status }}``", which is mistake 2 containing mistake 1, and it
+broke every IssueOps command in Instances.
+
+Nothing else in the toolchain notices. prettier, check-jsonschema's
 check-github-actions and actionlint all pass such a file, because none of them
-evaluate manifest templates the way the runner does. It shipped once already
-(``report-command-outcome``, a ``${{ job.status }}`` written as documentation
-inside an input *description*), so it gets a dedicated check.
+evaluate manifest templates the way the runner does.
 
-Only ``inputs.*`` and ``env`` under ``runs.steps.*`` may carry expressions.
+Deliberately narrow. Expressions in ``runs:`` and in ``outputs.<id>.value`` are
+how composite actions are written -- ``outputs.<id>.value`` *must* carry one --
+and functions like ``failure()`` and ``fromJSON()`` are legal there. Flagging
+those would just train people to ignore this hook.
 """
 
 from __future__ import annotations
@@ -29,21 +36,26 @@ import yaml
 
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 
-# Contexts the runner accepts inside an action manifest's runs.steps.* section.
-ALLOWED_CONTEXTS = {"inputs", "env", "github", "runner", "steps", "strategy", "matrix"}
+# Contexts that exist in a workflow but not in an action manifest.
+FORBIDDEN_CONTEXT = re.compile(r"(?<![\w.'\"])(job|needs|secrets|vars)\s*[.\[]")
+
+# Metadata fields the runner still evaluates; an expression here is never
+# intentional, it is documentation that happens to be executable.
+METADATA_KEYS = {"description", "name", "author", "branding"}
 
 
-def _walk(node: object, path: str = "") -> list[tuple[str, str]]:
-    """Yield (path, expression) for every template expression under ``node``."""
+def _walk(node: object, path: tuple[str, ...] = ()) -> list[tuple[str, str]]:
+    """Yield (dotted path, expression body) for every expression under node."""
     found: list[tuple[str, str]] = []
     if isinstance(node, dict):
         for key, value in node.items():
-            found += _walk(value, f"{path}.{key}" if path else str(key))
+            found += _walk(value, (*path, str(key)))
     elif isinstance(node, list):
         for index, value in enumerate(node):
-            found += _walk(value, f"{path}[{index}]")
+            found += _walk(value, (*path, f"[{index}]"))
     elif isinstance(node, str):
-        found += [(path, m.group(1).strip()) for m in EXPRESSION.finditer(node)]
+        joined = ".".join(path)
+        found += [(joined, m.group(1).strip()) for m in EXPRESSION.finditer(node)]
     return found
 
 
@@ -57,21 +69,20 @@ def check(manifest: Path) -> list[str]:
 
     errors: list[str] = []
     for path, expression in _walk(doc):
-        # runs.steps.* is the only region the runner evaluates at step time.
-        if path.startswith("runs.steps"):
-            root = re.split(r"[.\[(]", expression.lstrip("!( "), maxsplit=1)[0]
-            if root and root not in ALLOWED_CONTEXTS:
-                errors.append(
-                    f"{manifest}: '{expression}' at {path} uses the '{root}' context, "
-                    f"which an action manifest cannot resolve."
-                )
-            continue
-        errors.append(
-            f"{manifest}: template expression '${{{{ {expression} }}}}' at '{path}' is "
-            f"outside runs.steps.* -- the runner parses it on load and the action will "
-            f"fail to load at every call site. Describe it in prose, or move it to a "
-            f"YAML comment."
-        )
+        if FORBIDDEN_CONTEXT.search(expression):
+            errors.append(
+                f"{manifest}: '{expression}' at '{path}' uses a workflow-only "
+                f"context. An action manifest cannot resolve job/needs/secrets/vars, "
+                f"so the runner fails to load this action at every call site. "
+                f"Pass the value in as an input instead."
+            )
+        elif path.split(".")[-1] in METADATA_KEYS:
+            errors.append(
+                f"{manifest}: expression '${{{{ {expression} }}}}' at '{path}' sits in "
+                f"a metadata field. The runner parses these strings on load, so even a "
+                f"documentation example is executable. Describe it in prose, or move it "
+                f"to a YAML comment."
+            )
     return errors
 
 
