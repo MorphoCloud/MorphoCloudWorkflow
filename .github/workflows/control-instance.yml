@@ -50,8 +50,8 @@ jobs:
         with:
           command: "/unshelve"
           reaction: "rocket"
-          # Keep the 🚀 on the comment and skip the post-run 👍. See the
-          # reaction-semantics note on the `control` job below.
+          # Keep the 🚀 and skip the post-run 👍; the `control` job reports the
+          # real outcome. See .github/actions/report-command-outcome.
           skip_completing: "true"
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
@@ -178,41 +178,15 @@ jobs:
           mail_server_password: ${{secrets.MAIL_PASSWORD}}
           admin_emails: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
 
-      # Reaction semantics on the command comment:
-      #   🚀 accepted — queued or running   👍 finished successfully
-      #   👎 failed, or the run was cancelled before it finished
-      #
-      # The 🚀 is added by github/command in `authorize`, and `skip_completing`
-      # keeps it there so it stays visible for the whole run — including time
-      # spent queued behind the concurrency group above. Previously the
-      # post-run of `authorize` swapped 🚀 for 👍 as soon as authorization
-      # passed and this job stripped that 👍 at startup, so a running command
-      # carried NO reaction for minutes and read as never picked up
-      # (Instances#168). 👍 still means finished, never merely accepted.
+      # 🚀 stays on the comment for this whole job — including time spent
+      # queued behind the concurrency group above — and only now becomes
+      # 👍/👎. See .github/actions/report-command-outcome for why
+      # `skip_completing` is required for that (Instances#168).
       - name: Report command outcome on the comment
         if: ${{ always() }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REACTIONS_API:
-            repos/${{ github.repository }}/issues/comments/${{
-            github.event.comment.id }}/reactions
-          REACTION_ID: ${{ needs.authorize.outputs.reaction_id }}
-          JOB_STATUS: ${{ job.status }}
-        run: |
-          if [ "$JOB_STATUS" = "success" ]; then
-            outcome="+1"
-          else
-            outcome="-1"
-          fi
-          # Order matters: add the outcome first and clear 🚀 only once that
-          # has succeeded, so a failing API call leaves a stale 🚀 rather than
-          # a bare comment. Guarded explicitly instead of leaning on the
-          # runner's default `bash -e {0}`, which would also abort here.
-          if ! gh api "$REACTIONS_API" -f "content=$outcome"; then
-            echo "::error::Could not add the '$outcome' outcome reaction to comment ${{ github.event.comment.id }}; leaving 🚀 in place."
-            exit 1
-          fi
-          # Best-effort: a failed cleanup must not mask the command's outcome.
-          if [ -n "$REACTION_ID" ]; then
-            gh api -X DELETE "$REACTIONS_API/$REACTION_ID" || true
-          fi
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ needs.authorize.outputs.reaction_id }}
+          status: ${{ job.status }}

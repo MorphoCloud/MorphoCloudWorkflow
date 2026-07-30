@@ -23,6 +23,7 @@ jobs:
       contains(github.event.comment.body, '/email') ) }}
     outputs:
       continue: ${{ steps.email_command.outputs.continue }}
+      reaction_id: ${{ steps.email_command.outputs.initial_reaction_id }}
     steps:
       - uses: actions/checkout@v6
 
@@ -46,6 +47,9 @@ jobs:
         with:
           command: "/email"
           reaction: "rocket"
+          # Keep the 🚀 and skip the post-run 👍; the worker job below reports
+          # the real outcome. See .github/actions/report-command-outcome.
+          skip_completing: "true"
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
@@ -204,3 +208,12 @@ jobs:
           issue-number: ${{ github.event.issue.number }}
           body: |
             `email` command successfully completed for **${{ steps.define.outputs.instance_name }}** instance ✅
+
+      - name: Report command outcome on the comment
+        if: ${{ always() }}
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ needs.authorize.outputs.reaction_id }}
+          status: ${{ job.status }}

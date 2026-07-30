@@ -38,6 +38,7 @@ jobs:
     outputs:
       continue: ${{ steps.create_command.outputs.continue }}
       admins: ${{ steps.admins.outputs.members }}
+      reaction_id: ${{ steps.create_command.outputs.initial_reaction_id }}
     steps:
       - uses: actions/checkout@v6
 
@@ -61,6 +62,12 @@ jobs:
         with:
           command: "/create"
           reaction: "rocket"
+          # Keep the 🚀 and skip the post-run 👍; provisioning takes minutes and
+          # the `create` job reports the real outcome. Without this, 👍 landed
+          # while "Create IP" was still the only step running — the command read
+          # as finished before it had begun. See
+          # .github/actions/report-command-outcome (Instances#168).
+          skip_completing: "true"
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
@@ -92,6 +99,22 @@ jobs:
             echo "::error ::/create refused on closed issue #$ISSUE_NUMBER"
             exit 1
           fi
+
+      # With `skip_completing` set, github/command no longer converts this
+      # job's failure into 👎, so the refusal above has to report its own.
+      # Otherwise a refused /create would keep its 🚀 forever and read as
+      # still queued. The guard keeps this off the paths that have no 🚀 to
+      # replace: an unauthorized command already got 👎 from the action's own
+      # precheck handling, and a failure before the command step never
+      # reacted at all.
+      - name: Report refusal on the comment
+        if: ${{ failure() && steps.create_command.outputs.continue == 'true' }}
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ steps.create_command.outputs.initial_reaction_id }}
+          status: ${{ job.status }}
 
   create:
     runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
@@ -374,3 +397,14 @@ jobs:
             2. `/create` — provisions again from scratch
 
             If it fails again after retrying, please tag `@MorphoCloud/morphocloud-admins` for help.
+
+      # Last step in the job: 🚀 has been on the comment for the whole
+      # provisioning run and only now becomes 👍/👎.
+      - name: Report command outcome on the comment
+        if: ${{ always() }}
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ needs.authorize.outputs.reaction_id }}
+          status: ${{ job.status }}

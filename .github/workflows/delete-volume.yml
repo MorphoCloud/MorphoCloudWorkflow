@@ -21,6 +21,8 @@ jobs:
       contains(github.event.comment.body, '/delete_volume') ) }}
     outputs:
       continue: ${{ steps.delete_volume_command.outputs.continue }}
+      reaction_id:
+        ${{ steps.delete_volume_command.outputs.initial_reaction_id }}
     steps:
       - uses: actions/checkout@v6
 
@@ -44,6 +46,9 @@ jobs:
         with:
           command: "/delete_volume"
           reaction: "rocket"
+          # Keep the 🚀 and skip the post-run 👍; the worker job below reports
+          # the real outcome. See .github/actions/report-command-outcome.
+          skip_completing: "true"
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
@@ -67,3 +72,12 @@ jobs:
           issue_number: ${{ github.event.issue.number }}
           instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
           volume_name_suffix: ${{ vars.VOLUME_NAME_SUFFIX }}
+
+      - name: Report command outcome on the comment
+        if: ${{ always() }}
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ needs.authorize.outputs.reaction_id }}
+          status: ${{ job.status }}
