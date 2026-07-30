@@ -13,6 +13,12 @@ outputs:
   exists:
     description: "Set to 'true' or 'false'"
     value: ${{ steps.check_instance.outputs.exists }}
+  status:
+    description:
+      "OpenStack status of the instance (ACTIVE, SHELVED_OFFLOADED, ERROR, …),
+      or empty when it does not exist. Existence alone is not liveness — a
+      shelved server is still listed."
+    value: ${{ steps.check_instance.outputs.status }}
 runs:
   using: "composite"
   steps:
@@ -26,16 +32,25 @@ runs:
         # An unfiltered listing is the heaviest Nova query and 504'd during a
         # transient JS2 API brownout (Instances#168); the exact-match jq below
         # stays as the authoritative check.
-        instance=$(openstack server list --name "^${INSTANCE_NAME}$" -f json | \
-          jq \
-            --arg instance_name "$INSTANCE_NAME" \
-            -c '.[] | select(.Name == $instance_name)' | \
-          jq -r '.Name' | tail -1)
+        servers=$(openstack server list --name "^${INSTANCE_NAME}$" -f json)
+
+        instance=$(echo "$servers" | \
+          jq -r --arg instance_name "$INSTANCE_NAME" \
+            '[.[] | select(.Name == $instance_name)] | last | .Name // empty')
+
+        # Existence is not liveness: a SHELVED_OFFLOADED server is still listed,
+        # and its cached address record still shows the floating IP it held
+        # before shelving even though that IP is back in the project pool.
+        # Callers that hand out connection details must gate on this.
+        status=$(echo "$servers" | \
+          jq -r --arg instance_name "$INSTANCE_NAME" \
+            '[.[] | select(.Name == $instance_name)] | last | .Status // empty')
 
         [[ $instance == "$INSTANCE_NAME" ]] && exists="true" || exists="false"
 
-        echo "exists [$exists]"
+        echo "exists [$exists] status [$status]"
         echo "exists=$exists" >> $GITHUB_OUTPUT
+        echo "status=$status" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ inputs.instance_name }}

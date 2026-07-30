@@ -111,6 +111,34 @@ jobs:
           echo "::error ::/email requires an existing instance; $INSTANCE_NAME was not found."
           exit 1
 
+      # Existence is not liveness. A SHELVED_OFFLOADED server is still listed
+      # by `openstack server list`, and its cached address record still shows
+      # the floating IP it held before shelving — Exosphere reports "No public
+      # IP address assigned" for the same instance, and the IP is back in the
+      # project pool attached to nothing (two shelved instances can advertise
+      # the same one). Without this gate /email mailed a Guacamole URL built
+      # from that dead address, and would point at whichever instance picks
+      # the IP up next.
+      - name: Require a running instance
+        if:
+          ${{ steps.check_instance.outputs.exists == 'true' &&
+          steps.check_instance.outputs.status != 'ACTIVE' }}
+        shell: bash
+        env:
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+          INSTANCE_STATUS: ${{ steps.check_instance.outputs.status }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "### Command Results ❌
+
+          \`email\` command failed because **$INSTANCE_NAME** is not running (\`$INSTANCE_STATUS\`).
+
+          Comment \`/unshelve\` to start it — the connection email is sent when it finishes."
+          echo "::error ::/email requires an ACTIVE instance; $INSTANCE_NAME is $INSTANCE_STATUS"
+          exit 1
+
       - name: Determine issue type
         id: check_type
         shell: bash
