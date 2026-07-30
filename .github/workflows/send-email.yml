@@ -135,7 +135,7 @@ jobs:
 
           \`email\` command failed because **$INSTANCE_NAME** is not running (\`$INSTANCE_STATUS\`).
 
-          Comment \`/unshelve\` to start it — the connection email is sent when it finishes."
+          If it is shelved, comment \`/unshelve\` — the connection email follows automatically. Otherwise tag @MorphoCloud/morphocloud-admins."
           echo "::error ::/email requires an ACTIVE instance; $INSTANCE_NAME is $INSTANCE_STATUS"
           exit 1
 
