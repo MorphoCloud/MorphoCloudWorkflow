@@ -48,11 +48,22 @@ jobs:
             # A flavor not declared in labels.yml would otherwise fail
             # --add-label and take this job — and, via needs:, the validation
             # comment, the command list and the issue rename — down with it.
-            # Same guard the expiration label above already uses.
+            #
+            # Create-if-missing, NOT --force: --force also rewrites the colour
+            # and description of an existing label, which would replace the
+            # hardware spec labels.yml wrote ("32 CPUs, 125 GB RAM") with the
+            # generic string below on every course issue opened. Without
+            # --force, gh exits non-zero when the label already exists and the
+            # `|| true` swallows it, leaving labels.yml's version untouched.
+            # The generic description therefore only ever applies to a flavor
+            # labels.yml does not know about, which is the honest wording for
+            # that case. (The expiration guard above can use --force safely: its
+            # description is built from COURSE_DURATION_DAYS, so re-writing it
+            # is idempotent.)
             gh label create "flavor:$COURSE_FLAVOR" \
               --color "D93F0B" \
               --description "Instance flavor requested for this course" \
-              --force >/dev/null 2>&1 || true
+              >/dev/null 2>&1 || true
             gh issue edit "$ISSUE_NUMBER" --add-label "flavor:$COURSE_FLAVOR"
             echo "Set flavor label: flavor:$COURSE_FLAVOR"
           else
