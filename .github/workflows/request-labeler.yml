@@ -55,7 +55,21 @@ jobs:
         if:
           ${{ steps.extract.outputs.instance_flavor != '' &&
           steps.extract.outputs.instance_flavor != 'null' }}
-        run: gh issue edit "$NUMBER" --add-label "$LABELS"
+        run: |
+          # A flavor offered by the request form but not declared in labels.yml
+          # fails --add-label, which fails this job and blocks the whole
+          # request flow. m3.xl sat in that state until 2026-07-31: it is in
+          # the dropdown, live issues carry the label, but labels.yml did not
+          # declare it — Instances worked only because the label had been
+          # created by hand, so labels.yml could not have rebuilt that repo.
+          # Create-if-missing, NOT --force: --force would also rewrite the
+          # colour and description labels.yml wrote. Same guard as the course
+          # handler in on-course-request-opened.yml.
+          gh label create "$LABELS" \
+            --color "D93F0B" \
+            --description "Instance flavor requested for this instance" \
+            >/dev/null 2>&1 || true
+          gh issue edit "$NUMBER" --add-label "$LABELS"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
