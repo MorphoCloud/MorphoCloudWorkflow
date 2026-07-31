@@ -45,10 +45,26 @@ jobs:
           fi
 
           if [[ -n "$COURSE_FLAVOR" ]]; then
+            # A flavor not declared in labels.yml would otherwise fail
+            # --add-label and take this job — and, via needs:, the validation
+            # comment, the command list and the issue rename — down with it.
+            # Same guard the expiration label above already uses.
+            gh label create "flavor:$COURSE_FLAVOR" \
+              --color "D93F0B" \
+              --description "Instance flavor requested for this course" \
+              --force >/dev/null 2>&1 || true
             gh issue edit "$ISSUE_NUMBER" --add-label "flavor:$COURSE_FLAVOR"
             echo "Set flavor label: flavor:$COURSE_FLAVOR"
           else
+            # create-instance reads the flavor solely from this label, so an
+            # unset COURSE_FLAVOR means /create dies inside OpenStack with an
+            # opaque error. Say so here instead, and do NOT fail the job —
+            # failing it would skip the dependent jobs and leave the student
+            # with no validation comment at all.
             echo "::warning ::No COURSE_FLAVOR variable set; skipping flavor label"
+            printf '### Course not fully configured\n\nThis course repository has no `COURSE_FLAVOR` variable set, so `/create` cannot pick an instance type and will fail.\n\n@MorphoCloud/morphocloud-admins - please set the `COURSE_FLAVOR` repository variable before anyone runs `/create`.\n' > /tmp/no-flavor-${ISSUE_NUMBER}.md
+            gh issue comment "$ISSUE_NUMBER" --body-file /tmp/no-flavor-${ISSUE_NUMBER}.md || true
+            rm -f /tmp/no-flavor-${ISSUE_NUMBER}.md
           fi
         env:
           COURSE_DURATION_DAYS: ${{ vars.COURSE_DURATION_DAYS }}
