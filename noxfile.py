@@ -230,6 +230,9 @@ def vendorize(session: nox.Session) -> None:
             "course-issue-commands.md",
             "cloud-config",
             "scripts/list-instance-credentials.sh",
+            # Referenced by the local hook in .pre-commit-config.yaml, which is
+            # itself vendorized — omitting it makes CI fail downstream.
+            "scripts/check-action-manifest-expressions.py",
         ],
         [
             ".github/dependabot.yml",
@@ -262,6 +265,9 @@ def vendorize_course(session: nox.Session) -> None:
             "course-issue-commands.md",
             "cloud-config",
             "scripts/list-instance-credentials.sh",
+            # Referenced by the local hook in .pre-commit-config.yaml, which is
+            # itself vendorized — omitting it makes CI fail downstream.
+            "scripts/check-action-manifest-expressions.py",
         ],
         [
             ".github/dependabot.yml",
