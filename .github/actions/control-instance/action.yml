@@ -1141,8 +1141,13 @@ runs:
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
+        # A redundant shelve/unshelve skips the state transition and degrades
+        # to "ensure floating IP + report" (see check_noop). Say that, rather
+        # than claiming a transition that did not happen — two identical
+        # success comments in a row is exactly what made a dropped command look
+        # like a duplicated one in Instances#168.
         body: |
-          Instance **${{ steps.define.outputs.instance_name }}** successfully ${{ inputs.command_name }}d ✅
+          Instance **${{ steps.define.outputs.instance_name }}** ${{ steps.check_noop.outputs.noop == 'true' && 'was already' || 'successfully' }} ${{ inputs.command_name }}d ✅
 
     - name: Unapprove instance
       if:

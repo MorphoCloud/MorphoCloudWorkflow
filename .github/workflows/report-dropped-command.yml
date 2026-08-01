@@ -1,0 +1,122 @@
+name: Report Dropped Command
+
+# Turn a silently dropped IssueOps command into a visible one.
+#
+# Every command worker job joins the per-issue concurrency group that #252 (the
+# Instances#166 postmortem) added, so commands on one issue serialize instead
+# of racing on OpenStack state. GitHub implements that with one running and one
+# PENDING slot: a third command cancels whatever was pending. The cancellation
+# lands before the worker job's first step, so the `always()`
+# report-command-outcome step never runs — no comment, no 👎, and the command
+# comment keeps its 🚀 indefinitely. A dropped command is then indistinguishable
+# from a slow one (Instances#168: `/shelve` `/unshelve` `/shelve` ran both
+# shelves and discarded the `/unshelve` without a word).
+#
+# This cannot be fixed inside the cancelled run — nothing in it executes — so it
+# is reported from a `workflow_run` follow-up instead. `workflow_run` only fires
+# for the copy of this file on the default branch, so it does nothing until
+# merged and vendorized.
+#
+# The one queue slot is a GitHub limit and is unchanged by this workflow. Users
+# stacking three or more commands still lose the middle ones; they are now told
+# so and can re-send.
+
+on:
+  workflow_run:
+    # Every command workflow whose worker job carries the shared per-issue
+    # group and whose authorize job records a command context. Create Instance
+    # is absent on purpose: its group is workflow-level (see create-instance.yml
+    # for why), so an evicted run is cancelled before `authorize` can record
+    # anything for the reporter to act on.
+    workflows:
+      - Control Instance
+      - Send Email
+      - Delete Instance and Volume
+    types: [completed]
+
+permissions:
+  # contents: read is load-bearing, not boilerplate — declaring a permissions
+  # block narrows GITHUB_TOKEN to exactly what is listed, so omitting it makes
+  # actions/checkout fail with "Repository not found" on a private repository
+  # and the drop goes unreported after all (caught on Test-Instances#404).
+  contents: read
+  # Reading the cancelled run's job list and its command-context artifact.
+  actions: read
+  # Posting the dropped-command comment and replacing 🚀 with 👎.
+  issues: write
+
+jobs:
+  report:
+    if: ${{ github.event.workflow_run.conclusion == 'cancelled' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Identify a command dropped from the concurrency queue
+        id: dropped
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          CONTEXT_DIR: ${{ runner.temp }}/command-context
+        run: |
+          # per_page beyond any plausible job count: the default page size is
+          # 30, and a truncated first page would hide the very job whose
+          # cancellation this workflow exists to detect.
+          jobs_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100")"
+
+          # A worker job evicted from the queue is cancelled before its first
+          # step, so it reports an empty step list. A run cancelled any other
+          # way (a human `gh run cancel`, a cancellation mid-run) has steps
+          # behind it and its own always() step has already reported the
+          # outcome — reporting again would double-comment. `authorize` is
+          # excluded because it sits outside the concurrency group: it is never
+          # the job that gets evicted, and cancelling it while it waits for a
+          # GitHub-hosted runner would otherwise look identical.
+          evicted="$(printf '%s' "$jobs_json" | jq '[.jobs[] | select(.name != "authorize" and .conclusion == "cancelled" and (.steps | length) == 0)] | length')"
+          if [ "$evicted" -eq 0 ]; then
+            echo "Run ${RUN_ID} was cancelled after its worker job had started; that run reported its own outcome."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          has_context="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" --jq '[.artifacts[] | select(.name == "command-context")] | length')"
+          if [ "$has_context" -eq 0 ]; then
+            echo "::error::Run ${RUN_ID} lost an authorized command to the concurrency queue but recorded no command context, so the user cannot be told which command was dropped. Check the authorize job of that run."
+            exit 1
+          fi
+
+          gh run download "$RUN_ID" --name command-context --dir "$CONTEXT_DIR"
+          context_file="${CONTEXT_DIR}/command-context.json"
+          cat "$context_file"
+
+          {
+            echo "found=true"
+            echo "issue_number=$(jq -r '.issue_number' "$context_file")"
+            echo "comment_id=$(jq -r '.comment_id' "$context_file")"
+            echo "reaction_id=$(jq -r '.reaction_id' "$context_file")"
+            echo "command=$(jq -r '.command' "$context_file")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Tell the user the command was dropped
+        if: ${{ steps.dropped.outputs.found == 'true' }}
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          issue-number: ${{ steps.dropped.outputs.issue_number }}
+          body: |
+            ### Command Dropped ⚠️
+
+            `${{ steps.dropped.outputs.command }}` did not run — a later command took its place in the queue.
+
+            One command runs at a time on a request, with one more allowed to wait. Comment `${{ steps.dropped.outputs.command }}` again, and wait for 👍 before sending the next command.
+
+      # Last, so a failure here cannot stop the comment above from reaching the
+      # user: the comment is the signal that matters, the reaction is the cue
+      # that the command is no longer in flight.
+      - name: Report the drop on the command comment
+        if: ${{ steps.dropped.outputs.found == 'true' }}
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ steps.dropped.outputs.comment_id }}
+          reaction_id: ${{ steps.dropped.outputs.reaction_id }}
+          status: cancelled

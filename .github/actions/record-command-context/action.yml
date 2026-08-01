@@ -1,0 +1,71 @@
+name: "Record command context"
+
+# Persist the identity of an authorized IssueOps command so that
+# report-dropped-command.yml can reach the user if the worker job never runs.
+#
+# GitHub allows one running and one PENDING run per concurrency group; a third
+# arrival cancels the pending one. That cancellation kills the worker job
+# before its first step, so its `always()` report-command-outcome step never
+# fires and the command comment keeps its 🚀 forever (Instances#168).
+#
+# The reporter runs on `workflow_run`, whose payload does not carry the
+# originating issue_comment. The `authorize` job sits outside the concurrency
+# group and therefore always completes, so it is the one place that can hand
+# the reporter the ids it needs.
+
+description:
+  Upload the issue, comment, reaction and command of an authorized IssueOps
+  command as a short-lived artifact, so a worker job dropped from the
+  concurrency queue can still be reported to the user.
+
+inputs:
+  issue_number:
+    description: Number of the issue carrying the command.
+    required: true
+  comment_id:
+    description: Id of the comment that carried the command.
+    required: true
+  reaction_id:
+    description:
+      Id of the 🚀 the command step left on the comment, from its
+      `initial_reaction_id` output. Empty is tolerated — the reporter then
+      leaves the reaction alone and still posts its comment.
+    required: false
+    default: ""
+  command:
+    description:
+      The command as the user types it, including the leading slash (for example
+      "/unshelve"). Quoted back to the user so they can re-send it, so it must
+      be the trigger and not an internal command name.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Write the command context
+      shell: bash
+      env:
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+        COMMENT_ID: ${{ inputs.comment_id }}
+        REACTION_ID: ${{ inputs.reaction_id }}
+        COMMAND: ${{ inputs.command }}
+        CONTEXT_FILE: ${{ runner.temp }}/command-context.json
+      run: |
+        jq -n \
+          --arg issue_number "$ISSUE_NUMBER" \
+          --arg comment_id "$COMMENT_ID" \
+          --arg reaction_id "$REACTION_ID" \
+          --arg command "$COMMAND" \
+          '{issue_number: $issue_number, comment_id: $comment_id, reaction_id: $reaction_id, command: $command}' \
+          > "$CONTEXT_FILE"
+        cat "$CONTEXT_FILE"
+
+    - name: Upload the command context
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: command-context
+        path: ${{ runner.temp }}/command-context.json
+        # The reporter reads this within seconds of the run ending; keeping it
+        # any longer only accumulates artifacts on a busy repository.
+        retention-days: 1
+        if-no-files-found: error
