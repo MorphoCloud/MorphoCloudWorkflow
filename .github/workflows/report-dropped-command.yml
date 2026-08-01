@@ -35,7 +35,14 @@ on:
     types: [completed]
 
 permissions:
+  # contents: read is load-bearing, not boilerplate — declaring a permissions
+  # block narrows GITHUB_TOKEN to exactly what is listed, so omitting it makes
+  # actions/checkout fail with "Repository not found" on a private repository
+  # and the drop goes unreported after all (caught on Test-Instances#404).
+  contents: read
+  # Reading the cancelled run's job list and its command-context artifact.
   actions: read
+  # Posting the dropped-command comment and replacing 🚀 with 👎.
   issues: write
 
 jobs:
