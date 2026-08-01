@@ -67,6 +67,16 @@ runs:
         os_cloud: ${{ inputs.os_cloud }}
         instance_name: ${{ steps.define.outputs.instance_name }}
 
+    # Its own step, deliberately: this flag is what keeps the /delete_all retry
+    # guidance from firing on a redundant command, so it must not ride on
+    # anything that can fail. Bundled into the advice step below, a failed
+    # $GITHUB_OUTPUT write would leave the flag unset and put the data-
+    # destroying advice back in front of the user.
+    - name: Flag the command as redundant
+      if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
+      shell: bash
+      run: echo "CREATE_ALREADY_EXISTS=true" >> $GITHUB_ENV
+
     - name: Choose recovery advice for the existing instance
       id: exists_advice
       if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
@@ -84,11 +94,6 @@ runs:
             ;;
         esac
         echo "line=$line" >> $GITHUB_OUTPUT
-        # Marks the run so the steps that report a *provisioning* failure stay
-        # quiet: a redundant command is not one. GITHUB_ENV is job-scoped, so
-        # this reaches the calling workflow's later steps as well — an action
-        # output would not survive the deliberate failure below.
-        echo "CREATE_ALREADY_EXISTS=true" >> $GITHUB_ENV
       env:
         STATUS: ${{ steps.check_instance.outputs.status }}
 
@@ -102,7 +107,7 @@ runs:
 
           **${{ steps.define.outputs.instance_name }}** already exists (`${{ steps.check_instance.outputs.status }}`), so `/create` has nothing to do.
 
-          ${{ steps.exists_advice.outputs.line }}
+          ${{ steps.exists_advice.outputs.line || 'Tag @MorphoCloud/morphocloud-admins if you are unsure what to do next.' }}
 
           To rebuild it from scratch, comment `/delete_instance` and then `/create`. Your data volume is kept.
 
