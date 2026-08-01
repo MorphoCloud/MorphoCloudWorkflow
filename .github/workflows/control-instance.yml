@@ -145,8 +145,16 @@ jobs:
       # that is guaranteed to execute. Hand report-dropped-command.yml what it
       # needs in case the `control` job below is evicted from the queue and
       # never reports for itself.
+      #
+      # continue-on-error, because this step is bookkeeping for a failure path
+      # and must never become one itself: it is the last step of the gate job,
+      # so a transient artifact-upload error would fail `authorize`, skip the
+      # worker job on a perfectly valid command, and strand the 🚀 — the exact
+      # silent drop this workflow exists to report. Degrade to "a drop would go
+      # unreported" instead.
       - name: Record command context
         if: ${{ steps.command.outputs.continue == 'true' }}
+        continue-on-error: true
         uses: ./.github/actions/record-command-context
         with:
           issue_number: ${{ github.event.issue.number }}

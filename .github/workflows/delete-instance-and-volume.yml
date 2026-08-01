@@ -64,6 +64,9 @@ jobs:
         if:
           ${{ steps.delete_instance_and_volume_command.outputs.continue ==
           'true' }}
+        # See control-instance.yml: bookkeeping for a failure path must never
+        # become one — a failed upload here would skip the worker job below.
+        continue-on-error: true
         uses: ./.github/actions/record-command-context
         with:
           issue_number: ${{ github.event.issue.number }}

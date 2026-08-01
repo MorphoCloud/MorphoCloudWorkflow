@@ -52,7 +52,10 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           CONTEXT_DIR: ${{ runner.temp }}/command-context
         run: |
-          jobs_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs")"
+          # per_page beyond any plausible job count: the default page size is
+          # 30, and a truncated first page would hide the very job whose
+          # cancellation this workflow exists to detect.
+          jobs_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs?per_page=100")"
 
           # A worker job evicted from the queue is cancelled before its first
           # step, so it reports an empty step list. A run cancelled any other
@@ -69,8 +72,8 @@ jobs:
             exit 0
           fi
 
-          artifact_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" --jq '[.artifacts[] | select(.name == "command-context")][0].id // empty')"
-          if [ -z "$artifact_id" ]; then
+          has_context="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts" --jq '[.artifacts[] | select(.name == "command-context")] | length')"
+          if [ "$has_context" -eq 0 ]; then
             echo "::error::Run ${RUN_ID} lost an authorized command to the concurrency queue but recorded no command context, so the user cannot be told which command was dropped. Check the authorize job of that run."
             exit 1
           fi
