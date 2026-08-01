@@ -3,11 +3,25 @@ name: Claude Code Review
 # Automatic review of every human-authored PR. Runs on the repo's free
 # public-repo Actions minutes; Claude usage draws on the maintainer's
 # subscription via CLAUDE_CODE_OAUTH_TOKEN (not a per-token API bill).
-# Re-review after pushing fixes: comment "@claude review" (see claude.yml).
-
+#
+# `synchronize` is what makes a resubmission get reviewed. Without it the
+# review is one-shot at PR open, and the fixes written in response to it — the
+# riskiest code on the PR, since it is freshly written and reacting to a
+# finding — merge unreviewed. That happened on #277: the review round added
+# `continue-on-error` to three workflows and a `contents: read` permission,
+# neither of which any review ever saw, and the second was only caught because
+# it failed in a live test. Ad-hoc "@claude review" (see claude.yml) depends on
+# someone remembering.
 on:
   pull_request:
-    types: [opened, ready_for_review]
+    types: [opened, ready_for_review, synchronize]
+
+# One review per PR at a time, latest commit wins. Pushing three times in a
+# minute otherwise starts three reviews, two of them already stale, each
+# drawing on the same subscription.
+concurrency:
+  group: claude-review-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   review:
