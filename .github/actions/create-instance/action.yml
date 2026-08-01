@@ -53,6 +53,74 @@ runs:
         prefix: ${{ inputs.instance_name_prefix }}
         issue_number: ${{ inputs.issue_number }}
 
+    # Refuse a redundant /create before anything else happens. This check used
+    # to sit after the label edit and the progress comment, so /create on an
+    # issue that already had an instance stripped that issue's status:* labels,
+    # posted a ⏳ progress table for work that would never start, and then
+    # reported BOTH "Failed to create instance" and the transient-error retry
+    # guidance — which tells the user to run /delete_all and would destroy the
+    # data volume of a perfectly healthy shelved instance (Instances#168).
+    - name: Check instance exists
+      id: check_instance
+      uses: ./.github/actions/check-instance-exists
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        instance_name: ${{ steps.define.outputs.instance_name }}
+
+    # Its own step, deliberately: this flag is what keeps the /delete_all retry
+    # guidance from firing on a redundant command, so it must not ride on
+    # anything that can fail. Bundled into the advice step below, a failed
+    # $GITHUB_OUTPUT write would leave the flag unset and put the data-
+    # destroying advice back in front of the user.
+    - name: Flag the command as redundant
+      if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
+      shell: bash
+      run: echo "CREATE_ALREADY_EXISTS=true" >> $GITHUB_ENV
+
+    - name: Choose recovery advice for the existing instance
+      id: exists_advice
+      if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
+      shell: bash
+      run: |
+        case "$STATUS" in
+          SHELVED | SHELVED_OFFLOADED)
+            line='Comment `/unshelve` to start it — the connection email follows automatically.'
+            ;;
+          ACTIVE)
+            line='Comment `/email` to resend the connection details.'
+            ;;
+          *)
+            line='Tag @MorphoCloud/morphocloud-admins — this instance needs a look before it can be used.'
+            ;;
+        esac
+        echo "line=$line" >> $GITHUB_OUTPUT
+      env:
+        STATUS: ${{ steps.check_instance.outputs.status }}
+
+    - name: comment (instance already exists)
+      if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Already Exists ⚠️
+
+          **${{ steps.define.outputs.instance_name }}** already exists (`${{ steps.check_instance.outputs.status }}`), so `/create` has nothing to do.
+
+          ${{ steps.exists_advice.outputs.line || 'Tag @MorphoCloud/morphocloud-admins if you are unsure what to do next.' }}
+
+          To rebuild it from scratch, comment `/delete_instance` and then `/create`. Your data volume is kept.
+
+    - name: instance already exists (failure)
+      if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
+      shell: bash
+      run: |
+        echo "::error ::Instance $INSTANCE_NAME already exists ($STATUS); /create is redundant"
+        exit 1
+      env:
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+        STATUS: ${{ steps.check_instance.outputs.status }}
+
     - name: Add request:approved label and remove stale labels
       shell: bash
       run: |
@@ -98,34 +166,6 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         GH_REPO: ${{ github.repository }}
         ISSUE_NUMBER: ${{ inputs.issue_number }}
-
-    - name: Check instance exists
-      id: check_instance
-      uses: ./.github/actions/check-instance-exists
-      with:
-        os_cloud: ${{ inputs.os_cloud }}
-        instance_name: ${{ steps.define.outputs.instance_name }}
-
-    - name: comment (Instance already created)
-      if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
-      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
-      with:
-        issue-number: ${{ inputs.issue_number }}
-        body: |
-          ### Instance Creation Results ❌
-
-          Instance **${{ steps.define.outputs.instance_name }}** already created.
-
-          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-    - name: instance already exists (failure)
-      if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
-      shell: bash
-      run: |
-        echo "::error ::Instance $INSTANCE_NAME already created"
-        exit 1
-      env:
-        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: Retrieve or create floating IP
       id: ip_create
@@ -420,13 +460,16 @@ runs:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         CURRENT_STATUS: ${{ steps.wait_instance_state.outputs.final_status }}
 
+    # env.CREATE_ALREADY_EXISTS: a redundant /create is refused up front with
+    # its own explanation; adding a generic "Failed to create instance" on top
+    # of it is the noise that sent users to /delete_all (Instances#168).
     - name: comment (instance creation failed)
       if:
         ${{ (steps.create_instance.outcome == 'failure' ||
         steps.wait_instance_state.outcome == 'failure' ||
         steps.check_capacity_error.outputs.capacity_error != 'true') &&
         failure() && steps.check_capacity_error.outputs.capacity_error != 'true'
-        }}
+        && env.CREATE_ALREADY_EXISTS != 'true' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}

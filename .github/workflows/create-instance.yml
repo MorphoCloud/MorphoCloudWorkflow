@@ -400,8 +400,15 @@ jobs:
           attach_volume: ✅
           send_email: ✅
 
+      # This advice destroys data if it is given for the wrong failure: a
+      # redundant /create on a healthy shelved instance is not a partial
+      # provisioning, and /delete_all would take the user's data volume with it
+      # (Instances#168). The action sets CREATE_ALREADY_EXISTS in that case and
+      # posts its own targeted guidance instead.
       - name: comment (retry guidance on provisioning failure)
-        if: ${{ failure() && steps.provision.outcome == 'failure' }}
+        if:
+          ${{ failure() && steps.provision.outcome == 'failure' &&
+          env.CREATE_ALREADY_EXISTS != 'true' }}
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}
