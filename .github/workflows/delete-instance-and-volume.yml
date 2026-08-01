@@ -57,6 +57,23 @@ jobs:
             vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
             }},${{ join(github.event.issue.assignees.*.login, ',') }}"
 
+      # See control-instance.yml: this job runs outside the concurrency group,
+      # so it records what report-dropped-command.yml needs if the worker job
+      # below is evicted from the queue before it can report for itself.
+      - name: Record command context
+        if:
+          ${{ steps.delete_instance_and_volume_command.outputs.continue ==
+          'true' }}
+        uses: ./.github/actions/record-command-context
+        with:
+          issue_number: ${{ github.event.issue.number }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id:
+            ${{
+            steps.delete_instance_and_volume_command.outputs.initial_reaction_id
+            }}
+          command: "/delete_all"
+
   delete_instance_and_volume:
     runs-on: self-hosted
     needs: authorize

@@ -57,6 +57,18 @@ jobs:
             vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
             }}"
 
+      # See control-instance.yml: this job runs outside the concurrency group,
+      # so it records what report-dropped-command.yml needs if the worker job
+      # below is evicted from the queue before it can report for itself.
+      - name: Record command context
+        if: ${{ steps.email_command.outputs.continue == 'true' }}
+        uses: ./.github/actions/record-command-context
+        with:
+          issue_number: ${{ github.event.issue.number }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ steps.email_command.outputs.initial_reaction_id }}
+          command: "/email"
+
   send-email:
     runs-on: self-hosted
     needs: authorize

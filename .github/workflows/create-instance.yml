@@ -17,8 +17,25 @@ permissions:
 # issues; a shared namespace would let those no-op runs evict the real
 # open->create pair from the single queue slot. cancel-in-progress: false
 # queues rather than dropping, so the real command is not lost.
+#
+# Workflow-level, not job-level like the other command workflows, because the
+# closed-issue guard lives in `authorize`: the event payload's issue state is
+# stale during that race, so authorize itself has to be serialized against the
+# request-opened handler.
+#
+# The cost of workflow-level is that the group is joined before any job `if` is
+# evaluated, and this workflow fires on EVERY comment on an instance issue. A
+# comment that is not /create therefore used to occupy the group's one pending
+# slot and could evict a queued /shelve or /unshelve, which shares this group
+# (Instances#168). Only a real /create contends now; everything else gets a
+# private group it is the sole member of. The predicate matches the authorize
+# job's `if` — a non-command comment mentioning "/create" merely serializes
+# harmlessly, since the strict prefix check still refuses it downstream.
 concurrency:
-  group: morphocloud-instance-issue-${{ github.event.issue.number }}
+  group:
+    ${{ contains(github.event.comment.body, '/create') &&
+    format('morphocloud-instance-issue-{0}', github.event.issue.number) ||
+    format('create-instance-noop-{0}', github.run_id) }}
   cancel-in-progress: false
 
 # Two-job split (security review M3): authorization runs first on a

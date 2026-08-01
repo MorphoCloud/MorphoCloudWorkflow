@@ -17,8 +17,14 @@ permissions:
 # issues; a shared namespace would let those no-op runs evict the real
 # open->create pair from the single queue slot. cancel-in-progress: false
 # queues rather than dropping, so the real command is not lost.
+#
+# Workflow-level, and scoped to real /create comments, for the reasons spelled
+# out in create-instance.yml — kept symmetrical with the individual flow.
 concurrency:
-  group: morphocloud-course-issue-${{ github.event.issue.number }}
+  group:
+    ${{ contains(github.event.comment.body, '/create') &&
+    format('morphocloud-course-issue-{0}', github.event.issue.number) ||
+    format('create-course-instance-noop-{0}', github.run_id) }}
   cancel-in-progress: false
 
 # Two-job split (security review M3/M7): authorization runs first on a
