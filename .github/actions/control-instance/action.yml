@@ -721,7 +721,13 @@ runs:
               '[.[] | select(.Action == "unshelve" and .Message == "Error" and ."Start Time" > $cutoff) | ."Start Time"] | sort | .[0][0:16] // "unknown"')
             {
               printf '%s\n\n' '### Command Results ❌'
-              printf '%s\n\n' "Unshelving **${INSTANCE_NAME}** is failing on Jetstream2's side — ${total_failures} attempt(s) since ${first_failure} UTC failed on the compute host. **There is nothing you need to do.** @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed. Your instance and data remain safely stored."
+              printf '%s\n\n' "Unshelving **${INSTANCE_NAME}** is failing on Jetstream2's side — ${total_failures} attempt(s) since ${first_failure} UTC failed on the compute host. @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed."
+              # A host-side unshelve failure leaves the instance back at
+              # SHELVED_OFFLOADED, so delete + create is a safe self-serve
+              # recovery and usually faster than waiting for an admin: the
+              # user's files live on the data volume, which `/delete_instance`
+              # does not touch and `/create` re-attaches (Instances#139).
+              printf '%s\n\n' "You can often recover this yourself: run **\`/delete_instance\`**, then **\`/create\`**. Your home directory and MyData live on a separate storage volume that is not deleted, so your files and Slicer extensions are preserved."
               printf '%s\n\n' '<details><summary>Diagnostics for admins</summary>'
               printf '%s\n' 'Failed unshelve requests (openstack server event list):'
               printf '%s\n' '```'
@@ -761,12 +767,47 @@ runs:
         issue-number: ${{ inputs.issue_number }}
         body-path: /tmp/unshelve_failure_body.md
 
+    # Two variants of the same timeout report, split on the command. Only
+    # unshelve has a safe self-serve recovery: delete + create rebuilds the
+    # instance from the untouched data volume. The identical advice on a
+    # timed-out /shelve would tell the user to destroy an instance that is
+    # still mid-shelve, and on a timed-out /delete it is circular — hence the
+    # gate rather than one shared body.
+    - name: comment (maximum wait time exceeded — unshelve)
+      id: comment_max_wait_unshelve
+      if:
+        ${{ steps.instance_poll.outcome == 'failure' && failure() &&
+        steps.instance_poll.outputs.capacity_error != 'true' &&
+        steps.instance_poll.outputs.failure_mode != 'host_error' &&
+        inputs.command_name == 'unshelve' }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        # The ~10 minute hedge matters here and not on the host_error path:
+        # the unshelve budget is a deliberate fail-fast 300s, so the operation
+        # may still be in flight on Jetstream2 when this posts. Telling the
+        # user to delete immediately risks killing an instance seconds from
+        # ACTIVE — and the delete itself would bounce off the in-flight task
+        # state guard above.
+        body: |
+          ### Command Results ❌
+
+          The `unshelve` command for **${{ steps.define.outputs.instance_name }}** did not complete within the expected time — it may be stuck on Jetstream2's side. @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed.
+
+          **If your instance has not come up after ~10 minutes,** you can often recover it yourself: run **`/delete_instance`**, then **`/create`**. Your home directory and MyData live on a separate storage volume that is not deleted, so your files and Slicer extensions are preserved.
+
+          <details><summary>Diagnostics for admins</summary>
+
+          Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          </details>
+
     - name: comment (maximum wait time exceeded)
       id: comment_max_wait
       if:
         ${{ steps.instance_poll.outcome == 'failure' && failure() &&
         steps.instance_poll.outputs.capacity_error != 'true' &&
-        steps.instance_poll.outputs.failure_mode != 'host_error' }}
+        steps.instance_poll.outputs.failure_mode != 'host_error' &&
+        inputs.command_name != 'unshelve' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
@@ -1146,6 +1187,7 @@ runs:
         steps.comment_execute_failed.outcome != 'success' &&
         steps.comment_unshelve_host_failure.outcome != 'success' &&
         steps.comment_max_wait.outcome != 'success' &&
+        steps.comment_max_wait_unshelve.outcome != 'success' &&
         steps.comment_no_capacity.outcome != 'success' &&
         steps.comment_disassociate_failed.outcome != 'success' &&
         steps.comment_set_properties_failed.outcome != 'success' &&
