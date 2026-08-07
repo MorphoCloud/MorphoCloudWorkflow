@@ -174,8 +174,10 @@ jobs:
                   echo "::warning ::Non-numeric uptime ('$uptime_seconds') reported by $instance_name using IP $instance_ip; skipping"
                   continue
                 fi
-                # Convert uptime from seconds to hours
-                uptime_hours=$(echo "scale=2; $uptime_seconds / 3600" | bc)
+                # Convert uptime from seconds to hours. bc omits the leading zero
+                # for values under 1 ("900/3600" -> ".25"), which the numeric check
+                # below would reject; normalise so sub-hour instances don't trip it.
+                uptime_hours=$(echo "scale=2; $uptime_seconds / 3600" | bc | awk '{printf "%.2f", $1}')
               fi
 
               # $uptime_hours comes from the instance, which the user controls
