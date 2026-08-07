@@ -84,13 +84,24 @@ runs:
                 echo "Setup complete."
                 break
             elif [[ "$status" == "error" ]]; then
-                # Real setup failure. Extract the failed ansible task (and loop
-                # item, e.g. the extension name) from the console so the comment
-                # says exactly where it failed -- not a generic timeout message.
-                failed_task=$(last_ansible_task "$log_output")
-                failed_item=$(printf '%s\n' "$log_output" | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E 'failed:' | grep -oE '\(item=[^)]+\)' | tail -1 | sed -E 's/^\(item=//; s/\)$//')
-                detail="setup FAILED at ansible task \`${failed_task:-unknown}\`"
-                if [ -n "$failed_item" ]; then detail="$detail (item \`$failed_item\`)"; fi
+                # A failure raised before/outside ansible (no outbound network, a
+                # missing precondition, an incomplete checkout) carries an
+                # explicit reason. Prefer it: those failures happen with no
+                # ansible task on the console, so the task-name path below would
+                # report `unknown`, or -- after a mid-clone drop -- a real task
+                # name that misattributes a network fault to an ansible bug.
+                reason=$(printf '%s\n' "$status_line" | tail -n1 | jq -r '.reason // empty' || true)
+                if [ -n "$reason" ]; then
+                    detail="setup FAILED: $reason"
+                else
+                    # Real setup failure. Extract the failed ansible task (and loop
+                    # item, e.g. the extension name) from the console so the comment
+                    # says exactly where it failed -- not a generic timeout message.
+                    failed_task=$(last_ansible_task "$log_output")
+                    failed_item=$(printf '%s\n' "$log_output" | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E 'failed:' | grep -oE '\(item=[^)]+\)' | tail -1 | sed -E 's/^\(item=//; s/\)$//')
+                    detail="setup FAILED at ansible task \`${failed_task:-unknown}\`"
+                    if [ -n "$failed_item" ]; then detail="$detail (item \`$failed_item\`)"; fi
+                fi
                 set_failure_detail "$detail"
                 echo "::error ::$detail"
                 exit 1
