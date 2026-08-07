@@ -20,6 +20,45 @@ sleep 1  # Ensures that console log output from any previous command completes b
 echo '{"status":"starting", "epoch": '$(date '+%s')'000}' | tee --append /dev/console > /dev/kmsg || true
 chmod 640 /var/log/cloud-init-output.log
 
+# Bound every apt invocation on this instance, including cloud-init's own
+# `package_update`/`package_upgrade`. Those run in package_update_upgrade_install,
+# which is index 0 of cloud_final_modules -- 16 modules ahead of scripts_user --
+# so they execute long before 90-exosphere-ansible-setup.sh gets a chance to set
+# anything. Unbounded, an instance with no route off its subnet leaves apt
+# retrying until well past the workflow's 1200s poll budget, and because the
+# shell scripts never start, no status line is ever emitted and the run fails as
+# a bare timeout with no cause. This file is written here because the boothook is
+# the only hook that precedes the module phase.
+cat > /etc/apt/apt.conf.d/99-morphocloud-acquire <<'MORPHOCLOUD_APT_CONF'
+Acquire::http::Timeout "15";
+Acquire::https::Timeout "15";
+Acquire::ftp::Timeout "15";
+Acquire::Retries "2";
+MORPHOCLOUD_APT_CONF
+
+# Fail fast, and by name, when the instance came up without a route off the
+# tenant subnet. This failure mode is invisible to every cheaper check: DHCP,
+# the metadata service and DNS (which resolves against the Neutron port on the
+# subnet itself) all keep working, so the instance looks entirely healthy until
+# something tries to leave the subnet. Probe what setup actually needs rather
+# than the gateway. Boothooks run in the network stage -- the interface already
+# holds its DHCP lease at this point -- so the probe is meaningful here; the
+# retry window absorbs the last of the route programming rather than racing it.
+morphocloud_have_egress() {
+  curl -sS -o /dev/null --max-time 10 https://github.com > /dev/null 2>&1 && return 0
+  curl -sS -o /dev/null --max-time 10 https://pypi.org > /dev/null 2>&1 && return 0
+  return 1
+}
+morphocloud_egress_deadline=$((SECONDS + 60))
+until morphocloud_have_egress; do
+  if [ $SECONDS -ge $morphocloud_egress_deadline ]; then
+    sleep 1
+    echo '{"status":"error", "epoch": '$(date '+%s')'000, "reason": "no outbound network: the instance reached its own subnet (DHCP, metadata and DNS all answered) but could not reach github.com or pypi.org within 60s. Setup cannot proceed. This is per-instance, not per-image -- recreating schedules onto a different compute host and usually succeeds."}' | tee --append /dev/console > /dev/kmsg || true
+    break
+  fi
+  sleep 5
+done
+
 
 --=================exosphere-user-data====
 Content-Transfer-Encoding: 7bit
@@ -57,16 +96,42 @@ retry() {
   return 1
 }
 
+# Report a named, terminal failure and stop. Every step below is a precondition
+# for the playbook, so letting one fail silently (this script runs under `set +e`
+# and retry() only logs) just defers the symptom: ansible-playbook is invoked
+# against a missing or half-built checkout and the workflow reports a generic
+# timeout, or worse, a real-looking ansible task name.
+#
+# The status line MUST go to the console: the poller in .github/actions/
+# setup-instance reads `openstack console log show`, not the exoSetup property
+# (which it writes itself, after polling). A reason emitted anywhere else is
+# invisible to the workflow.
+fail() {
+  sleep 1  # let any preceding console output flush
+  echo '{"status":"error", "epoch": '$(date '+%s')'000, "reason": "'"$1"'"}' | tee --append /dev/console > /dev/kmsg || true
+  exit 1
+}
+
+# The boothook already probed egress before the module phase. Re-check here so a
+# network that dies *between* the module phase and this script is still named
+# rather than surfacing as a stalled playbook.
+curl -sS -o /dev/null --max-time 10 https://github.com > /dev/null 2>&1 \
+  || curl -sS -o /dev/null --max-time 10 https://pypi.org > /dev/null 2>&1 \
+  || fail "no outbound network at setup start: could not reach github.com or pypi.org. Recreating usually lands on a different compute host."
+
 # {create-cluster-command}
-(which apt-get && retry apt-get install -y python3-venv) # Install python3-venv on Debian-based platforms
-(which yum     && retry yum install -y python3)      # Install python3 on RHEL-based platforms
-python3 -m venv /opt/ansible-venv
-. /opt/ansible-venv/bin/activate
-retry pip install --upgrade pip
-retry pip install ansible-core passlib
-retry pip install lxml # required by community.general.xml
-retry pip install  psutil # required by community.general.pids
-retry ansible-galaxy collection install community.general
+if which apt-get > /dev/null 2>&1; then    # Debian-based platforms
+  retry apt-get install -y python3-venv || fail "could not install python3-venv (apt-get)"
+elif which yum > /dev/null 2>&1; then      # RHEL-based platforms
+  retry yum install -y python3 || fail "could not install python3 (yum)"
+fi
+python3 -m venv /opt/ansible-venv || fail "could not create the ansible virtualenv at /opt/ansible-venv"
+. /opt/ansible-venv/bin/activate || fail "could not activate the ansible virtualenv"
+retry pip install --upgrade pip || fail "could not upgrade pip"
+retry pip install ansible-core passlib || fail "could not install ansible-core and passlib"
+retry pip install lxml || fail "could not install lxml (required by community.general.xml)"
+retry pip install psutil || fail "could not install psutil (required by community.general.pids)"
+retry ansible-galaxy collection install community.general || fail "could not install the community.general ansible collection"
 
 rm -rf /opt/instance-config-mgt
 
@@ -78,10 +143,19 @@ rm -rf /opt/instance-config-mgt
 
 retry git clone \
   "https://github.com/MorphoCloud/exosphere.git" \
-  /opt/instance-config-mgt
+  /opt/instance-config-mgt \
+  || fail "could not clone MorphoCloud/exosphere"
 
 exosphere_sha="bc6a7b534348120b8694ffd137f023be53c6f032" # morpho-cloud-portal-2026.06-ubuntu24-prep
-(cd /opt/instance-config-mgt && git reset --hard $exosphere_sha)
+(cd /opt/instance-config-mgt && git reset --hard $exosphere_sha) \
+  || fail "could not check out exosphere commit $exosphere_sha"
+
+# A clone that drops mid-transfer leaves a checkout that exists but is
+# incomplete. Without this guard ansible-playbook starts, fails partway, and the
+# poller extracts a genuine-looking `TASK [...]` name -- pointing whoever reads
+# the issue at an ansible bug when the actual cause was a network drop.
+[ -f /opt/instance-config-mgt/ansible/playbook.yml ] \
+  || fail "the exosphere checkout is incomplete (ansible/playbook.yml is missing) -- the clone likely dropped mid-transfer"
 
 ansible-playbook \
   -i /opt/instance-config-mgt/ansible/hosts \
