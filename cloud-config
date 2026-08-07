@@ -36,14 +36,15 @@ Acquire::ftp::Timeout "15";
 Acquire::Retries "2";
 MORPHOCLOUD_APT_CONF
 
-# Fail fast, and by name, when the instance came up without a route off the
-# tenant subnet. This failure mode is invisible to every cheaper check: DHCP,
-# the metadata service and DNS (which resolves against the Neutron port on the
-# subnet itself) all keep working, so the instance looks entirely healthy until
-# something tries to leave the subnet. Probe what setup actually needs rather
-# than the gateway. Boothooks run in the network stage -- the interface already
-# holds its DHCP lease at this point -- so the probe is meaningful here; the
-# retry window absorbs the last of the route programming rather than racing it.
+# Detect -- but do not act on -- an instance that came up without a route off
+# the tenant subnet. This failure mode is invisible to every cheaper check:
+# DHCP, the metadata service and DNS (which resolves against the Neutron port on
+# the subnet itself) all keep working, so the instance looks entirely healthy
+# until something tries to leave the subnet. Probe what setup actually needs
+# rather than the gateway. Boothooks run in the network stage, so the interface
+# already holds its DHCP lease by now and the probe is meaningful here; the
+# window absorbs the tail of route programming rather than racing it. The
+# verdict belongs to 90-exosphere-ansible-setup.sh -- see below.
 morphocloud_have_egress() {
   curl -sS -o /dev/null --max-time 10 https://github.com > /dev/null 2>&1 && return 0
   curl -sS -o /dev/null --max-time 10 https://pypi.org > /dev/null 2>&1 && return 0
@@ -52,8 +53,28 @@ morphocloud_have_egress() {
 morphocloud_egress_deadline=$((SECONDS + 60))
 until morphocloud_have_egress; do
   if [ $SECONDS -ge $morphocloud_egress_deadline ]; then
-    sleep 1
-    echo '{"status":"error", "epoch": '$(date '+%s')'000, "reason": "no outbound network: the instance reached its own subnet (DHCP, metadata and DNS all answered) but could not reach github.com or pypi.org within 60s. Setup cannot proceed. This is per-instance, not per-image -- recreating schedules onto a different compute host and usually succeeds."}' | tee --append /dev/console > /dev/kmsg || true
+    # Deliberately do NOT emit a status line here. Two reasons:
+    #
+    #   - 00-exosphere-setup-running.sh runs unconditionally after this, and the
+    #     poller keys on the *last* status line, so its {"status":"running"}
+    #     would supersede an error emitted here anyway.
+    #   - more importantly, if route programming merely finished late, a
+    #     terminal error here would destroy an instance that was about to come
+    #     up perfectly well. The poller acts on the first error it samples, so
+    #     emitting one from a probe this early is a race against recovery.
+    #
+    # Instead collapse the apt allowance. The module phase is about to try every
+    # remote source and would otherwise spend minutes discovering, one timeout
+    # at a time, what this probe already knows -- and it is that delay, not the
+    # missing status line, that made the old failure take 20 minutes. Getting
+    # through it quickly hands the decision to the setup script's own probe,
+    # which is the single authority on whether setup can proceed.
+    cat > /etc/apt/apt.conf.d/99-morphocloud-acquire <<'MORPHOCLOUD_APT_DEGRADED'
+Acquire::http::Timeout "3";
+Acquire::https::Timeout "3";
+Acquire::ftp::Timeout "3";
+Acquire::Retries "0";
+MORPHOCLOUD_APT_DEGRADED
     break
   fi
   sleep 5
@@ -106,18 +127,38 @@ retry() {
 # setup-instance reads `openstack console log show`, not the exoSetup property
 # (which it writes itself, after polling). A reason emitted anywhere else is
 # invisible to the workflow.
+#
+# The reason is interpolated into a JSON string, so strip the two characters that
+# could break out of it and fold newlines -- the same treatment $FAILED_EXTENSIONS
+# gets below. No current caller passes either, but a malformed line costs more
+# than it looks: the poller runs `jq -r '.reason'` over it under `set -e`, so
+# invalid JSON turns a named failure straight back into an anonymous step abort.
 fail() {
   sleep 1  # let any preceding console output flush
-  echo '{"status":"error", "epoch": '$(date '+%s')'000, "reason": "'"$1"'"}' | tee --append /dev/console > /dev/kmsg || true
+  echo '{"status":"error", "epoch": '$(date '+%s')'000, "reason": "'"$(printf '%s' "$1" | tr -d '"\\' | tr '\n' ' ')"'"}' | tee --append /dev/console > /dev/kmsg || true
   exit 1
 }
 
-# The boothook already probed egress before the module phase. Re-check here so a
-# network that dies *between* the module phase and this script is still named
-# rather than surfacing as a stalled playbook.
-curl -sS -o /dev/null --max-time 10 https://github.com > /dev/null 2>&1 \
-  || curl -sS -o /dev/null --max-time 10 https://pypi.org > /dev/null 2>&1 \
-  || fail "no outbound network at setup start: could not reach github.com or pypi.org. Recreating usually lands on a different compute host."
+# This is the single authority on whether setup can proceed. The boothook probes
+# too, but deliberately never fails the instance on the result -- it only widens
+# or collapses the apt allowance -- because a probe that early races the tail of
+# route programming and would kill instances that were merely slow to route. By
+# the time this runs the module phase has been and gone, so a failure here is
+# real. It also catches a network that died *between* the two.
+if curl -sS -o /dev/null --max-time 10 https://github.com > /dev/null 2>&1 \
+   || curl -sS -o /dev/null --max-time 10 https://pypi.org > /dev/null 2>&1; then
+  # Egress is up. If the boothook collapsed the apt allowance on a probe that
+  # has since recovered, put the normal one back before the playbook does its
+  # own apt work -- otherwise it inherits 3s timeouts and no retries.
+  cat > /etc/apt/apt.conf.d/99-morphocloud-acquire <<'MORPHOCLOUD_APT_CONF'
+Acquire::http::Timeout "15";
+Acquire::https::Timeout "15";
+Acquire::ftp::Timeout "15";
+Acquire::Retries "2";
+MORPHOCLOUD_APT_CONF
+else
+  fail "no outbound network: the instance reached its own subnet (DHCP, metadata and DNS all answered) but could not reach github.com or pypi.org. Setup cannot proceed. This is per-instance rather than per-image -- recreating schedules onto a different compute host and usually succeeds."
+fi
 
 # {create-cluster-command}
 if which apt-get > /dev/null 2>&1; then    # Debian-based platforms
@@ -147,7 +188,7 @@ retry git clone \
   || fail "could not clone MorphoCloud/exosphere"
 
 exosphere_sha="bc6a7b534348120b8694ffd137f023be53c6f032" # morpho-cloud-portal-2026.06-ubuntu24-prep
-(cd /opt/instance-config-mgt && git reset --hard $exosphere_sha) \
+(cd /opt/instance-config-mgt && git reset --hard "$exosphere_sha") \
   || fail "could not check out exosphere commit $exosphere_sha"
 
 # A clone that drops mid-transfer leaves a checkout that exists but is

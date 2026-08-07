@@ -90,7 +90,7 @@ runs:
                 # ansible task on the console, so the task-name path below would
                 # report `unknown`, or -- after a mid-clone drop -- a real task
                 # name that misattributes a network fault to an ansible bug.
-                reason=$(printf '%s\n' "$status_line" | tail -n1 | jq -r '.reason // empty')
+                reason=$(printf '%s\n' "$status_line" | tail -n1 | jq -r '.reason // empty' || true)
                 if [ -n "$reason" ]; then
                     detail="setup FAILED: $reason"
                 else
