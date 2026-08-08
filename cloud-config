@@ -75,6 +75,25 @@ Acquire::https::Timeout "3";
 Acquire::ftp::Timeout "3";
 Acquire::Retries "0";
 MORPHOCLOUD_APT_DEGRADED
+
+    # Bounding apt is not enough on its own. The image ships an apt source at
+    # `file:/software/pkgrep/deb/u24` (in sources.list.d/nvidia-jetstream2.list),
+    # and /software is a systemd autofs mount backed by CephFS whose monitors sit
+    # on routed addresses. With no route off the subnet that mount can never
+    # complete, so every access blocks ~62s and then fails ENODEV -- and apt
+    # retries it repeatedly regardless of `Acquire::Retries`, which does not
+    # govern the file: method at all.
+    #
+    # That single unreachable *local* source is what pushed the failure past the
+    # workflow's 1200s poll budget: measured at 28.7 minutes of apt, versus ~2s
+    # for all ten remote sources once bounded. Masking the automount turns each
+    # access into an immediate ENOENT instead of a timeout.
+    #
+    # Measured on a live affected instance:
+    #   ls /software/pkgrep/deb/u24   62.88s -> 0.00s
+    #   apt-get update                28.7min -> 7.40s
+    systemctl stop software.automount > /dev/null 2>&1 || true
+    systemctl mask software.automount > /dev/null 2>&1 || true
     break
   fi
   sleep 5
@@ -147,15 +166,17 @@ fail() {
 # real. It also catches a network that died *between* the two.
 if curl -s -o /dev/null --max-time 10 https://github.com > /dev/null 2>&1 \
    || curl -s -o /dev/null --max-time 10 https://pypi.org > /dev/null 2>&1; then
-  # Egress is up. If the boothook collapsed the apt allowance on a probe that
-  # has since recovered, put the normal one back before the playbook does its
-  # own apt work -- otherwise it inherits 3s timeouts and no retries.
+  # Egress is up. If the boothook degraded things on a probe that has since
+  # recovered, undo both halves before the playbook does its own apt work --
+  # otherwise it inherits 3s timeouts, no retries, and no /software.
   cat > /etc/apt/apt.conf.d/99-morphocloud-acquire <<'MORPHOCLOUD_APT_CONF'
 Acquire::http::Timeout "15";
 Acquire::https::Timeout "15";
 Acquire::ftp::Timeout "15";
 Acquire::Retries "2";
 MORPHOCLOUD_APT_CONF
+  systemctl unmask software.automount > /dev/null 2>&1 || true
+  systemctl start software.automount > /dev/null 2>&1 || true
 else
   fail "no outbound network: the instance reached its own subnet (DHCP, metadata and DNS all answered) but could not reach github.com or pypi.org. Setup cannot proceed. This is per-instance rather than per-image -- recreating schedules onto a different compute host and usually succeeds."
 fi
