@@ -283,7 +283,7 @@ runs:
         # authorizes this runner. Fail fast if it's missing — otherwise the
         # placeholder gets replaced with an empty string, the instance boots
         # without the runner's key, and it only surfaces ~8 min later as a
-        # "Permission denied (publickey)" at the MyData-rename SSH step.
+        # "Permission denied (publickey)" at the first instance-SSH step.
         RUNNER_PUBKEY=~/.ssh/id_ed25519.pub
         if [[ ! -s "$RUNNER_PUBKEY" ]]; then
           echo "::error ::Runner SSH public key not found at $RUNNER_PUBKEY. Generate it on the runner: ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519"

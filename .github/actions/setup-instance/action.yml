@@ -178,35 +178,32 @@ runs:
         attach_volume: ⏳
         send_email: ""
 
-    - name: Rename MyData directory to MyData-tmp
-      id: rename_mydata
+    - name: Wait for instance SSH
+      id: wait_for_ssh
       shell: bash
       run: |
         # This is the first SSH-to-instance step of the volume phase. Right
         # after 'setup_instance' completes the instance can still be finishing
         # cloud-init or rebooting, so sshd is briefly unreachable and ssh exits
-        # 255 (a transient, not an 'mv' error). Previously that aborted the run
-        # and forced the user to /delete_all + /create. Instead, wait for sshd
-        # to come back on a real-elapsed-time budget and retry. The remote
-        # command is idempotent: if a connection drops *after* the mv applied,
-        # MyData-tmp already exists on the next attempt and we treat it as done.
-        # This loop also gates the later instance-SSH steps (copy/relocate),
-        # since by the time it succeeds the instance is reachable and stable.
-        remote_cmd='if [ -e /media/volume/MyData-tmp ]; then
-          echo "MyData-tmp already present; rename already applied.";
-        elif [ -e /media/volume/MyData ]; then
-          mv /media/volume/MyData /media/volume/MyData-tmp;
-        else
-          echo "Neither MyData nor MyData-tmp present on the volume mount" >&2;
-          exit 3;
-        fi'
+        # 255 (a transient). Previously that aborted the run and forced the user
+        # to /delete_all + /create. Instead, wait for sshd to come back on a
+        # real-elapsed-time budget and retry.
+        #
+        # This step used to rename /media/volume/MyData to MyData-tmp, to get
+        # the Slicer installation out of the way before the volume was mounted
+        # over that path. Slicer now installs to /opt/slicer on the root disk
+        # (see slicer_install_dir in MorphoCloud/exosphere), so there is nothing
+        # to move -- but the loop is still needed, because it is what gates the
+        # later instance-SSH steps: by the time it succeeds the instance is
+        # reachable and stable.
+        remote_cmd='true'
         max_wait=300
         interval=15
         start=$SECONDS
         attempt=0
         while :; do
           attempt=$((attempt + 1))
-          echo "Rename attempt $attempt (elapsed $((SECONDS - start))s of ${max_wait}s)"
+          echo "SSH reachability attempt $attempt (elapsed $((SECONDS - start))s of ${max_wait}s)"
           set +e
           out=$(ssh \
             -o StrictHostKeyChecking=no \
@@ -219,11 +216,11 @@ runs:
           set -e
           [[ -n "$out" ]] && echo "$out"
           if [[ $rc -eq 0 ]]; then
-            echo "Rename succeeded (or already applied)."
+            echo "Instance is reachable over SSH."
             break
           fi
           if [[ $rc -ne 255 ]]; then
-            echo "::error ::Remote rename command failed (ssh rc=$rc) — not a connection error; aborting."
+            echo "::error ::Remote command failed (ssh rc=$rc) — not a connection error; aborting."
             exit 1
           fi
           # rc=255 is both transient connection errors (retry) AND SSH auth
@@ -233,7 +230,7 @@ runs:
             exit 1
           fi
           if (( SECONDS - start >= max_wait )); then
-            echo "::error ::sshd on $INSTANCE_IP not reachable for rename after ${max_wait}s"
+            echo "::error ::sshd on $INSTANCE_IP not reachable after ${max_wait}s"
             exit 1
           fi
           echo "ssh not ready yet (connection error, rc=255); retrying in ${interval}s..."
@@ -242,15 +239,15 @@ runs:
       env:
         INSTANCE_IP: ${{ inputs.instance_ip }}
 
-    - name: comment (failed to rename MyData)
-      if: ${{ steps.rename_mydata.outcome == 'failure' && failure() }}
+    - name: comment (instance not reachable over SSH)
+      if: ${{ steps.wait_for_ssh.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
           ### Instance Creation Results ❌
 
-          Failed to rename `/media/volume/MyData` to `/media/volume/MyData-tmp` for instance **${{ inputs.instance_name }}**.
+          Instance **${{ inputs.instance_name }}** did not become reachable over SSH.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -330,10 +327,19 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-    - name: Copy installed files into attached volume
-      id: copy_installed_files
+    - name: Wait for MyData volume mount
+      id: wait_for_mount
       shell: bash
       run: |
+        # This step used to move the Slicer installation from MyData-tmp onto
+        # the freshly attached volume. Slicer now installs to /opt/slicer on the
+        # root disk (see slicer_install_dir in MorphoCloud/exosphere), so there
+        # is nothing to copy.
+        #
+        # The mount-ready wait stays: the next step relocates /home/exouser to
+        # /media/volume/MyData/home/exouser, and doing that before the volume is
+        # actually mounted would write the home directory onto the root disk and
+        # then bury it under the mount.
         function check_mountpoint_ready {
           ssh \
             -o StrictHostKeyChecking=no \
@@ -360,24 +366,18 @@ runs:
           exit 1
         fi
         set -e
-        ssh \
-          -o StrictHostKeyChecking=no \
-          -o UserKnownHostsFile=/dev/null \
-          -o LogLevel=ERROR \
-          exouser@$INSTANCE_IP \
-          '[ ! -d /media/volume/MyData/Slicer ] && mv /media/volume/MyData-tmp/Slicer /media/volume/MyData/Slicer && rmdir /media/volume/MyData-tmp || rm -rf /media/volume/MyData-tmp'
       env:
         INSTANCE_IP: ${{ inputs.instance_ip }}
 
-    - name: comment (failed to copy installed files from MyData-tmp to MyData)
-      if: ${{ steps.copy_installed_files.outcome == 'failure' && failure() }}
+    - name: comment (MyData volume did not mount)
+      if: ${{ steps.wait_for_mount.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
           ### Instance Creation Results ❌
 
-          Failed to copy installed files from `/media/volume/MyData-tmp` to `/media/volume/MyData` for instance **${{ inputs.instance_name }}**.
+          Volume **${{ inputs.volume_name }}** did not mount at `/media/volume/MyData` on instance **${{ inputs.instance_name }}**.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
