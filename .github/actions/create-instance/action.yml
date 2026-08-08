@@ -26,6 +26,14 @@ inputs:
     description: "Volume size in GB"
     required: false
     default: "100"
+  image_name:
+    description:
+      "Glance image to boot. Blank uses JS2's featured image, which provisions
+      Slicer from scratch on every boot. Set the MORPHOCLOUD_IMAGE_NAME
+      repository variable to a pre-baked image (see image-build/ in
+      MorphoCloud/exosphere) to skip that work."
+    required: false
+    default: ""
   token:
     description: "GITHUB_TOKEN or repo scoped PAT"
     required: true
@@ -308,11 +316,28 @@ runs:
         sed -i "s|{session-timeout-hrs}|${TIMEOUT_HRS}|g" ./cloud-config
 
 
+        # Blank (the repository variable is unset) keeps the previous behaviour:
+        # boot JS2's featured image and let the playbook install Slicer from
+        # scratch. Setting MORPHOCLOUD_IMAGE_NAME to a pre-baked image skips
+        # that download entirely -- see image-build/ in MorphoCloud/exosphere.
+        INSTANCE_IMAGE="${IMAGE_NAME:-}"
+        if [[ -z "$INSTANCE_IMAGE" ]]; then
+          INSTANCE_IMAGE="Featured-Ubuntu24"
+        fi
+        # Fail fast and by name. A typo in the repository variable would
+        # otherwise surface as an opaque "No Image found" from server create,
+        # several steps after the thing that was actually wrong.
+        if ! openstack image show "$INSTANCE_IMAGE" -f value -c status 2>/dev/null | grep -qx "active"; then
+          echo "::error ::Image '$INSTANCE_IMAGE' is not available in this allocation (check the MORPHOCLOUD_IMAGE_NAME repository variable). Images must be 'active' and visible to this project."
+          exit 1
+        fi
+        echo "Booting image: $INSTANCE_IMAGE"
+
         openstack server create "$INSTANCE_NAME" \
           --nic net-id="auto_allocated_network" \
           --security-group "exosphere" \
           --flavor "$INSTANCE_FLAVOR" \
-          --image "Featured-Ubuntu24" \
+          --image "$INSTANCE_IMAGE" \
           --key-name "murat-key" \
           --property "exoGuac={\"v\":1,\"ssh\":true,\"vnc\":true}" \
           --property "exoClientUuid=$exoClientUuid" \
@@ -337,6 +362,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         GH_REPO: ${{ github.repository }}
         DEFAULT_SESSION_TIMEOUT_HRS: ${{ inputs.default_session_timeout_hrs }}
+        IMAGE_NAME: ${{ inputs.image_name }}
 
     - name: Wait for instance to reach stable state
       id: wait_instance_state
