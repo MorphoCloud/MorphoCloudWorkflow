@@ -45,6 +45,19 @@ runs:
         # because the name filter has already reduced the listing to one server.
         servers=$(openstack server list --name "^${INSTANCE_NAME}$" --long -f json)
 
+        # A deleted server keeps its listing for a few seconds while Nova reaps
+        # it, and `delete` is the one command with no post-condition poll to
+        # wait that out: control-instance sets expected_status="" for it, so
+        # /delete_all reports success and releases the per-issue lock while the
+        # record is still there as DELETED. A /create queued behind that delete
+        # then starts within seconds and used to refuse with "already exists
+        # (DELETED)", provisioning nothing — the exact sequence #290 asked to
+        # make work. Drop these states before anything else reads the listing,
+        # so every caller sees a deleted server as gone.
+        servers=$(echo "$servers" | \
+          jq '[.[] | select((.Status // "") | ascii_upcase
+                            | . != "DELETED" and . != "SOFT_DELETED")]')
+
         instance=$(echo "$servers" | \
           jq -r --arg instance_name "$INSTANCE_NAME" \
             '[.[] | select(.Name == $instance_name)] | last | .Name // empty')
