@@ -116,9 +116,14 @@ jobs:
       # A course repo's command workers all use the instance-issue group, so a
       # course /create races /delete_all exactly the same way — and this flow had
       # no serialization against them at all before #291, which makes the gate
-      # more load-bearing here, not less. NOTE: untested live. The `vendorize`
-      # session excludes this workflow, so it never reaches Test-Instances; it
-      # needs a `vendorize-course` run into a course repo to exercise.
+      # more load-bearing here, not less.
+      #
+      # Verified live on MC-SCRI-BIO101#5, driven as the course instructor rather
+      # than as an admin (check_auth below authorizes any admin comment author,
+      # which would have masked a course-team problem): /delete_all then /create
+      # 2 s apart refused, naming its own /delete_all, and the retry afterwards
+      # provisioned. Note the `vendorize` session excludes this workflow, so it
+      # never reaches Test-Instances — exercising it needs `vendorize-course`.
       - name: Refuse /create while an earlier command is still running
         if: ${{ steps.create_command.outputs.continue == 'true' }}
         uses: ./.github/actions/refuse-if-command-in-flight
