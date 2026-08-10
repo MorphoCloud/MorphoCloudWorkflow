@@ -17,8 +17,15 @@ permissions:
 # shared namespace would let those no-op runs evict the real open->create pair
 # from the single queue slot. cancel-in-progress: false queues rather than
 # dropping, so the real command is not lost.
+#
+# This is the open/create group only. It is deliberately NOT the
+# morphocloud-instance-issue-<n> group the command worker jobs share: this
+# handler never touches OpenStack (every job here runs on ubuntu-latest and only
+# reads/writes GitHub issues), so it has no business holding the mutation lock,
+# and sharing one group is what let /create acquire that lock at queue time and
+# overtake an in-flight /delete_all (#290).
 concurrency:
-  group: morphocloud-instance-issue-${{ github.event.issue.number }}
+  group: morphocloud-instance-open-${{ github.event.issue.number }}
   cancel-in-progress: false
 
 jobs:

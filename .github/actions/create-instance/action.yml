@@ -77,6 +77,15 @@ runs:
       shell: bash
       run: echo "CREATE_ALREADY_EXISTS=true" >> $GITHUB_ENV
 
+    # ACTIVE alone does not mean the instance is usable — it is a Nova power
+    # state. A /create whose setup died mid-playbook leaves the server ACTIVE
+    # and unreachable-by-anything-useful for as long as nobody deletes it (one
+    # sat that way for 35 h with no outbound network). Offering /email for that
+    # server mails out connection details for a VM that cannot work, so branch
+    # on the exoSetup marker as well (#290). The SHELVED advice is deliberately
+    # untouched: a shelved instance is healthy, and the /delete_all guidance
+    # that used to be given there is what destroyed a user's data volume
+    # (Instances#168).
     - name: Choose recovery advice for the existing instance
       id: exists_advice
       if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
@@ -87,7 +96,11 @@ runs:
             line='Comment `/unshelve` to start it — the connection email follows automatically.'
             ;;
           ACTIVE)
-            line='Comment `/email` to resend the connection details.'
+            if [[ "$SETUP_COMPLETE" == "true" ]]; then
+              line='Comment `/email` to resend the connection details.'
+            else
+              line='⚠️ It is powered on, but its setup never finished, so it is **not usable as it stands** — do not use `/email`. Rebuild it as described below, and tag @MorphoCloud/morphocloud-admins if the rebuild fails the same way.'
+            fi
             ;;
           *)
             line='Tag @MorphoCloud/morphocloud-admins — this instance needs a look before it can be used.'
@@ -96,6 +109,7 @@ runs:
         echo "line=$line" >> $GITHUB_OUTPUT
       env:
         STATUS: ${{ steps.check_instance.outputs.status }}
+        SETUP_COMPLETE: ${{ steps.check_instance.outputs.setup_complete }}
 
     - name: comment (instance already exists)
       if: ${{ fromJSON(steps.check_instance.outputs.exists) }}

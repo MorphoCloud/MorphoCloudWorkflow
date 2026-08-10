@@ -9,21 +9,23 @@ permissions:
   checks: read
   contents: read
 
-# Serialize per-issue automation: the request-opened handler may reject and
-# close an over-quota request, and must not run concurrently with a /create on
-# the same issue — the original race provisioned into a just-closed issue and
-# orphaned resources. The group is namespaced by request type because the
-# instance and course workflows each also fire (as no-ops) on the other type's
-# issues; a shared namespace would let those no-op runs evict the real
-# open->create pair from the single queue slot. cancel-in-progress: false
-# queues rather than dropping, so the real command is not lost.
+# Lock 1: the open/create group, shared only with on-course-request-opened.yml.
+# That handler may reject and close an over-quota request, and must not run
+# concurrently with a /create on the same issue — the original race provisioned
+# into a just-closed issue and orphaned resources. The group is namespaced by
+# request type because the instance and course workflows each also fire (as
+# no-ops) on the other type's issues; a shared namespace would let those no-op
+# runs evict the real open->create pair from the single queue slot.
+# cancel-in-progress: false queues rather than dropping, so the real command is
+# not lost.
 #
 # Workflow-level, and scoped to real /create comments, for the reasons spelled
-# out in create-instance.yml — kept symmetrical with the individual flow.
+# out in create-instance.yml — kept symmetrical with the individual flow. Lock 2
+# (the shared per-issue mutation group) is on the `create` job below.
 concurrency:
   group:
     ${{ contains(github.event.comment.body, '/create') &&
-    format('morphocloud-course-issue-{0}', github.event.issue.number) ||
+    format('morphocloud-course-open-{0}', github.event.issue.number) ||
     format('create-course-instance-noop-{0}', github.run_id) }}
   cancel-in-progress: false
 
@@ -102,6 +104,15 @@ jobs:
     runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
     needs: authorize
     if: ${{ needs.authorize.outputs.continue == 'true' }}
+    # Lock 2 — the same shared per-issue mutation group the /delete_all,
+    # /shelve, /unshelve and /email worker jobs take in a course repo (they use
+    # the instance-issue name; a course repo has no separate instance flow to
+    # collide with). Course /create previously held only the course open/create
+    # group, so it was serialized against nothing at all — a strictly worse form
+    # of the individual-flow race in #290.
+    concurrency:
+      group: morphocloud-instance-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
 
