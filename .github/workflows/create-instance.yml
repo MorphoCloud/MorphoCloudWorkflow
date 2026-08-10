@@ -130,6 +130,88 @@ jobs:
             exit 1
           fi
 
+      # Refuse /create while an earlier command on this request is still in
+      # flight. Moving the shared lock onto the `create` job (#290) removed
+      # /create's structural head start, but it did NOT make comment order
+      # decide execution order: both commands now request the lock when their
+      # `authorize` job finishes, and that time is dominated by how long GitHub
+      # takes to hand out a hosted runner. Measured live on Test-Instances with
+      # the two comments 1 s apart: 3 s vs 11 s of runner wait on one attempt
+      # (delete won, correctly), 10 s vs 2 s on the next (create won, and
+      # reproduced #290 in full — "already exists (ACTIVE) … your data volume is
+      # kept", with the volume gone 40 s later). A coin flip, not an ordering.
+      #
+      # Comment timestamps are the one signal here with no jitter in them: they
+      # are stamped when the user comments, not when a runner becomes free. So
+      # compare those, and refuse rather than wait — waiting would burn idle
+      # hosted-runner minutes on a private repo, and it cannot happen in the
+      # `create` job anyway, which holds the very lock the earlier command needs.
+      #
+      # "Still in flight" is the ABSENCE of a terminal 👍/👎, not the presence of
+      # 🚀. The 🚀 is added by the other command's `authorize`, which has the
+      # same runner jitter — an earlier command whose authorize has not started
+      # yet carries no reaction at all and must still count as unfinished.
+      #
+      # Bounded lookback so a command that never reported (report-command-outcome
+      # deliberately leaves a stale 🚀 when the reactions API fails) cannot wedge
+      # /create indefinitely. Only commands that take the shared per-issue lock
+      # are considered; /renew only edits a label.
+      - name: Refuse /create while an earlier command is still running
+        if: ${{ steps.create_command.outputs.continue == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          MY_COMMENT_ID: ${{ github.event.comment.id }}
+          MY_CREATED_AT: ${{ github.event.comment.created_at }}
+          LOOKBACK_MINUTES: "15"
+        run: |
+          since=$(date -u -d "$MY_CREATED_AT - ${LOOKBACK_MINUTES} minutes" +%Y-%m-%dT%H:%M:%SZ)
+          echo "Looking for unfinished commands on #$ISSUE_NUMBER since $since (mine: $MY_COMMENT_ID at $MY_CREATED_AT)"
+
+          # Ordering by comment id, not created_at: ids are monotonic, and
+          # created_at has only second granularity, so two commands typed in the
+          # same second would otherwise tie.
+          #
+          # Matched against the comment's FIRST LINE, because that is how
+          # github/command decides a comment is a command — a strict prefix
+          # match. A comment that merely mentions `/shelve` in a sentence is not
+          # a command and must not gate anything. Bot comments are excluded: the
+          # request-opened handler posts a command list, and a future edit to it
+          # must not be able to wedge /create.
+          pending=$(gh api \
+            "repos/${GH_REPO}/issues/${ISSUE_NUMBER}/comments?per_page=100&since=${since}" \
+            --paginate \
+            | jq -r --argjson myid "$MY_COMMENT_ID" '.[]
+              | select(.user.type != "Bot")
+              | select(.id < $myid)
+              | select(.body | split("\n")[0]
+                  | test("^[[:space:]]*/(create|delete_all|delete_instance|delete_volume|shelve|unshelve|email)([[:space:]]|$)"))
+              | select(((.reactions["+1"] // 0) == 0) and ((.reactions["-1"] // 0) == 0))
+              | "- `\(.body | split("\n")[0] | ltrimstr(" "))` (commented \(.created_at))"')
+
+          if [[ -z "$pending" ]]; then
+            echo "No earlier command still in flight."
+            exit 0
+          fi
+
+          echo "Earlier command(s) still in flight:"
+          echo "$pending"
+
+          body=/tmp/create-refused-${ISSUE_NUMBER}.md
+          {
+            printf '### Command Results ❌\n\n'
+            printf '`/create` did not run — an earlier command on this request is still in progress:\n\n'
+            printf '%s\n\n' "$pending"
+            printf 'One command runs at a time on a request. Comment `/create` again once that command has finished — its comment shows 👍 when it is done.\n'
+          } > "$body"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$body"
+          rm -f "$body"
+
+          echo "::error ::/create refused on #$ISSUE_NUMBER: an earlier command is still in flight"
+          exit 1
+
       # With `skip_completing` set, github/command no longer converts this
       # job's failure into 👎, so the refusal above has to report its own.
       # Otherwise a refused /create would keep its 🚀 forever and read as
