@@ -146,6 +146,30 @@ jobs:
           reaction_id: ${{ steps.create_command.outputs.initial_reaction_id }}
           status: ${{ job.status }}
 
+      # Load-bearing only since the lock moved to the `create` job below. While
+      # /create held the shared group at workflow level, an evicted run was
+      # cancelled before `authorize` could run at all, so there was nothing to
+      # record and report-dropped-command.yml excluded this workflow outright.
+      # Job-level makes `create` evictable the same way every other command
+      # worker is — and with `skip_completing` above, a dropped /create would
+      # otherwise sit at 🚀 forever, indistinguishable from the five minutes of
+      # 🚀 a real provisioning run shows (#291 review).
+      #
+      # Last step in the job, so a refused /create never records: the refusal
+      # fails `authorize`, which skips this, and the step above has already
+      # turned the 🚀 into 👎.
+      - name: Record command context
+        if: ${{ steps.create_command.outputs.continue == 'true' }}
+        # See control-instance.yml: bookkeeping for a failure path must never
+        # become one — a failed upload here would skip the worker job below.
+        continue-on-error: true
+        uses: ./.github/actions/record-command-context
+        with:
+          issue_number: ${{ github.event.issue.number }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ steps.create_command.outputs.initial_reaction_id }}
+          command: "/create"
+
   create:
     runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
     needs: authorize

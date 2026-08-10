@@ -45,6 +45,7 @@ jobs:
     outputs:
       continue: ${{ steps.create_command.outputs.continue }}
       admins: ${{ steps.admins.outputs.members }}
+      reaction_id: ${{ steps.create_command.outputs.initial_reaction_id }}
     steps:
       - uses: actions/checkout@v6
 
@@ -68,6 +69,13 @@ jobs:
         with:
           command: "/create"
           reaction: "rocket"
+          # Keep the 🚀 and skip the post-run 👍; provisioning takes minutes and
+          # the `create` job reports the real outcome. Without this, 👍 landed
+          # as soon as `authorize` succeeded — so a course /create evicted from
+          # the concurrency queue showed the success mark for an instance that
+          # was never built, which is worse than the ambiguous 🚀 the
+          # individual flow showed (#291 review). Matches create-instance.yml.
+          skip_completing: "true"
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
@@ -99,6 +107,38 @@ jobs:
             echo "::error ::/create refused on closed issue #$ISSUE_NUMBER"
             exit 1
           fi
+
+      # With `skip_completing` set, github/command no longer converts this
+      # job's failure into 👎, so the refusal above has to report its own.
+      # Otherwise a refused /create would keep its 🚀 forever and read as
+      # still queued. The guard keeps this off the paths that have no 🚀 to
+      # replace: an unauthorized command already got 👎 from the action's own
+      # precheck handling, and a failure before the command step never
+      # reacted at all. Matches create-instance.yml.
+      - name: Report refusal on the comment
+        if: ${{ failure() && steps.create_command.outputs.continue == 'true' }}
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ steps.create_command.outputs.initial_reaction_id }}
+          status: ${{ job.status }}
+
+      # See create-instance.yml: load-bearing only since the shared lock moved
+      # onto the `create` job below, which is what makes that job evictable
+      # from the concurrency queue. Last step in the job, so a refused /create
+      # never records.
+      - name: Record command context
+        if: ${{ steps.create_command.outputs.continue == 'true' }}
+        # See control-instance.yml: bookkeeping for a failure path must never
+        # become one — a failed upload here would skip the worker job below.
+        continue-on-error: true
+        uses: ./.github/actions/record-command-context
+        with:
+          issue_number: ${{ github.event.issue.number }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ steps.create_command.outputs.initial_reaction_id }}
+          command: "/create"
 
   create:
     runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
@@ -437,3 +477,17 @@ jobs:
           setup_instance: ✅
           attach_volume: ✅
           send_email: ✅
+
+      # Last step in the job: 🚀 has been on the comment for the whole
+      # provisioning run and only now becomes 👍/👎. Required by the
+      # `skip_completing` on `authorize` — without this the course flow has no
+      # step that ever clears the 🚀, which is why it previously let
+      # github/command post 👍 the moment authorization passed.
+      - name: Report command outcome on the comment
+        if: ${{ always() }}
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ needs.authorize.outputs.reaction_id }}
+          status: ${{ job.status }}
