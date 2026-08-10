@@ -88,6 +88,12 @@ runs:
         since=$(date -u -d "$MY_CREATED_AT - ${LOOKBACK_MINUTES} minutes" +%Y-%m-%dT%H:%M:%SZ)
         echo "Looking for unfinished commands on #$ISSUE_NUMBER since $since (mine: $MY_COMMENT_ID at $MY_CREATED_AT)"
 
+        # `since` filters on updated_at, not created_at. That errs in the safe
+        # direction — updated_at is never earlier than created_at, so the window
+        # can over-include but can never miss a recent command — at the cost of
+        # letting an old, since-edited command comment back in. The id, prefix
+        # and reaction filters below bound what that can do.
+        #
         # Only commands that take the shared per-issue lock are considered;
         # /renew just edits a label and cannot delay anything.
         #
