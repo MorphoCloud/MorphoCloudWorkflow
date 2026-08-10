@@ -108,8 +108,30 @@ jobs:
             exit 1
           fi
 
+      # See create-instance.yml and the action itself: comment order does not
+      # decide execution order on its own, because both commands take the shared
+      # lock when their `authorize` ends and that time is set by hosted-runner
+      # assignment. Runs here in `authorize`, outside the concurrency group.
+      #
+      # A course repo's command workers all use the instance-issue group, so a
+      # course /create races /delete_all exactly the same way — and this flow had
+      # no serialization against them at all before #291, which makes the gate
+      # more load-bearing here, not less. NOTE: untested live. The `vendorize`
+      # session excludes this workflow, so it never reaches Test-Instances; it
+      # needs a `vendorize-course` run into a course repo to exercise.
+      - name: Refuse /create while an earlier command is still running
+        if: ${{ steps.create_command.outputs.continue == 'true' }}
+        uses: ./.github/actions/refuse-if-command-in-flight
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          issue_number: ${{ github.event.issue.number }}
+          comment_id: ${{ github.event.comment.id }}
+          comment_created_at: ${{ github.event.comment.created_at }}
+          command: "/create"
+
       # With `skip_completing` set, github/command no longer converts this
-      # job's failure into 👎, so the refusal above has to report its own.
+      # job's failure into 👎, so the refusals above have to report their own.
       # Otherwise a refused /create would keep its 🚀 forever and read as
       # still queued. The guard keeps this off the paths that have no 🚀 to
       # replace: an unauthorized command already got 👎 from the action's own

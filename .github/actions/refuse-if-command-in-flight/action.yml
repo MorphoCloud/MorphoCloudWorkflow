@@ -1,0 +1,130 @@
+name: "Refuse if an earlier command is still in flight"
+
+# Make comment order decide execution order for IssueOps commands on one issue.
+#
+# The shared per-issue concurrency group serializes command workers, but it does
+# NOT order them by when the user commented. Every command worker requests the
+# lock when its `authorize` job ends, and that time is dominated by how long
+# GitHub takes to hand out a hosted runner. Measured live on Test-Instances
+# (#291) with two comments 1 s apart:
+#
+#   attempt 1  delete authorize queued  3 s, create queued 11 s -> delete won
+#   attempt 2  delete authorize queued 10 s, create queued  2 s -> create won
+#
+# Attempt 2 reproduced Instances#290 in full: /create ran first, reported
+# "already exists (ACTIVE) ... Your data volume is kept", and the /delete_all
+# behind it removed the volume 40 s later.
+#
+# Comment timestamps are the one signal here with no jitter in them - they are
+# stamped when the user comments, not when a runner frees up. So gate on those:
+# before taking the lock, refuse if an earlier command on the same issue has not
+# reported an outcome yet.
+#
+# Refuse, do not wait. Waiting burns idle hosted-runner minutes on a private
+# repo, and it cannot be done in the worker job at all: that job holds the very
+# lock the earlier command needs, so waiting there deadlocks. This action is
+# meant to be called from `authorize`, which sits outside the concurrency group.
+#
+# "Unfinished" is the ABSENCE of a terminal reaction, not the presence of the
+# running one. The rocket is added by the other command's authorize job, which
+# has the same runner jitter - an earlier command whose authorize has not
+# started yet carries no reaction at all and must still count as unfinished.
+# Keying on the rocket would reintroduce the race this exists to close.
+
+description:
+  Fail the calling job, with an explanatory issue comment, when an earlier
+  command comment on the same issue has not yet reported a success or failure
+  outcome.
+
+inputs:
+  token:
+    description:
+      Token carrying issues read and write permission on this repository.
+    required: true
+  repository:
+    description: owner/name of the repository holding the issue.
+    required: true
+  issue_number:
+    description: Issue the command was commented on.
+    required: true
+  comment_id:
+    description:
+      Id of the comment carrying this command. Ordering is by comment id, not
+      timestamp - ids are monotonic, and created_at has only second granularity,
+      so two commands typed in the same second would otherwise tie.
+    required: true
+  command:
+    description:
+      The command being gated, e.g. /create. Used in the refusal comment.
+    required: true
+  comment_created_at:
+    description:
+      ISO-8601 creation time of this command's comment, used as the anchor for
+      the lookback window.
+    required: true
+  lookback_minutes:
+    description:
+      How far back to look for unfinished commands. Bounded so a command that
+      never reported cannot wedge this one forever - report-command-outcome
+      deliberately leaves the running reaction in place when the reactions API
+      fails, and a dropped command keeps it until the drop reporter clears it.
+    required: false
+    default: "15"
+
+runs:
+  using: composite
+  steps:
+    - name: Refuse while an earlier command is still running
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ inputs.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+        MY_COMMENT_ID: ${{ inputs.comment_id }}
+        MY_CREATED_AT: ${{ inputs.comment_created_at }}
+        COMMAND: ${{ inputs.command }}
+        LOOKBACK_MINUTES: ${{ inputs.lookback_minutes }}
+      run: |
+        since=$(date -u -d "$MY_CREATED_AT - ${LOOKBACK_MINUTES} minutes" +%Y-%m-%dT%H:%M:%SZ)
+        echo "Looking for unfinished commands on #$ISSUE_NUMBER since $since (mine: $MY_COMMENT_ID at $MY_CREATED_AT)"
+
+        # Only commands that take the shared per-issue lock are considered;
+        # /renew just edits a label and cannot delay anything.
+        #
+        # Matched against the comment's FIRST LINE, because that is how
+        # github/command decides a comment is a command - a strict prefix match.
+        # A comment merely mentioning `/shelve` in a sentence is not a command
+        # and must not gate anything. Bot comments are excluded: the
+        # request-opened handler posts a command list, and a future edit to it
+        # must not be able to wedge this command.
+        pending=$(gh api \
+          "repos/${GH_REPO}/issues/${ISSUE_NUMBER}/comments?per_page=100&since=${since}" \
+          --paginate \
+          | jq -r --argjson myid "$MY_COMMENT_ID" '.[]
+            | select(.user.type != "Bot")
+            | select(.id < $myid)
+            | select(.body | split("\n")[0]
+                | test("^[[:space:]]*/(create|delete_all|delete_instance|delete_volume|shelve|unshelve|email)([[:space:]]|$)"))
+            | select(((.reactions["+1"] // 0) == 0) and ((.reactions["-1"] // 0) == 0))
+            | "- `\(.body | split("\n")[0] | ltrimstr(" "))` (commented \(.created_at))"')
+
+        if [[ -z "$pending" ]]; then
+          echo "No earlier command still in flight."
+          exit 0
+        fi
+
+        echo "Earlier command(s) still in flight:"
+        echo "$pending"
+
+        body="${RUNNER_TEMP}/command-in-flight-${ISSUE_NUMBER}.md"
+        {
+          printf '### Command Results ❌\n\n'
+          printf '`%s` did not run — an earlier command on this request is still in progress:\n\n' "$COMMAND"
+          printf '%s\n\n' "$pending"
+          printf 'One command runs at a time on a request. Comment `%s` again once that command has finished — its comment shows 👍 when it is done.\n' "$COMMAND"
+        } > "$body"
+        gh issue comment "$ISSUE_NUMBER" --body-file "$body"
+        rm -f "$body"
+
+        echo "::error ::$COMMAND refused on #$ISSUE_NUMBER: an earlier command is still in flight"
+        exit 1
