@@ -9,21 +9,23 @@ permissions:
   checks: read
   contents: read
 
-# Serialize per-issue automation: the request-opened handler may reject and
-# close an over-quota request, and must not run concurrently with a /create on
-# the same issue — the original race provisioned into a just-closed issue and
-# orphaned resources. The group is namespaced by request type because the
-# instance and course workflows each also fire (as no-ops) on the other type's
-# issues; a shared namespace would let those no-op runs evict the real
-# open->create pair from the single queue slot. cancel-in-progress: false
-# queues rather than dropping, so the real command is not lost.
+# Lock 1: the open/create group, shared only with on-course-request-opened.yml.
+# That handler may reject and close an over-quota request, and must not run
+# concurrently with a /create on the same issue — the original race provisioned
+# into a just-closed issue and orphaned resources. The group is namespaced by
+# request type because the instance and course workflows each also fire (as
+# no-ops) on the other type's issues; a shared namespace would let those no-op
+# runs evict the real open->create pair from the single queue slot.
+# cancel-in-progress: false queues rather than dropping, so the real command is
+# not lost.
 #
 # Workflow-level, and scoped to real /create comments, for the reasons spelled
-# out in create-instance.yml — kept symmetrical with the individual flow.
+# out in create-instance.yml — kept symmetrical with the individual flow. Lock 2
+# (the shared per-issue mutation group) is on the `create` job below.
 concurrency:
   group:
     ${{ contains(github.event.comment.body, '/create') &&
-    format('morphocloud-course-issue-{0}', github.event.issue.number) ||
+    format('morphocloud-course-open-{0}', github.event.issue.number) ||
     format('create-course-instance-noop-{0}', github.run_id) }}
   cancel-in-progress: false
 
@@ -43,6 +45,7 @@ jobs:
     outputs:
       continue: ${{ steps.create_command.outputs.continue }}
       admins: ${{ steps.admins.outputs.members }}
+      reaction_id: ${{ steps.create_command.outputs.initial_reaction_id }}
     steps:
       - uses: actions/checkout@v6
 
@@ -66,6 +69,13 @@ jobs:
         with:
           command: "/create"
           reaction: "rocket"
+          # Keep the 🚀 and skip the post-run 👍; provisioning takes minutes and
+          # the `create` job reports the real outcome. Without this, 👍 landed
+          # as soon as `authorize` succeeded — so a course /create evicted from
+          # the concurrency queue showed the success mark for an instance that
+          # was never built, which is worse than the ambiguous 🚀 the
+          # individual flow showed (#291 review). Matches create-instance.yml.
+          skip_completing: "true"
           allowed_contexts: "issue"
           permissions: "read,triage,write,maintain,admin"
           allowlist:
@@ -98,10 +108,78 @@ jobs:
             exit 1
           fi
 
+      # See create-instance.yml and the action itself: comment order does not
+      # decide execution order on its own, because both commands take the shared
+      # lock when their `authorize` ends and that time is set by hosted-runner
+      # assignment. Runs here in `authorize`, outside the concurrency group.
+      #
+      # A course repo's command workers all use the instance-issue group, so a
+      # course /create races /delete_all exactly the same way — and this flow had
+      # no serialization against them at all before #291, which makes the gate
+      # more load-bearing here, not less.
+      #
+      # Verified live on MC-SCRI-BIO101#5, driven as the course instructor rather
+      # than as an admin (check_auth below authorizes any admin comment author,
+      # which would have masked a course-team problem): /delete_all then /create
+      # 2 s apart refused, naming its own /delete_all, and the retry afterwards
+      # provisioned. Note the `vendorize` session excludes this workflow, so it
+      # never reaches Test-Instances — exercising it needs `vendorize-course`.
+      - name: Refuse /create while an earlier command is still running
+        if: ${{ steps.create_command.outputs.continue == 'true' }}
+        uses: ./.github/actions/refuse-if-command-in-flight
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          issue_number: ${{ github.event.issue.number }}
+          comment_id: ${{ github.event.comment.id }}
+          comment_created_at: ${{ github.event.comment.created_at }}
+          command: "/create"
+
+      # With `skip_completing` set, github/command no longer converts this
+      # job's failure into 👎, so the refusals above have to report their own.
+      # Otherwise a refused /create would keep its 🚀 forever and read as
+      # still queued. The guard keeps this off the paths that have no 🚀 to
+      # replace: an unauthorized command already got 👎 from the action's own
+      # precheck handling, and a failure before the command step never
+      # reacted at all. Matches create-instance.yml.
+      - name: Report refusal on the comment
+        if: ${{ failure() && steps.create_command.outputs.continue == 'true' }}
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ steps.create_command.outputs.initial_reaction_id }}
+          status: ${{ job.status }}
+
+      # See create-instance.yml: load-bearing only since the shared lock moved
+      # onto the `create` job below, which is what makes that job evictable
+      # from the concurrency queue. Last step in the job, so a refused /create
+      # never records.
+      - name: Record command context
+        if: ${{ steps.create_command.outputs.continue == 'true' }}
+        # See control-instance.yml: bookkeeping for a failure path must never
+        # become one — a failed upload here would skip the worker job below.
+        continue-on-error: true
+        uses: ./.github/actions/record-command-context
+        with:
+          issue_number: ${{ github.event.issue.number }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ steps.create_command.outputs.initial_reaction_id }}
+          command: "/create"
+
   create:
     runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
     needs: authorize
     if: ${{ needs.authorize.outputs.continue == 'true' }}
+    # Lock 2 — the same shared per-issue mutation group the /delete_all,
+    # /shelve, /unshelve and /email worker jobs take in a course repo (they use
+    # the instance-issue name; a course repo has no separate instance flow to
+    # collide with). Course /create previously held only the course open/create
+    # group, so it was serialized against nothing at all — a strictly worse form
+    # of the individual-flow race in #290.
+    concurrency:
+      group: morphocloud-instance-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
 
@@ -426,3 +504,17 @@ jobs:
           setup_instance: ✅
           attach_volume: ✅
           send_email: ✅
+
+      # Last step in the job: 🚀 has been on the comment for the whole
+      # provisioning run and only now becomes 👍/👎. Required by the
+      # `skip_completing` on `authorize` — without this the course flow has no
+      # step that ever clears the 🚀, which is why it previously let
+      # github/command post 👍 the moment authorization passed.
+      - name: Report command outcome on the comment
+        if: ${{ always() }}
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ needs.authorize.outputs.reaction_id }}
+          status: ${{ job.status }}

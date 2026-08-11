@@ -9,32 +9,45 @@ permissions:
   checks: read
   contents: read
 
-# Serialize per-issue automation: the request-opened handler may reject and
-# close an over-quota request, and must not run concurrently with a /create on
-# the same issue — the original race provisioned into a just-closed issue and
-# orphaned resources. The group is namespaced by request type because the
-# instance and course workflows each also fire (as no-ops) on the other type's
-# issues; a shared namespace would let those no-op runs evict the real
-# open->create pair from the single queue slot. cancel-in-progress: false
-# queues rather than dropping, so the real command is not lost.
+# /create has to hold two different locks, and they are acquired at different
+# points in the run — conflating them into one workflow-level group is what let
+# a /create overtake an already-issued /delete_all (#290).
 #
-# Workflow-level, not job-level like the other command workflows, because the
-# closed-issue guard lives in `authorize`: the event payload's issue state is
-# stale during that race, so authorize itself has to be serialized against the
-# request-opened handler.
+# Lock 1, HERE at workflow level: `morphocloud-instance-open-<n>`, shared only
+# with on-instance-request-opened.yml. That handler may reject and close an
+# over-quota request, and must not run concurrently with a /create on the same
+# issue — the original race provisioned into a just-closed issue and orphaned
+# resources. It has to be workflow-level, not job-level like the other command
+# workflows, because the closed-issue guard lives in `authorize`: the event
+# payload's issue state is stale during that race, so authorize itself has to be
+# serialized against the request-opened handler. The group is namespaced by
+# request type because the instance and course workflows each also fire (as
+# no-ops) on the other type's issues; a shared namespace would let those no-op
+# runs evict the real open->create pair from the single queue slot.
+#
+# Lock 2, on the `create` job below: `morphocloud-instance-issue-<n>`, the
+# shared group every other command worker job takes. Held at job level, so it is
+# requested at the same point in the command lifecycle as /delete_all's and
+# /shelve's — see the comment on that job. Job level also keeps the 🚀
+# acknowledgement prompt: `authorize` runs immediately whatever the lock is
+# doing, and only the provisioning job waits.
+#
+# cancel-in-progress: false queues rather than dropping, so the real command is
+# not lost.
 #
 # The cost of workflow-level is that the group is joined before any job `if` is
 # evaluated, and this workflow fires on EVERY comment on an instance issue. A
-# comment that is not /create therefore used to occupy the group's one pending
-# slot and could evict a queued /shelve or /unshelve, which shares this group
-# (Instances#168). Only a real /create contends now; everything else gets a
-# private group it is the sole member of. The predicate matches the authorize
-# job's `if` — a non-command comment mentioning "/create" merely serializes
-# harmlessly, since the strict prefix check still refuses it downstream.
+# comment that is not /create would otherwise occupy the group's one pending
+# slot and evict a queued real /create (the same eviction that cost a /shelve
+# its slot back when this group was shared with the command workers,
+# Instances#168). Only a real /create contends; everything else gets a private
+# group it is the sole member of. The predicate matches the authorize job's `if`
+# — a non-command comment mentioning "/create" merely serializes harmlessly,
+# since the strict prefix check still refuses it downstream.
 concurrency:
   group:
     ${{ contains(github.event.comment.body, '/create') &&
-    format('morphocloud-instance-issue-{0}', github.event.issue.number) ||
+    format('morphocloud-instance-open-{0}', github.event.issue.number) ||
     format('create-instance-noop-{0}', github.run_id) }}
   cancel-in-progress: false
 
@@ -117,6 +130,25 @@ jobs:
             exit 1
           fi
 
+      # Moving the shared lock onto the `create` job below removed /create's
+      # structural head start, but it did not make comment order decide
+      # execution order — both commands now request the lock when their
+      # `authorize` ends, and that time is dominated by hosted-runner
+      # assignment. See the action for the measurements and why this refuses
+      # rather than waits. It has to run here in `authorize`, outside the
+      # concurrency group: waiting or failing inside `create` would be holding
+      # the lock the earlier command is queued for.
+      - name: Refuse /create while an earlier command is still running
+        if: ${{ steps.create_command.outputs.continue == 'true' }}
+        uses: ./.github/actions/refuse-if-command-in-flight
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          issue_number: ${{ github.event.issue.number }}
+          comment_id: ${{ github.event.comment.id }}
+          comment_created_at: ${{ github.event.comment.created_at }}
+          command: "/create"
+
       # With `skip_completing` set, github/command no longer converts this
       # job's failure into 👎, so the refusal above has to report its own.
       # Otherwise a refused /create would keep its 🚀 forever and read as
@@ -133,10 +165,46 @@ jobs:
           reaction_id: ${{ steps.create_command.outputs.initial_reaction_id }}
           status: ${{ job.status }}
 
+      # Load-bearing only since the lock moved to the `create` job below. While
+      # /create held the shared group at workflow level, an evicted run was
+      # cancelled before `authorize` could run at all, so there was nothing to
+      # record and report-dropped-command.yml excluded this workflow outright.
+      # Job-level makes `create` evictable the same way every other command
+      # worker is — and with `skip_completing` above, a dropped /create would
+      # otherwise sit at 🚀 forever, indistinguishable from the five minutes of
+      # 🚀 a real provisioning run shows (#291 review).
+      #
+      # Last step in the job, so a refused /create never records: the refusal
+      # fails `authorize`, which skips this, and the step above has already
+      # turned the 🚀 into 👎.
+      - name: Record command context
+        if: ${{ steps.create_command.outputs.continue == 'true' }}
+        # See control-instance.yml: bookkeeping for a failure path must never
+        # become one — a failed upload here would skip the worker job below.
+        continue-on-error: true
+        uses: ./.github/actions/record-command-context
+        with:
+          issue_number: ${{ github.event.issue.number }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ steps.create_command.outputs.initial_reaction_id }}
+          command: "/create"
+
   create:
     runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
     needs: authorize
     if: ${{ needs.authorize.outputs.continue == 'true' }}
+    # Shared per-issue group (see control-instance.yml): provisioning must not
+    # race another command mutating the same instance. Job-level, like every
+    # other command worker, so the lock is requested at the same point in the
+    # command lifecycle. When /create held it at workflow level instead, it was
+    # acquired at queue time — before the authorize job — so a /create typed
+    # during an earlier /delete_all's ~20 s authorize window took the lock
+    # first, saw the not-yet-deleted instance and reported "Instance Already
+    # Exists", and the delete then ran and removed both instance and volume
+    # (#290). Comment order now predicts execution order again.
+    concurrency:
+      group: morphocloud-instance-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
 

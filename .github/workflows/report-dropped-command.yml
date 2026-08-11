@@ -24,14 +24,25 @@ name: Report Dropped Command
 on:
   workflow_run:
     # Every command workflow whose worker job carries the shared per-issue
-    # group and whose authorize job records a command context. Create Instance
-    # is absent on purpose: its group is workflow-level (see create-instance.yml
-    # for why), so an evicted run is cancelled before `authorize` can record
-    # anything for the reporter to act on.
+    # group and whose authorize job records a command context. Adding one here
+    # without its `record-command-context` step makes this workflow fail loudly
+    # rather than report — see the `has_context` check below, which is
+    # deliberate: a command that can be dropped unreported is the bug.
+    #
+    # Both create workflows were absent until #291. Their group used to be
+    # workflow-level, so an evicted run was cancelled before `authorize` could
+    # record anything and there was nothing for this reporter to act on. #290
+    # moved the shared group onto their `create` jobs — which is what makes
+    # comment order predict execution order — and that made those jobs
+    # evictable from the pending slot like every other worker. They are the
+    # most expensive commands in the system and the ones users stack fastest,
+    # so they are also the ones that most need to say when they were dropped.
     workflows:
       - Control Instance
       - Send Email
       - Delete Instance and Volume
+      - Create Instance
+      - Create Course Instance
     types: [completed]
 
 permissions:

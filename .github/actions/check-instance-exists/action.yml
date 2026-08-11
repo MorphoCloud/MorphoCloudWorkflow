@@ -19,6 +19,15 @@ outputs:
       or empty when it does not exist. Existence alone is not liveness — a
       shelved server is still listed."
     value: ${{ steps.check_instance.outputs.status }}
+  setup_complete:
+    description:
+      "'true' when the exoSetup server property reports the software setup
+      finished, 'false' otherwise (including when the instance does not exist).
+      ACTIVE is a Nova power state, not a provisioning verdict: a server whose
+      setup died mid-playbook sits ACTIVE and unusable indefinitely. Callers
+      that hand out connection details, or that tell a user an existing instance
+      is fine as-is, must gate on this and not on status alone."
+    value: ${{ steps.check_instance.outputs.setup_complete }}
 runs:
   using: "composite"
   steps:
@@ -31,8 +40,23 @@ runs:
         # Filter server-side: '--name' is a Nova regex match, so anchor it.
         # An unfiltered listing is the heaviest Nova query and 504'd during a
         # transient JS2 API brownout (Instances#168); the exact-match jq below
-        # stays as the authoritative check.
-        servers=$(openstack server list --name "^${INSTANCE_NAME}$" -f json)
+        # stays as the authoritative check. '--long' is what carries
+        # .Properties (for the setup marker below); it costs nothing extra here
+        # because the name filter has already reduced the listing to one server.
+        servers=$(openstack server list --name "^${INSTANCE_NAME}$" --long -f json)
+
+        # A deleted server keeps its listing for a few seconds while Nova reaps
+        # it, and `delete` is the one command with no post-condition poll to
+        # wait that out: control-instance sets expected_status="" for it, so
+        # /delete_all reports success and releases the per-issue lock while the
+        # record is still there as DELETED. A /create queued behind that delete
+        # then starts within seconds and used to refuse with "already exists
+        # (DELETED)", provisioning nothing — the exact sequence #290 asked to
+        # make work. Drop these states before anything else reads the listing,
+        # so every caller sees a deleted server as gone.
+        servers=$(echo "$servers" | \
+          jq '[.[] | select((.Status // "") | ascii_upcase
+                            | . != "DELETED" and . != "SOFT_DELETED")]')
 
         instance=$(echo "$servers" | \
           jq -r --arg instance_name "$INSTANCE_NAME" \
@@ -46,11 +70,34 @@ runs:
           jq -r --arg instance_name "$INSTANCE_NAME" \
             '[.[] | select(.Name == $instance_name)] | last | .Status // empty')
 
-        [[ $instance == "$INSTANCE_NAME" ]] && exists="true" || exists="false"
+        # Nor is ACTIVE "provisioned". The exoSetup property is seeded
+        # {"status":"waiting","epoch":null} at boot by create-instance and only
+        # advanced to "complete" by setup-instance once the playbook has
+        # finished, so a server whose setup failed (or is still running) keeps
+        # the waiting marker while Nova reports ACTIVE. This is the same rule
+        # update-request-status-label.yml uses to hold such a server at
+        # status:building rather than status:active.
+        #
+        # Read defensively: some openstack client versions render .Properties
+        # as a flat string rather than an object, and this step runs under
+        # `set -e`, so an unguarded `.Properties.exoSetup` would turn a shape
+        # change into a hard failure of /create, /email and /delete_volume.
+        setup_marker=$(echo "$servers" | \
+          jq -r --arg instance_name "$INSTANCE_NAME" \
+            '[.[] | select(.Name == $instance_name)] | last | .Properties as $p |
+             if ($p | type) == "object" then (($p.exoSetup // "") | tostring)
+             elif ($p | type) == "string" then $p
+             else "" end')
 
-        echo "exists [$exists] status [$status]"
+        [[ "$setup_marker" == *complete* ]] && setup_complete="true" || setup_complete="false"
+
+        [[ $instance == "$INSTANCE_NAME" ]] && exists="true" || exists="false"
+        [[ $exists == "true" ]] || setup_complete="false"
+
+        echo "exists [$exists] status [$status] setup_complete [$setup_complete]"
         echo "exists=$exists" >> $GITHUB_OUTPUT
         echo "status=$status" >> $GITHUB_OUTPUT
+        echo "setup_complete=$setup_complete" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ inputs.instance_name }}

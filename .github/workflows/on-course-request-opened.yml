@@ -17,8 +17,12 @@ permissions:
 # shared namespace would let those no-op runs evict the real open->create pair
 # from the single queue slot. cancel-in-progress: false queues rather than
 # dropping, so the real command is not lost.
+#
+# This is the open/create group only — it is not the morphocloud-instance-issue
+# group the command worker jobs share, because this handler never touches
+# OpenStack (see the same note in on-instance-request-opened.yml, #290).
 concurrency:
-  group: morphocloud-course-issue-${{ github.event.issue.number }}
+  group: morphocloud-course-open-${{ github.event.issue.number }}
   cancel-in-progress: false
 
 jobs:
