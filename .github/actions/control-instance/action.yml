@@ -623,8 +623,15 @@ runs:
         interval=5
         start=$SECONDS
         while :; do
+          # Fail closed on a query error. This step runs under `set -eo
+          # pipefail`, so an unguarded assignment would abort the job on any
+          # transient Nova 5xx — reporting a delete that already succeeded as a
+          # failure, which is exactly the alarming false alarm the timeout
+          # branch below is written to avoid. Treating an unanswerable query as
+          # "still listed" just keeps waiting; the timeout bounds it.
           remaining=$(openstack server list --name "^${INSTANCE_NAME}$" -f json \
-            | jq --arg n "$INSTANCE_NAME" '[.[] | select(.Name == $n)] | length')
+            | jq --arg n "$INSTANCE_NAME" '[.[] | select(.Name == $n)] | length') \
+            || remaining=1
           if [[ "$remaining" -eq 0 ]]; then
             echo "Server $INSTANCE_NAME left Nova's listing after $((SECONDS - start))s."
             break
