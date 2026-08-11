@@ -589,6 +589,56 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+    # `openstack server delete` is asynchronous: it returns as soon as Nova
+    # accepts the request, while the server stays in `server list` for seconds
+    # afterwards — first still ACTIVE, then briefly DELETED. Every other command
+    # waits for its outcome in `Poll instance status` below, but that step is
+    # gated on expected_status, and delete has none (there is no status a
+    # deleted server settles into). So the delete worker reported success and
+    # released the shared per-issue concurrency lock while the server was still
+    # listed, and a /create released into that window found it and refused with
+    # "Instance Already Exists" — the #290 bug, still reachable after the lock
+    # ordering was fixed. Both states were observed live on Test-Instances and
+    # MC-SCRI-BIO101: `status [DELETED]` in one run, still `ACTIVE` at the
+    # moment /delete_all reported success in another.
+    #
+    # Waiting for the server to leave the listing entirely covers both.
+    #
+    # A timeout warns rather than fails: Nova has already accepted the delete,
+    # so the command did succeed, and turning a successful delete into a red
+    # run (with the alarming comment that follows) would be a worse failure
+    # than the narrow race this closes. The warning is the admin-visible signal
+    # that a delete is taking abnormally long.
+    - name: Wait for the deleted server to leave Nova's listing
+      id: delete_reaped
+      if:
+        ${{ inputs.command_name == 'delete' &&
+        steps.check_instance.outputs.exists == 'true' &&
+        steps.check_noop.outputs.noop != 'true' }}
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        max_wait=180
+        interval=5
+        start=$SECONDS
+        while :; do
+          remaining=$(openstack server list --name "^${INSTANCE_NAME}$" -f json \
+            | jq --arg n "$INSTANCE_NAME" '[.[] | select(.Name == $n)] | length')
+          if [[ "$remaining" -eq 0 ]]; then
+            echo "Server $INSTANCE_NAME left Nova's listing after $((SECONDS - start))s."
+            break
+          fi
+          if (( SECONDS - start >= max_wait )); then
+            echo "::warning ::Server $INSTANCE_NAME is still listed ${max_wait}s after Nova accepted the delete. The delete itself succeeded; a command issued immediately after this one could still see the stale record."
+            break
+          fi
+          sleep $interval
+        done
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
     - name: Poll instance status
       id: instance_poll
       if:
