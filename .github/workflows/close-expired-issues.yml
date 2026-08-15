@@ -103,7 +103,7 @@ jobs:
 
             # Expired — close only if both resources are confirmed absent.
             instance_name="${instance_prefix}instance-${issue_number}"
-            if echo "$server_names" | grep -qx "$instance_name"; then
+            if echo "$server_names" | grep -qFx "$instance_name"; then
               echo "Skipping issue #${issue_number}: expired but server ${instance_name} still exists (deletion pending or failed)."
               continue
             fi
@@ -128,14 +128,18 @@ jobs:
       - name: Close workshop parent issues whose sub-issues are all closed
         shell: bash
         run: |
-          gh issue list --label "request-type:workshop" --state open --limit 100 --json number --jq '.[].number' | \
+          gh issue list --label "request-type:workshop" --state open --limit 500 --json number --jq '.[].number' | \
           while read -r workshop_issue_number; do
+            # No fallback on failure: a mid-pagination error would leave
+            # partial pages on stdout, and counting them could close a parent
+            # whose unseen sub-issues are still open. Let the step fail loudly
+            # instead; a workshop with no sub-issues returns [] successfully.
             sub_issues_json=$(gh api \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
               "/repos/$GH_REPO/issues/$workshop_issue_number/sub_issues" \
               --paginate \
-              --jq '[.[].state]' 2>/dev/null || echo "[]")
+              --jq '[.[].state]')
 
             # --paginate emits one array per page; slurp+flatten makes the
             # counts correct for workshops larger than one page (100).
