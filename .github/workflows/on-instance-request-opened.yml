@@ -52,8 +52,30 @@ jobs:
           team_slug: ${{ vars.MORPHOCLOUD_USERS_TEAM_SLUG }}
           username: ${{ github.event.issue.user.login }}
 
+      # 'unknown' means GitHub could not answer (5xx/rate limit), NOT that the
+      # user failed the check. A 503 here used to be reported as "not a member"
+      # and the issue closed on a real member (Instances#205). Halt without
+      # closing instead; the reject below fires only on a definitive 'false'.
+      - name: Halt on inconclusive membership check
+        if: ${{ steps.check_membership.outputs.is_member == 'unknown' }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "### Validation Could Not Complete ⚠️
+
+          GitHub's API returned an error (HTTP $HTTP_CODE) while verifying @$ISSUE_CREATOR's team membership, so this request was not validated. This is a GitHub-side problem — see [githubstatus.com](https://www.githubstatus.com) — not an issue with your account.
+
+          This issue was **not** closed. Once GitHub recovers, an admin can re-run the validation, or you can close this issue and open a new request."
+
+          echo "::error ::Could not verify team membership of $ISSUE_CREATOR (GitHub API HTTP $HTTP_CODE); halting without closing the issue"
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          HTTP_CODE: ${{ steps.check_membership.outputs.http_code }}
+
       - name: Reject non-member
-        if: ${{ steps.check_membership.outputs.is_member != 'true' }}
+        if: ${{ steps.check_membership.outputs.is_member == 'false' }}
         run: |
           gh issue comment "$ISSUE_NUMBER" --body "### Authorization Failed ❌
 
@@ -193,8 +215,28 @@ jobs:
           team_slug: ${{ vars.MORPHOCLOUD_WORKSHOP_ORGANIZERS_TEAM_SLUG }}
           username: ${{ github.event.issue.user.login }}
 
+      # See the individual-request job above: 'unknown' = GitHub could not
+      # answer; halt without closing rather than reject (Instances#205).
+      - name: Halt on inconclusive membership check
+        if: ${{ steps.check_membership.outputs.is_member == 'unknown' }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "### Validation Could Not Complete ⚠️
+
+          GitHub's API returned an error (HTTP $HTTP_CODE) while verifying @$ISSUE_CREATOR's team membership, so this request was not validated. This is a GitHub-side problem — see [githubstatus.com](https://www.githubstatus.com) — not an issue with your account.
+
+          This issue was **not** closed. Once GitHub recovers, an admin can re-run the validation, or you can close this issue and open a new request."
+
+          echo "::error ::Could not verify team membership of $ISSUE_CREATOR (GitHub API HTTP $HTTP_CODE); halting without closing the issue"
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          HTTP_CODE: ${{ steps.check_membership.outputs.http_code }}
+
       - name: Reject non-member
-        if: ${{ steps.check_membership.outputs.is_member != 'true' }}
+        if: ${{ steps.check_membership.outputs.is_member == 'false' }}
         run: |
           gh issue comment "$ISSUE_NUMBER" --body "### Authorization Failed ❌
 
@@ -235,10 +277,30 @@ jobs:
           team_slug: ${{ vars.MORPHOCLOUD_USERS_TEAM_SLUG }}
           username: ${{ github.event.issue.user.login }}
 
+      - name: Halt on inconclusive registered-user check
+        if:
+          ${{ steps.check_membership.outputs.is_member == 'true' &&
+          steps.check_user_membership.outputs.is_member == 'unknown' }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "### Validation Could Not Complete ⚠️
+
+          GitHub's API returned an error (HTTP $HTTP_CODE) while verifying @$ISSUE_CREATOR's team membership, so this request was not validated. This is a GitHub-side problem — see [githubstatus.com](https://www.githubstatus.com) — not an issue with your account.
+
+          This issue was **not** closed. Once GitHub recovers, an admin can re-run the validation, or you can close this issue and open a new request."
+
+          echo "::error ::Could not verify team membership of $ISSUE_CREATOR (GitHub API HTTP $HTTP_CODE); halting without closing the issue"
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          HTTP_CODE: ${{ steps.check_user_membership.outputs.http_code }}
+
       - name: Reject organizer who is not a registered user
         if:
           ${{ steps.check_membership.outputs.is_member == 'true' &&
-          steps.check_user_membership.outputs.is_member != 'true' }}
+          steps.check_user_membership.outputs.is_member == 'false' }}
         run: |
           gh issue comment "$ISSUE_NUMBER" --body "### Authorization Failed ❌
 
