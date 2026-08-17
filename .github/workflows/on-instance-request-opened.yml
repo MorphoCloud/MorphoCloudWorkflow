@@ -63,7 +63,7 @@ jobs:
 
           GitHub's API returned an error (HTTP $HTTP_CODE) while verifying @$ISSUE_CREATOR's team membership, so this request was not validated. This is a GitHub-side problem — see [githubstatus.com](https://www.githubstatus.com) — not an issue with your account.
 
-          This issue was **not** closed. Once GitHub recovers, an admin can re-run the validation, or you can close this issue and open a new request."
+          This issue was **not** closed. Once GitHub recovers, an admin can re-run the validation, or you can close this issue and open a new request." || true
 
           echo "::error ::Could not verify team membership of $ISSUE_CREATOR (GitHub API HTTP $HTTP_CODE); halting without closing the issue"
           exit 1
@@ -224,7 +224,7 @@ jobs:
 
           GitHub's API returned an error (HTTP $HTTP_CODE) while verifying @$ISSUE_CREATOR's team membership, so this request was not validated. This is a GitHub-side problem — see [githubstatus.com](https://www.githubstatus.com) — not an issue with your account.
 
-          This issue was **not** closed. Once GitHub recovers, an admin can re-run the validation, or you can close this issue and open a new request."
+          This issue was **not** closed. Once GitHub recovers, an admin can re-run the validation, or you can close this issue and open a new request." || true
 
           echo "::error ::Could not verify team membership of $ISSUE_CREATOR (GitHub API HTTP $HTTP_CODE); halting without closing the issue"
           exit 1
@@ -286,7 +286,7 @@ jobs:
 
           GitHub's API returned an error (HTTP $HTTP_CODE) while verifying @$ISSUE_CREATOR's team membership, so this request was not validated. This is a GitHub-side problem — see [githubstatus.com](https://www.githubstatus.com) — not an issue with your account.
 
-          This issue was **not** closed. Once GitHub recovers, an admin can re-run the validation, or you can close this issue and open a new request."
+          This issue was **not** closed. Once GitHub recovers, an admin can re-run the validation, or you can close this issue and open a new request." || true
 
           echo "::error ::Could not verify team membership of $ISSUE_CREATOR (GitHub API HTTP $HTTP_CODE); halting without closing the issue"
           exit 1

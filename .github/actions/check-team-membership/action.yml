@@ -59,7 +59,7 @@ runs:
           echo "User '$USERNAME' is not a member of '$ORG/teams/$TEAM_SLUG' (HTTP 404)"
         else
           echo "is_member=unknown" >> $GITHUB_OUTPUT
-          echo "::warning ::Could not verify membership of '$USERNAME' in '$ORG/teams/$TEAM_SLUG': GitHub API returned HTTP $HTTP_CODE"
+          echo "::warning::Could not verify membership of '$USERNAME' in '$ORG/teams/$TEAM_SLUG': GitHub API returned HTTP $HTTP_CODE"
         fi
 
         rm -f /tmp/membership_response.json
