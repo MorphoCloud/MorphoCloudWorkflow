@@ -17,7 +17,7 @@ jobs:
   auto-delete:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           clean: true
 
