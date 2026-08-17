@@ -99,17 +99,28 @@ jobs:
           team_slug: ${{ vars.MORPHOCLOUD_WORKSHOP_ORGANIZERS_TEAM_SLUG }}
           username: ${{ github.event.issue.user.login }}
 
+      # Failing is the safe outcome either way (approve is retryable), but the
+      # message must not claim non-membership when GitHub merely failed to
+      # answer (is_member == 'unknown', see Instances#205).
       - name: Fail if workshop organizer is not a team member
         if:
           ${{ steps.command.outputs.continue == 'true' &&
           steps.command.outputs.command_name == 'approve' &&
           steps.check_membership.outputs.is_member != 'true' }}
         run: |
-          echo "::error ::User ${{ github.event.issue.user.login }} is not a member of ${{ vars.MORPHOCLOUD_WORKSHOP_ORGANIZERS_TEAM_SLUG }}"
+          if [[ "$IS_MEMBER" == "unknown" ]]; then
+            echo "::error ::Could not verify membership of $ORGANIZER in $TEAM_SLUG (GitHub API HTTP $HTTP_CODE); retry the command once GitHub recovers"
+          else
+            echo "::error ::User $ORGANIZER is not a member of $TEAM_SLUG"
+          fi
           exit 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          IS_MEMBER: ${{ steps.check_membership.outputs.is_member }}
+          HTTP_CODE: ${{ steps.check_membership.outputs.http_code }}
+          ORGANIZER: ${{ github.event.issue.user.login }}
+          TEAM_SLUG: ${{ vars.MORPHOCLOUD_WORKSHOP_ORGANIZERS_TEAM_SLUG }}
 
       - name: Remove "request:approved" label
         if:
