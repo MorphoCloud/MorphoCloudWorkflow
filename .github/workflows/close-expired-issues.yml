@@ -152,7 +152,7 @@ jobs:
                       renew_hint='No renewals remain.'
                     fi
                     gh issue comment "$issue_number" \
-                      --body '⚠️ Instance and volume will be deleted in '"$days_until_expiration"' days. '"$renew_hint"
+                      --body '⚠️ Instance and volume will be deleted in '"$days_until_expiration"' days. '"$renew_hint" || true
                     set +e
                     gh workflow run send-renewal-email.yml \
                       -f issue_number=$issue_number \
@@ -162,7 +162,7 @@ jobs:
                     if [[ $error_code -ne 0 ]]; then
                       echo "::warning ::Failed to dispatch renewal email for issue #${issue_number}"
                       gh issue comment "$issue_number" \
-                        --body "❌ Failed to send renewal email. See details at ${RUN_URL}"
+                        --body "❌ Failed to send renewal email. See details at ${RUN_URL}" || true
                       continue
                     fi
                     gh issue edit "$issue_number" --add-label "$notice_label" || true
@@ -258,7 +258,7 @@ jobs:
               if [[ $error_code -ne 0 ]]; then
                 echo "::warning ::Failed to dispatch the delete workflow for ${instance_name}"
                 gh issue comment "$issue_number" \
-                  --body "❌ Failed to delete instance. See details at ${RUN_URL}"
+                  --body "❌ Failed to delete instance. See details at ${RUN_URL}" || true
                 # Not a close candidate: the server is still there. Retried
                 # on the next run.
                 continue
