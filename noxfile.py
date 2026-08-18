@@ -236,6 +236,9 @@ def vendorize(session: nox.Session) -> None:
         ],
         [
             ".github/dependabot.yml",
+            # Retired — replaced by the close-expired-issues.yml end-of-life
+            # sweep; excluded so _prune_orphans removes downstream copies.
+            ".github/workflows/automatic-instance-deleting.yml",
             # Claude PR reviewer — MWF-only (needs the CLAUDE_CODE_OAUTH_TOKEN
             # secret, which only exists here; downstream repos take direct
             # pushes, not PRs)
@@ -271,6 +274,9 @@ def vendorize_course(session: nox.Session) -> None:
         ],
         [
             ".github/dependabot.yml",
+            # Retired — replaced by the close-expired-issues.yml end-of-life
+            # sweep; excluded so _prune_orphans removes downstream copies.
+            ".github/workflows/automatic-instance-deleting.yml",
             # Claude PR reviewer — MWF-only (see vendorize session note)
             ".github/workflows/claude.yml",
             ".github/workflows/claude-code-review.yml",
