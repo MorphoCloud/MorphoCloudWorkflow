@@ -48,7 +48,7 @@ shelving there burns the instructor's per-course allocation, not the main one).
    */10 * * * * /home/exouser/morphocloud-dispatch.sh workshop-backfill.yml
    */15 * * * * /home/exouser/morphocloud-dispatch.sh collect-instance-uptime.yml
    0 * * * * /home/exouser/morphocloud-dispatch.sh update-workshop.yml
-   0 0 * * * /home/exouser/morphocloud-dispatch.sh automatic-instance-deleting.yml automatic-volume-deleting.yml
+   0 0 * * * /home/exouser/morphocloud-dispatch.sh close-expired-issues.yml automatic-volume-deleting.yml
    # Monthly usage report -> MorphoCloudAnalytics (separate repo + dedicated token)
    0 0 1 * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/MorphoCloudAnalytics MORPHOCLOUD_DISPATCH_TOKEN_FILE=/home/exouser/.config/morphocloud/analytics-dispatch.pat /home/exouser/morphocloud-dispatch.sh monthly-usage.yml
    # Weekly: email GH_ADMIN_EMAILS if a runner dispatch token is within 4 weeks of expiry

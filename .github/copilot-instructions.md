@@ -52,7 +52,7 @@ instruction.
 | `/create` on a **workshop** issue             | `create-workshop.yml`                                                |
 | Any `/action` on an existing instance         | `control-instance.yml` → calls `control-instance-from-workflow.yml`  |
 | Scheduled shelving                            | `automatic-instance-shelving.yml`                                    |
-| Scheduled deletion                            | `automatic-instance-deleting.yml`                                    |
+| Scheduled end of life (warn, delete, close)   | `close-expired-issues.yml`                                           |
 
 `create-instance-from-workflow.yml` is a **reusable workflow called internally**
 — it is NOT triggered directly by issue comments. Do not assume it is the entry
