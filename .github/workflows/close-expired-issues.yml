@@ -46,7 +46,9 @@ jobs:
   # (observed on Test-Instances#425). Ending the sweep job releases the
   # runner; the deletes, dispatched earlier and therefore ahead of
   # confirm-close in the queue, execute; then confirm-close verifies absence
-  # and closes — still within one workflow run.
+  # and closes — still within one workflow run. The Actions scheduler does
+  # not formally guarantee this queue ordering; if a delete ever runs late,
+  # the confirm poll times out and the next daily run closes the issue.
   sweep:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     outputs:
@@ -285,7 +287,7 @@ jobs:
           # not happen in this job: the dispatched instance deletes are
           # queued behind it on the runner lane, so absence can only be
           # confirmed after this job releases the runner.
-          candidates=$(tr '\n' ' ' < "$candidates_file" || true)
+          candidates=$(tr '\n' ' ' < "$candidates_file")
           echo "candidates=${candidates}" >> "$GITHUB_OUTPUT"
           echo "Close candidates: ${candidates:-none}"
         env:
@@ -311,6 +313,7 @@ jobs:
           private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
 
       - name: Confirm resource absence and close
+        if: ${{ needs.sweep.outputs.candidates != '' }}
         shell: bash
         run: |
           source ~/venv/bin/activate
@@ -318,11 +321,9 @@ jobs:
           instance_prefix=${PREFIX:+${PREFIX}_}
 
           candidates_file=$(mktemp)
+          # Word-split intentionally: CANDIDATES is a space-separated list of
+          # "<issue>:<days>" tokens.
           for c in $CANDIDATES; do echo "$c"; done > "$candidates_file"
-          if [[ ! -s "$candidates_file" ]]; then
-            echo "No issues to close this run."
-            exit 0
-          fi
 
           # The dispatched deletes ran while this job waited for the runner;
           # the short poll covers stragglers. Anything still present at the
