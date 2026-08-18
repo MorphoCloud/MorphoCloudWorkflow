@@ -80,7 +80,13 @@ jobs:
           # the rollup step). --state all: warnings and closes apply to open
           # issues only, but resource deletion must also reach issues their
           # user closed early.
-          gh issue list --label "instance-request" --state all --limit 1000 --json number,state,createdAt,labels | \
+          issues_json=$(gh issue list --label "instance-request" --state all --limit 9999 --json number,state,createdAt,labels)
+          issue_count=$(echo "$issues_json" | jq 'length')
+          echo "Sweeping ${issue_count} instance-request issue(s) (all states)."
+          if [[ "$issue_count" -ge 9999 ]]; then
+            echo "::warning ::Issue list hit the 9999 limit; the oldest issues were not swept this run"
+          fi
+          echo "$issues_json" | \
           jq -c '.[]' | while read -r issue_json; do
             issue_number=$(echo "$issue_json" | jq -r '.number')
             issue_state=$(echo "$issue_json" | jq -r '.state')
@@ -200,8 +206,9 @@ jobs:
               gh issue comment "$issue_number" \
                 --body "Instance **${instance_name}** has expired. The instance and its associated volume are being deleted." || true
             else
+              volume_name_list=$(echo "$matching_volumes" | jq -r '[.[].Name] | join(", ")')
               gh issue comment "$issue_number" \
-                --body "This request has expired. Deleting the leftover **My-Data-${issue_number}** volume." || true
+                --body "This request has expired. Deleting leftover volume(s): **${volume_name_list}**." || true
             fi
 
             # Volumes first (detaching from the instance when needed), then
@@ -232,10 +239,10 @@ jobs:
                 if openstack volume delete "$volume_id"; then
                   echo "Volume ${volume_name} deleted successfully"
                   gh issue edit "$issue_number" --add-label "volume:deleted" --remove-label "volume:expiration-pending" || true
-                  gh issue comment "$issue_number" --body "Volume **${volume_name}** successfully deleted ✅"
+                  gh issue comment "$issue_number" --body "Volume **${volume_name}** successfully deleted ✅" || true
                 else
                   echo "::warning ::Failed to delete volume ${volume_name}"
-                  gh issue comment "$issue_number" --body "❌ Failed to delete volume **${volume_name}**. See details at ${RUN_URL}"
+                  gh issue comment "$issue_number" --body "❌ Failed to delete volume **${volume_name}**. See details at ${RUN_URL}" || true
                 fi
               done
             fi
@@ -305,10 +312,12 @@ jobs:
               # Workshop sub-issues (expiration <= 7d) close bare, as the
               # retired sweep did; individual/course requests get the
               # end-of-lifespan comment.
+              # || true: a transient failure on one close must not abort the
+              # loop and drop the remaining candidates from this pass.
               if (( $(echo "$exp_days <= 7" | bc -l) )); then
-                gh issue close "$n"
+                gh issue close "$n" || true
               else
-                gh issue close "$n" --comment "This instance request has reached the end of its lifespan and its resources have been released. To start a new instance, [open a new request](https://github.com/${GH_REPO}/issues/new/choose)."
+                gh issue close "$n" --comment "This instance request has reached the end of its lifespan and its resources have been released. To start a new instance, [open a new request](https://github.com/${GH_REPO}/issues/new/choose)." || true
               fi
             done < "$candidates_file"
 
