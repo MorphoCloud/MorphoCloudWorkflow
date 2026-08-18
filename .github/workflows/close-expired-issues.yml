@@ -39,8 +39,20 @@ permissions:
   contents: read
 
 jobs:
-  end-of-life:
+  # The job split is deliberate: the dispatched control-instance delete runs
+  # on the same — often single-slot — runner lane as this workflow. A single
+  # job that dispatches deletes and then polls for their completion holds the
+  # very runner the deletes are queued behind, so the poll can never succeed
+  # (observed on Test-Instances#425). Ending the sweep job releases the
+  # runner; the deletes, dispatched earlier and therefore ahead of
+  # confirm-close in the queue, execute; then confirm-close verifies absence
+  # and closes — still within one workflow run. The Actions scheduler does
+  # not formally guarantee this queue ordering; if a delete ever runs late,
+  # the confirm poll times out and the next daily run closes the issue.
+  sweep:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    outputs:
+      candidates: ${{ steps.sweep.outputs.candidates }}
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
@@ -48,7 +60,8 @@ jobs:
           app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
           private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
 
-      - name: Warn, delete, and close expired requests
+      - name: Warn and delete expired requests
+        id: sweep
         shell: bash
         run: |
           source ~/venv/bin/activate
@@ -71,8 +84,8 @@ jobs:
           current_time_epoch=$(date +%s)
 
           # Expired OPEN issues whose resources are gone or being deleted;
-          # the confirm-and-close phase below closes each one after a fresh
-          # query proves absence. Format: <issue_number>:<expiration_days>
+          # the confirm-close job closes each one after a fresh query proves
+          # absence. Format: <issue_number>:<expiration_days>
           candidates_file=$(mktemp)
 
           # instance-request marks every per-instance issue type: individual,
@@ -270,17 +283,53 @@ jobs:
             fi
           done
 
-          # ---- Confirm and close.
-          # The instance delete above is asynchronous (dispatched workflow),
-          # so close only what a fresh OpenStack query confirms gone; poll up
-          # to the deadline for deletions still in flight. Anything still
-          # present at the deadline stays open — with the deletion comments
-          # visible — and is retried by the next run.
-          if [[ ! -s "$candidates_file" ]]; then
-            echo "No issues to close this run."
-            exit 0
-          fi
-          deadline=$(( $(date +%s) + 600 ))
+          # Hand the close candidates to the confirm-close job. Closing does
+          # not happen in this job: the dispatched instance deletes are
+          # queued behind it on the runner lane, so absence can only be
+          # confirmed after this job releases the runner.
+          candidates=$(tr '\n' ' ' < "$candidates_file")
+          echo "candidates=${candidates}" >> "$GITHUB_OUTPUT"
+          echo "Close candidates: ${candidates:-none}"
+        env:
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
+          EXPIRATION_WARNING_DAYS: 7
+          FINAL_WARNING_DAYS: 1
+          COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
+          RUN_URL:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{
+            github.run_id }}
+
+  confirm-close:
+    needs: sweep
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Confirm resource absence and close
+        if: ${{ needs.sweep.outputs.candidates != '' }}
+        shell: bash
+        run: |
+          source ~/venv/bin/activate
+
+          instance_prefix=${PREFIX:+${PREFIX}_}
+
+          candidates_file=$(mktemp)
+          # Word-split intentionally: CANDIDATES is a space-separated list of
+          # "<issue>:<days>" tokens.
+          for c in $CANDIDATES; do echo "$c"; done > "$candidates_file"
+
+          # The dispatched deletes ran while this job waited for the runner;
+          # the short poll covers stragglers. Anything still present at the
+          # deadline stays open — with the deletion comments visible — and is
+          # retried by the next run.
+          deadline=$(( $(date +%s) + 420 ))
           while true; do
             if ! round_servers=$(openstack server list --name "^${instance_prefix}instance-\\d+" -f json | jq -r '.[].Name'); then
               echo "::warning ::server list failed during confirm phase; retrying"
@@ -337,12 +386,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
-          EXPIRATION_WARNING_DAYS: 7
-          FINAL_WARNING_DAYS: 1
-          COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
-          RUN_URL:
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{
-            github.run_id }}
+          CANDIDATES: ${{ needs.sweep.outputs.candidates }}
 
       - name: Close workshop parent issues whose sub-issues are all closed
         shell: bash
