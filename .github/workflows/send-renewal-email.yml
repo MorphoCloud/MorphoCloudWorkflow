@@ -46,26 +46,6 @@ jobs:
           prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
           issue_number: ${{ inputs.issue_number }}
 
-      - name: Check instance exists
-        id: check_instance
-        if: ${{ steps.skip_check.outputs.is_course != 'true' }}
-        uses: ./.github/actions/check-instance-exists
-        with:
-          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
-          instance_name: ${{ steps.define.outputs.instance_name }}
-
-      - name: command results comment (Instance does not exist)
-        if:
-          ${{ steps.skip_check.outputs.is_course != 'true' &&
-          steps.check_instance.outputs.exists == 'false' }}
-        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
-        with:
-          issue-number: ${{ inputs.issue_number }}
-          body: |
-            ❌ **Renewal email not sent**: Instance **${{ steps.define.outputs.instance_name }}** does not exist.
-
-            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
       - name: Define volume name
         id: define_volume_name
         if: ${{ steps.skip_check.outputs.is_course != 'true' }}
