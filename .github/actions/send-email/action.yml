@@ -74,13 +74,21 @@ runs:
       id: upload_page
       shell: bash
       run: |
+        # Right after creation the page may still be starting, so retry for
+        # up to a minute; on /email and /unshelve one probe is enough.
+        attempts=1
+        if [[ "$EXPECT" == "true" ]]; then
+          attempts=6
+        fi
         code=000
-        for attempt in $(seq 1 6); do
+        for attempt in $(seq 1 "$attempts"); do
           code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$UPLOAD_URL" || true)
           if [[ "$code" == "200" || "$code" == "403" ]]; then
             break
           fi
-          sleep 10
+          if [[ "$attempt" -lt "$attempts" ]]; then
+            sleep 10
+          fi
         done
         if [[ "$code" == "200" || "$code" == "403" ]]; then
           echo "upload_url=$UPLOAD_URL" >> "$GITHUB_OUTPUT"
