@@ -442,6 +442,7 @@ jobs:
           mail_server_password: ${{ secrets.MAIL_PASSWORD }}
           instance_name: ${{ steps.provision.outputs.instance_name }}
           instance_issue_number: ${{ github.event.issue.number }}
+          expect_upload_page: "true"
 
       - name: comment (failed to send email)
         if: ${{ steps.send_email.outcome == 'failure' && failure() }}
