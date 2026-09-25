@@ -11,6 +11,9 @@ outputs:
   connection_url:
     description: "Guacamole Connection URL"
     value: ${{ steps.guacamole.outputs.connection_url }}
+  upload_url:
+    description: "Drop zone (browser upload) URL, opens MyData/Uploads"
+    value: ${{ steps.guacamole.outputs.upload_url }}
 runs:
   using: "composite"
   steps:
@@ -44,6 +47,13 @@ runs:
         connection_url="https://http-$proxified_instance_ip-$guacamole_port.$proxy_hostname/guacamole/#/client/$client_id="
         echo $connection_url
         echo "connection_url=$connection_url" >> $GITHUB_OUTPUT
+
+        # Drop zone (copyparty) -- see exosphere ansible/roles/dropzone/defaults/main.yml
+        dropzone_port=49529
+
+        upload_url="https://http-$proxified_instance_ip-$dropzone_port.$proxy_hostname/Uploads/"
+        echo $upload_url
+        echo "upload_url=$upload_url" >> $GITHUB_OUTPUT
       env:
         INSTANCE_IP: ${{ inputs.instance_ip }}
         # INSTANCE_PWD: ${{ inputs.instance_pwd }}

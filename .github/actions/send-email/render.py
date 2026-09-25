@@ -20,6 +20,8 @@ subs = {
     "{{instance_name}}": os.environ["INSTANCE_NAME"],
     "{{instance_ip}}": os.environ["INSTANCE_IP"],
     "{{connection_url}}": os.environ["CONNECTION_URL"],
+    # Optional: the template only uses it once the drop zone is promoted.
+    "{{upload_url}}": os.environ.get("UPLOAD_URL", ""),
     "{{passphrase}}": os.environ["PASSPHRASE"],
     "{{contact_email}}": t["contact_email"],
 }

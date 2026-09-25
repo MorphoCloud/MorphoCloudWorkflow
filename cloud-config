@@ -208,7 +208,7 @@ retry git clone \
   /opt/instance-config-mgt \
   || fail "could not clone MorphoCloud/exosphere"
 
-exosphere_sha="6bcc7ef128856564ba7ea27be21db539514e7ae0" # morpho-cloud-portal-2026.06-ubuntu24-prep
+exosphere_sha="6c8b305e623ccd93ad4624c3149cfb28e48c2606" # dropzone-prototype
 (cd /opt/instance-config-mgt && git reset --hard "$exosphere_sha") \
   || fail "could not check out exosphere commit $exosphere_sha"
 
@@ -221,7 +221,7 @@ exosphere_sha="6bcc7ef128856564ba7ea27be21db539514e7ae0" # morpho-cloud-portal-2
 
 ansible-playbook \
   -i /opt/instance-config-mgt/ansible/hosts \
-  -e "{\"guac_enabled\":true,\"gui_enabled\":true,\"session_timeout_hrs\":{session-timeout-hrs},\"ansible_python_interpreter\":\"/opt/ansible-venv/bin/python\"}" \
+  -e "{\"guac_enabled\":true,\"gui_enabled\":true,\"dropzone_enabled\":true,\"session_timeout_hrs\":{session-timeout-hrs},\"ansible_python_interpreter\":\"/opt/ansible-venv/bin/python\"}" \
   /opt/instance-config-mgt/ansible/playbook.yml
 ANSIBLE_RETURN_CODE=$?
 if [ $ANSIBLE_RETURN_CODE -eq 0 ]; then STATUS="complete"; else STATUS="error"; fi

@@ -80,7 +80,24 @@ runs:
         INSTANCE_NAME: ${{ inputs.instance_name }}
         INSTANCE_IP: ${{ steps.instance_metadata.outputs.instance_ip }}
         CONNECTION_URL: ${{ steps.guacamole.outputs.connection_url }}
+        UPLOAD_URL: ${{ steps.guacamole.outputs.upload_url }}
         PASSPHRASE: ${{ steps.instance_metadata.outputs.instance_pwd }}
+
+    # Drop zone prototype: the link is posted on the issue instead of the
+    # email so the PortalContent template (shared with production) is untouched.
+    - name: Post upload link on the issue
+      id: upload_link_comment
+      shell: bash
+      run: |
+        printf '### Upload files to **%s**\n\n%s\n\nEnter the passphrase from your email (no username), then drag files or whole folders onto the page. They land in `MyData/Uploads` (an **Uploads** folder is on the desktop). Interrupted uploads resume when you drop the same files again.\n' "$INSTANCE_NAME" "$UPLOAD_URL" > /tmp/upload-link-${ISSUE_NUMBER}.md
+        gh issue comment "$ISSUE_NUMBER" --body-file /tmp/upload-link-${ISSUE_NUMBER}.md
+        rm -f /tmp/upload-link-${ISSUE_NUMBER}.md
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.instance_issue_number }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
+        UPLOAD_URL: ${{ steps.guacamole.outputs.upload_url }}
 
     - name: Send mail
       uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
