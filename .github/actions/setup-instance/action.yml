@@ -464,6 +464,34 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+    # Landing folder for the drop zone (exosphere roles/dropzone) plus a
+    # desktop shortcut. Both live on the volume, so they persist like the rest
+    # of the home directory. Idempotent for re-attached volumes.
+    - name: Create Uploads folder and desktop shortcut
+      id: create_uploads_folder
+      shell: bash
+      run: |
+        ssh \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          exouser@$INSTANCE_IP \
+          'mkdir -p /media/volume/MyData/Uploads /home/exouser/Desktop && ln -sfn /media/volume/MyData/Uploads /home/exouser/Desktop/Uploads'
+      env:
+        INSTANCE_IP: ${{ inputs.instance_ip }}
+
+    - name: comment (failed to create Uploads folder)
+      if: ${{ steps.create_uploads_folder.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Failed to create `/media/volume/MyData/Uploads` for instance **${{ inputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
     - name: Create Renviron file
       id: create_renviron_file
       shell: bash

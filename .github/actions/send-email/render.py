@@ -20,12 +20,19 @@ subs = {
     "{{instance_name}}": os.environ["INSTANCE_NAME"],
     "{{instance_ip}}": os.environ["INSTANCE_IP"],
     "{{connection_url}}": os.environ["CONNECTION_URL"],
+    # Empty when the instance has no upload page (created before the feature,
+    # or the page did not respond): every template line using it is dropped.
+    "{{upload_url}}": os.environ.get("UPLOAD_URL", ""),
     "{{passphrase}}": os.environ["PASSPHRASE"],
     "{{contact_email}}": t["contact_email"],
 }
 
 
 def render(text: str) -> str:
+    if not subs["{{upload_url}}"]:
+        text = "\n".join(
+            line for line in text.split("\n") if "{{upload_url}}" not in line
+        )
     for key, value in subs.items():
         text = text.replace(key, value)
     return text

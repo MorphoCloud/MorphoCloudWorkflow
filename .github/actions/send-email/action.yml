@@ -33,6 +33,12 @@ inputs:
   instance_issue_number:
     description: "Reference of the GitHub issue associated with the instance"
     required: true
+  expect_upload_page:
+    description:
+      "true when the instance was just created with the upload page, so an
+      unreachable page is reported on the issue instead of silently omitted"
+    required: false
+    default: "false"
 outputs:
   error_message:
     description: "Error message describing which steps failed"
@@ -61,6 +67,48 @@ runs:
       with:
         instance_ip: ${{ steps.instance_metadata.outputs.instance_ip }}
 
+    # Instances created before the upload page existed have nothing on that
+    # port, so the link is only put in the email when the page responds
+    # (200 = page, 403 = its login form; anything else = not there).
+    - name: Check the upload page
+      id: upload_page
+      shell: bash
+      run: |
+        # Right after creation the page may still be starting, so retry for
+        # up to a minute; on /email and /unshelve one probe is enough.
+        attempts=1
+        if [[ "$EXPECT" == "true" ]]; then
+          attempts=6
+        fi
+        code=000
+        for attempt in $(seq 1 "$attempts"); do
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$UPLOAD_URL" || true)
+          if [[ "$code" == "200" || "$code" == "403" ]]; then
+            break
+          fi
+          if [[ "$attempt" -lt "$attempts" ]]; then
+            sleep 10
+          fi
+        done
+        if [[ "$code" == "200" || "$code" == "403" ]]; then
+          echo "upload_url=$UPLOAD_URL" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "upload_url=" >> "$GITHUB_OUTPUT"
+        echo "::warning ::Upload page not reachable at $UPLOAD_URL (last HTTP status $code); the email omits it."
+        if [[ "$EXPECT" == "true" ]]; then
+          printf 'The upload page on **%s** did not respond (HTTP %s), so the email does not include its link. Run `/email` later to try again.\n' "$INSTANCE_NAME" "$code" > "/tmp/upload-page-${ISSUE_NUMBER}.md"
+          gh issue comment "$ISSUE_NUMBER" --body-file "/tmp/upload-page-${ISSUE_NUMBER}.md" || true
+          rm -f "/tmp/upload-page-${ISSUE_NUMBER}.md"
+        fi
+      env:
+        UPLOAD_URL: ${{ steps.guacamole.outputs.upload_url }}
+        EXPECT: ${{ inputs.expect_upload_page }}
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.instance_issue_number }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
+
     # Email copy lives in MorphoCloudPortalContent (instance-credentials.json),
     # fetched at send time — copy edits go live on the next /create or /email
     # with no vendorize. render.py substitutes the placeholders (plain string
@@ -80,6 +128,7 @@ runs:
         INSTANCE_NAME: ${{ inputs.instance_name }}
         INSTANCE_IP: ${{ steps.instance_metadata.outputs.instance_ip }}
         CONNECTION_URL: ${{ steps.guacamole.outputs.connection_url }}
+        UPLOAD_URL: ${{ steps.upload_page.outputs.upload_url }}
         PASSPHRASE: ${{ steps.instance_metadata.outputs.instance_pwd }}
 
     - name: Send mail
