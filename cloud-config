@@ -208,7 +208,7 @@ retry git clone \
   /opt/instance-config-mgt \
   || fail "could not clone MorphoCloud/exosphere"
 
-exosphere_sha="198094bfea1b656ff824ffb13b2a6ba950b16ab5" # dropzone-prototype
+exosphere_sha="e0b310ddfda1b8276102b7cbb617f1a7ae770f0f" # dropzone-prototype
 (cd /opt/instance-config-mgt && git reset --hard "$exosphere_sha") \
   || fail "could not check out exosphere commit $exosphere_sha"
 
