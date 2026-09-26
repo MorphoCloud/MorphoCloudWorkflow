@@ -73,6 +73,9 @@ once the GitHub App works.
 - The header has two links right of the logo, one above the other:
   **Documentation** (https://github.com/MorphoCloud/docs) and **User guide**
   (its `user-guide` folder).
+- The top line ends with the funding acknowledgement, "Funded by NSF
+  (DBI/2301405)", linked to the funding section of morphocloud.org. It is shown
+  even when the availability numbers are not.
 - "Open my files" opens the file browser in a panel on the right half of the
   window (below the cards on narrow screens), so the instance status stays in
   view; the panel also links to a full tab. On wide screens the panel runs from
