@@ -40,6 +40,7 @@ NAME="mc-bake-$(date -u +%Y%m%d-%H%M%S)"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 log() { echo "$(date -u +%H:%M:%S) $*"; }
+fail() { echo "BAKE FAILED: $*" >&2; echo "Build instance kept for diagnosis: $NAME" >&2; exit 1; }
 ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
           -o ConnectTimeout=10 -o LogLevel=ERROR)
 
@@ -58,8 +59,7 @@ openstack server create "$NAME" \
   --image "Featured-Ubuntu24" \
   --property "exoSetup={\"status\":\"waiting\",\"epoch\":null}" \
   --user-data "$WORK/cloud-config" \
-  --wait -f value -c id >/dev/null
-fail() { echo "BAKE FAILED: $*" >&2; echo "Build instance kept for diagnosis: $NAME" >&2; exit 1; }
+  --wait -f value -c id >/dev/null || fail "the build instance did not reach ACTIVE"
 
 log "waiting for setup (up to 30 minutes)"
 start=$SECONDS
@@ -76,6 +76,7 @@ failed_ext=$(jq -r '.failed_extensions // empty' <<<"$line")
 [[ -z "$failed_ext" ]] || fail "Slicer extensions failed to install: $failed_ext"
 log "setup complete after $(( (SECONDS - start) / 60 )) minutes"
 
+# The runner shares the project's private network (10.x on Jetstream2).
 IP=$(openstack server show "$NAME" -f json -c addresses \
   | jq -r '.addresses | to_entries[0].value[] | select(test("^10\\."))' | head -1)
 [[ -n "$IP" ]] || fail "no private address"
@@ -114,7 +115,9 @@ EOF
 log "shutting down"
 openstack server stop "$NAME"
 for _ in $(seq 1 60); do
-  [[ "$(openstack server show "$NAME" -f value -c status)" == "SHUTOFF" ]] && break
+  st=$(openstack server show "$NAME" -f value -c status)
+  [[ "$st" == "SHUTOFF" ]] && break
+  [[ "$st" == "ACTIVE" ]] || fail "status $st while shutting down"
   sleep 5
 done
 [[ "$(openstack server show "$NAME" -f value -c status)" == "SHUTOFF" ]] || fail "did not shut down"
