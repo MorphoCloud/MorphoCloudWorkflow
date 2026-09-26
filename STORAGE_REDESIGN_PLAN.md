@@ -391,6 +391,12 @@ a new request. Found by test 4 on 2026-09-26: a file saved about 10 seconds
 before `/delete_instance` came back empty; a hard reset confirmed that unflushed
 writes are lost.
 
+**Instance lifetime on Test-Instances:** 90 days, and `/renew` adds 90 (180 in
+total), set by the repository variable `MORPHOCLOUD_EXPIRATION_LADDER`
+(`90d,180d`). Unset keeps today's 60 + 60. The storage date shown on the portal
+(180 days after the share was created) is a target only; nothing expires shares
+yet (decision 7).
+
 **Known gap:** if Ceph is unreachable at boot, the mount is not retried when it
 comes back; the desktop stays down until the next reboot or unshelve (test 8).
 
