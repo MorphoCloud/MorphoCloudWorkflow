@@ -351,6 +351,41 @@ the portal in production until it lands**, or requests past the quota fail with
 an admin alert instead of a share. Size the request for growth. Testing fits the
 Test-Instances allocation.
 
+## Phase 2 prototype (instance side), Test-Instances only
+
+Started 2026-09-25. The instance dashboard (INSTANCE_DASHBOARD_PLAN.md) waits
+for this, because much of instance management depends on volumes versus shares.
+
+**Switch.** Repository variable `MORPHOCLOUD_STORAGE_MODE=share`, set on
+Test-Instances only. Unset (production, workshops, courses) keeps today's volume
+path exactly.
+
+**`/create` in share mode:**
+
+1. No volume: the volume name, check, create and attach steps are skipped.
+2. After the instance is set up, the runner calls the same fail-closed `ensure`
+   as the portal (`mc_share_runner.py ensure <id> <login>`, issue creator's
+   numeric ID), under the same lock as the portal pickup so the two never create
+   at once. The access key is masked in the logs.
+3. Over SSH, as root on the instance:
+   - key in `/etc/ceph/mc-user.secret` (root only);
+   - a systemd mount unit for `/media/share/MyDrive`; the bare mountpoint is
+     immutable;
+   - the four folders on the share if missing, owned by exouser;
+   - launchers copied into the share's Desktop;
+   - each home folder replaced by a link to the share. A local folder that is
+     not empty is moved aside to `~/<name>.local-<date>`, never deleted;
+   - `vncserver@1` requires the mount (no desktop without the share);
+   - `xdg-user-dirs` updates turned off.
+4. Skipped: the MyData rename, Slicer copy (Slicer stays on the root disk where
+   ansible installs it), home relocation, and `.Renviron`.
+
+**Not in the prototype** (later, if adopted): golden images (tests 5 and 6 use
+today's image), the failure message shown in place of the desktop (the desktop
+simply does not start), Slicer's DICOM folder, share metadata bookkeeping,
+removing volume commands, workshops. A share created by `/create` is not yet
+known to the portal; the user's "Create my storage" then reuses it.
+
 ## Test plan (Test-Instances, BIO240357_IU)
 
 Run before building anything permanent.
