@@ -567,8 +567,8 @@ runs:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         CURRENT_STATUS: ${{ steps.wait_instance_state.outputs.final_status }}
 
-    # env.CREATE_ALREADY_EXISTS: a redundant /create is refused up front with
-    # its own explanation; adding a generic "Failed to create instance" on top
+    # env.CREATE_ALREADY_EXISTS / CREATE_NO_STORAGE: a /create refused up
+    # front (already exists; no data share) carries its own explanation; adding a generic "Failed to create instance" on top
     # of it is the noise that sent users to /delete_all (Instances#168).
     - name: comment (instance creation failed)
       if:
@@ -576,7 +576,8 @@ runs:
         steps.wait_instance_state.outcome == 'failure' ||
         steps.check_capacity_error.outputs.capacity_error != 'true') &&
         failure() && steps.check_capacity_error.outputs.capacity_error != 'true'
-        && env.CREATE_ALREADY_EXISTS != 'true' }}
+        && env.CREATE_ALREADY_EXISTS != 'true' && env.CREATE_NO_STORAGE !=
+        'true' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
