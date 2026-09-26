@@ -417,6 +417,9 @@ jobs:
           storage_mode:
             ${{ contains(github.event.issue.labels.*.name,
             'request-creator:user') && vars.MORPHOCLOUD_STORAGE_MODE || '' }}
+          image_vgpu: ${{ vars.MORPHOCLOUD_IMAGE_VGPU }}
+          image_regular: ${{ vars.MORPHOCLOUD_IMAGE_REGULAR }}
+          vgpu_flavors: ${{ vars.MORPHOCLOUD_VGPU_FLAVORS || 'g3.large' }}
 
       # Individual creates stay one job (acquire + setup back-to-back on the
       # acquire runner) — same behaviour as before the split; only the workshop

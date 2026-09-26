@@ -35,6 +35,21 @@ inputs:
       prototype, Test-Instances only); empty for the volume path"
     required: false
     default: ""
+  image_vgpu:
+    description:
+      "Share mode: baked image for the vGPU flavors (empty = Featured-Ubuntu24)"
+    required: false
+    default: ""
+  image_regular:
+    description:
+      "Share mode: baked image for every other flavor (empty =
+      Featured-Ubuntu24)"
+    required: false
+    default: ""
+  vgpu_flavors:
+    description: "Share mode: comma-separated vGPU flavors"
+    required: false
+    default: "g3.large"
 outputs:
   instance_name:
     description: "Name of the provisioned instance"
@@ -332,12 +347,28 @@ runs:
         echo "Session timeout for this instance: ${TIMEOUT_HRS}h"
         sed -i "s|{session-timeout-hrs}|${TIMEOUT_HRS}|g" ./cloud-config
 
+        # Share mode (STORAGE_REDESIGN_PLAN.md, golden images): Slicer lives
+        # on the root disk at /opt/slicer and saves to Documents (on the
+        # share), and the instance boots from the baked image for its GPU
+        # kind. Volume mode keeps the stock image and ansible defaults.
+        INSTANCE_IMAGE="Featured-Ubuntu24"
+        if [[ "$STORAGE_MODE" == "share" ]]; then
+          sed -i 's|\\"guac_enabled\\":true,|\\"guac_enabled\\":true,\\"storage_mode\\":\\"share\\",\\"slicer_install_dir\\":\\"/opt/slicer\\",\\"slicer_default_scene_path\\":\\"/home/exouser/Documents\\",|' ./cloud-config
+          grep -q 'storage_mode' ./cloud-config || { echo "::error ::could not add the share-mode ansible variables to cloud-config"; exit 1; }
+          if [[ ",$VGPU_FLAVORS," == *",$INSTANCE_FLAVOR,"* ]]; then
+            INSTANCE_IMAGE="${IMAGE_VGPU:-Featured-Ubuntu24}"
+          else
+            INSTANCE_IMAGE="${IMAGE_REGULAR:-Featured-Ubuntu24}"
+          fi
+        fi
+        echo "Image for this instance: $INSTANCE_IMAGE"
+
 
         openstack server create "$INSTANCE_NAME" \
           --nic net-id="auto_allocated_network" \
           --security-group "exosphere" \
           --flavor "$INSTANCE_FLAVOR" \
-          --image "Featured-Ubuntu24" \
+          --image "$INSTANCE_IMAGE" \
           --key-name "murat-key" \
           --property "exoGuac={\"v\":1,\"ssh\":true,\"vnc\":true}" \
           --property "exoClientUuid=$exoClientUuid" \
@@ -362,6 +393,10 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         GH_REPO: ${{ github.repository }}
         DEFAULT_SESSION_TIMEOUT_HRS: ${{ inputs.default_session_timeout_hrs }}
+        STORAGE_MODE: ${{ inputs.storage_mode }}
+        IMAGE_VGPU: ${{ inputs.image_vgpu }}
+        IMAGE_REGULAR: ${{ inputs.image_regular }}
+        VGPU_FLAVORS: ${{ inputs.vgpu_flavors }}
 
     - name: Wait for instance to reach stable state
       id: wait_instance_state
