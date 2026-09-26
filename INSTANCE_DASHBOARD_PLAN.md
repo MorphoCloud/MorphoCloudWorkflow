@@ -13,21 +13,21 @@ instruction.
 Agreed 2026-09-25. Changing any of these needs the maintainer's approval, and
 this table is updated first.
 
-| #   | Decision                                                                                                                                                                                                       |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | The dashboard is part of the data portal: same VM, same sign-in, same page as the storage card.                                                                                                                |
-| 2   | Each instance card shows the **state** (no instance, active, shelved), the **access details** (Web connect, SSH, TurboVNC) and a **link to the request issue** for diagnostics.                                |
-| 3   | No Data drop entry. The data portal replaces it.                                                                                                                                                               |
-| 4   | Buttons: **Create**, **Shelve**, **Unshelve**. Nothing else in the first version.                                                                                                                              |
-| 5   | The **passphrase is shown** on the dashboard, behind GitHub sign-in.                                                                                                                                           |
-| 6   | The first **Create** opens the request issue and runs `/create` in one step. The user picks the flavor on the portal. There is no separate "request" step.                                                     |
-| 7   | GitHub issues and workflows stay the engine and the audit trail. The portal does not start, stop or change instances itself.                                                                                   |
-| 8   | **Primary path:** sign-in moves to a MorphoCloud **GitHub App**, and buttons post the command (`/shelve`, …) on the user's issue **as the user**. The existing workflow checks apply.                          |
-| 9   | **Backup / second test:** the portal checks that the user owns the issue, then the bot runs the existing `*-from-workflow` dispatch workflows. Built only if needed, or as a comparison.                       |
-| 10  | The portal gets **no OpenStack credentials**. State comes from the issue's `status:*` labels. Access details are pushed to the portal by the workflow over the restricted SSH channel.                         |
-| 11  | Individual instances only. Courses and workshops are out of scope.                                                                                                                                             |
-| 12  | A portal-opened issue is opened with the **user's token** (the user stays the author). A workflow adds the form's three labels plus `request-source:portal`, and the request handler runs once, on that label. |
-| 13  | The user's GitHub token is kept **in the portal's memory only**: never on disk, never in the cookie. A portal restart signs everyone out.                                                                      |
+| #   | Decision                                                                                                                                                                                                                       |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | The dashboard is part of the data portal: same VM, same sign-in, same page as the storage card.                                                                                                                                |
+| 2   | Each instance card shows the **state** (no instance, active, shelved), the **access details** (Web connect, SSH, TurboVNC) and a **link to the request issue** for diagnostics.                                                |
+| 3   | No Data drop entry. The data portal replaces it.                                                                                                                                                                               |
+| 4   | Buttons: **Create**, **Shelve**, **Unshelve**, **Delete**. Delete runs `/delete_instance` only (test instances have no data volume; files are on the user's storage) and always asks for confirmation first. Added 2026-09-25. |
+| 5   | The **passphrase is shown** on the dashboard, behind GitHub sign-in.                                                                                                                                                           |
+| 6   | The first **Create** opens the request issue and runs `/create` in one step. The user picks the flavor on the portal. There is no separate "request" step.                                                                     |
+| 7   | GitHub issues and workflows stay the engine and the audit trail. The portal does not start, stop or change instances itself.                                                                                                   |
+| 8   | **Primary path:** sign-in moves to a MorphoCloud **GitHub App**, and buttons post the command (`/shelve`, …) on the user's issue **as the user**. The existing workflow checks apply.                                          |
+| 9   | **Backup / second test:** the portal checks that the user owns the issue, then the bot runs the existing `*-from-workflow` dispatch workflows. Built only if needed, or as a comparison.                                       |
+| 10  | The portal gets **no OpenStack credentials**. State comes from the issue's `status:*` labels. Access details are pushed to the portal by the workflow over the restricted SSH channel.                                         |
+| 11  | Individual instances only. Courses and workshops are out of scope.                                                                                                                                                             |
+| 12  | A portal-opened issue is opened with the **user's token** (the user stays the author). A workflow adds the form's three labels plus `request-source:portal`, and the request handler runs once, on that label.                 |
+| 13  | The user's GitHub token is kept **in the portal's memory only**: never on disk, never in the cookie. A portal restart signs everyone out.                                                                                      |
 
 ## Sign-in (decision 8)
 
@@ -56,9 +56,14 @@ once the GitHub App works.
 - State from `status:*` labels: `status:active` → active; `status:shelved` or
   `status:shelved_offloaded` → shelved; `status:deleted` or no label → no
   instance. Any other label is shown as-is with the issue link.
-- Buttons match the state: no instance → Create; active → Shelve; shelved →
-  Unshelve. After a press, the card shows "Working…" and the buttons are
-  disabled until the label changes.
+- Buttons match the state: no instance → Create; active → Shelve and Delete;
+  shelved → Unshelve and Delete. After a press, the card shows "Working…" and
+  the buttons are hidden until the workflow reacts on the command comment (👍
+  finished, 👎 failed; see `report-command-outcome`), at most 3 hours. A failed
+  command is noted on the card for a day.
+- Delete opens a confirmation page: "This removes your instance. Anything saved
+  only on the instance is lost. Your files in your storage are not affected."
+  with **Delete instance** and **Cancel**.
 - No open request → a **Create instance** button with the flavor list from the
   request form.
 
@@ -167,8 +172,8 @@ Rejected: encrypted in the portal database (token and key both on disk).
 
 ## Not decided (not in the first version)
 
-Delete, renew, and an expiration display. Each needs the maintainer's decision
-before it is added.
+Renew, an expiration display, and creating a second instance while one request
+is open. Each needs the maintainer's decision before it is added.
 
 ## Test plan (Test-Instances)
 
