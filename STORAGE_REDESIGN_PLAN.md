@@ -17,23 +17,24 @@ allocation. Nothing here is in production. Tracking issue:
 
 These are settled. Revisit only with new facts, not preference.
 
-| #   | Decision                                                                                                                                                                                                       |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Each user gets their own 100 GB Manila CephFS share. It replaces the per-instance MyData Cinder volume.                                                                                                        |
-| 2   | Shares are keyed on the **GitHub numeric user ID**, not the login. Logins can be renamed or reclaimed; the ID never changes.                                                                                   |
-| 3   | The home directory and all settings stay on the instance's root disk. Only the user-facing folders live on the share.                                                                                          |
-| 4   | A small always-on service provides browser upload and download to each user's share, with GitHub sign-in. It works with or without an instance.                                                                |
-| 5   | Two golden images, both with the NVIDIA driver: a vGPU (GRID) image for g3.large, and a regular-driver image for every other flavor, including CPU-only.                                                       |
-| 6   | Slicer and the standard extension set are baked into the images. Extensions a user adds are lost when the instance is recreated. Accepted.                                                                     |
-| 7   | Share lifecycle target is 6 months, renewable. **Start with no expiry** and measure how much accumulates first.                                                                                                |
-| 8   | No backups. Same as MyData volumes today.                                                                                                                                                                      |
-| 9   | No migration path from MyData during testing. Designed only if this is adopted.                                                                                                                                |
-| 10  | The current per-instance upload page ("Data drop") stays in production until this design is adopted.                                                                                                           |
-| 11  | Workshop instances get no per-attendee share or volume. They use one centralized workshop share.                                                                                                               |
-| 12  | R libraries live on the root disk. MorphoCloud no longer installs them.                                                                                                                                        |
-| 13  | Slicer's DICOM database moves to local disk. DICOM is not a common use case.                                                                                                                                   |
-| 14  | A share is provisioned for every member of the MorphoCloudUsers team. Joining the team is signing up. A scheduled reconciliation creates missing shares and sends the welcome email with storage instructions. |
-| 15  | The request issue's lifecycle covers the instance only. Volume commands and `volume:*` labels are removed; the share has its own lifecycle.                                                                    |
+| #   | Decision                                                                                                                                                                                  |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Each user gets their own 100 GB Manila CephFS share. It replaces the per-instance MyData Cinder volume.                                                                                   |
+| 2   | Shares are keyed on the **GitHub numeric user ID**, not the login. Logins can be renamed or reclaimed; the ID never changes.                                                              |
+| 3   | The home directory and all settings stay on the instance's root disk. Only the user-facing folders live on the share.                                                                     |
+| 4   | A data portal on its own VM provides browser upload and download to each user's share, with GitHub sign-in (members of MorphoCloudUsers only). It works with or without an instance.      |
+| 5   | Two golden images, both with the NVIDIA driver: a vGPU (GRID) image for g3.large, and a regular-driver image for every other flavor, including CPU-only.                                  |
+| 6   | Slicer and the standard extension set are baked into the images. Extensions a user adds are lost when the instance is recreated. Accepted.                                                |
+| 7   | Share lifecycle target is 6 months, renewable. **Start with no expiry** and measure how much accumulates first.                                                                           |
+| 8   | No backups. Same as MyData volumes today.                                                                                                                                                 |
+| 9   | No migration path from MyData during testing. Designed only if this is adopted.                                                                                                           |
+| 10  | The current per-instance upload page ("Data drop") stays in production until this design is adopted.                                                                                      |
+| 11  | Workshop instances get no per-attendee share or volume. They use one centralized workshop share.                                                                                          |
+| 12  | R libraries live on the root disk. MorphoCloud no longer installs them.                                                                                                                   |
+| 13  | Slicer's DICOM database moves to local disk. DICOM is not a common use case.                                                                                                              |
+| 14  | Shares are created on demand: a user presses "Create my storage" on the portal, or runs `/create` without one, which creates it automatically. No automatic provisioning of every member. |
+| 16  | Reset empties the share (share and key are kept). Nothing ever deletes or recreates a user's share automatically.                                                                         |
+| 15  | The request issue's lifecycle covers the instance only. Volume commands and `volume:*` labels are removed; the share has its own lifecycle.                                               |
 
 ## Why per-user shares, not one big share with folders
 
@@ -88,46 +89,38 @@ permissions.
   database or sheet column. The last-mounted time is what a future expiry rule
   will be measured against.
 
-**Provisioning: reconcile the MorphoCloudUsers team.** Membership in the team is
-the signup record, and GitHub's team-members API returns each member's numeric
-ID. So provisioning needs nothing from the intake app:
+**Provisioning: on demand, two entry points.**
 
-1. A `reconcile-user-shares` workflow runs on the control runner, which already
-   holds the OpenStack credentials, every few minutes (scheduled, or from the
-   runner's crontab as the end-of-life sweep is) and on manual dispatch.
-2. It lists the team's members and the existing `mc-user-*` shares.
-3. For each member without a share: create the 100 GB share and its access rule,
-   wait until available, look up the member's email through the existing
-   `/lookup` endpoint, and send the welcome email with storage instructions and
-   the upload service address. Record the send in the share metadata.
-4. It is idempotent: an existing share is never recreated, and a recorded
-   welcome is never resent. A failure on one member does not stop the others.
-5. Any failure emails the admins. A member left without a share is retried on
-   the next run.
-6. Members who have left the team are reported, not deleted (no expiry yet).
+1. **The portal's "Create my storage" button.** The portal records the request.
+   The portal holds no OpenStack or GitHub credentials, so the runner host polls
+   it every minute over SSH, through an account whose forced command allows only
+   `claim`, `install <id>` and `fail <id>`. The runner creates the share with
+   its own credentials and hands the portal the details to mount.
+2. **`/create` without a share** (decision A) creates it the same way, inline,
+   so `/create` never fails over storage. Not built yet (phase 2).
 
-**One shared action, two callers.** Share creation is a single idempotent
-composite action, `ensure-user-share`, used by both the reconciliation and
-`/create`. So a user who runs `/create` before the next reconciliation still
-gets their share, created inline; the reconciliation later only sends the
-welcome email. `/create` takes the numeric ID straight from the event payload,
-`github.event.issue.user.id`, with no extra API call and no dependence on the
-current login. The same field serves `/unshelve` and every other
-comment-triggered command: it is the ID of the issue's creator, who owns the
-instance, not of whoever posted the comment.
+Both call the same share-creation logic (`ensure`), which **fails closed**:
 
-**Why scheduled, not event-driven.** GitHub Actions cannot be triggered by
-organization or team membership events; those exist only as webhooks, which
-would need a receiver on the join VM plus a dispatch. With a run every few
-minutes and the inline creation above, that machinery buys nothing.
+- every OpenStack error stops the run; a failed lookup is never read as "no
+  share exists";
+- more than one share matching a GitHub ID (by name or by the `mc_github_id`
+  property) stops the run;
+- an existing share is reused as is, whatever its state; a share in an error
+  state is left for an admin;
+- after creating, the lookup runs again and must find exactly one share;
+- the code has no delete call; a test enforces it.
 
-At adoption, the join app's welcome sweep is retired so users get one welcome
-email, sent only once their share exists. Existing members are backfilled by the
-first run: 73 team members today, so about 7.3 TB provisioned at once.
+The portal side refuses to remap a user to a different share and refuses to
+mount over a non-empty directory. Every refusal or failure emails the admins,
+and the user sees "could not be created" with a retry button; a retry reuses the
+share if it exists.
 
-During testing, the workflow runs against the Test-Instances allocation and only
-for an allowlist of test accounts. The production join app and its welcome email
-are unchanged.
+The numeric ID comes from the GitHub sign-in on the portal, and from
+`github.event.issue.user.id` in `/create` and other comment-triggered commands
+(the issue creator, who owns the instance, not the commenter). No extra API
+call, no dependence on the current login.
+
+The welcome email is unchanged: storage is created only when a user asks.
 
 **Keys.** Manila stores each share's access key; there is no separate key store.
 At create and unshelve the runner reads the key from Manila and writes it to a
@@ -193,33 +186,48 @@ user folders, which resolve through these links.
 **What stays on the root disk:** Slicer, app settings, caches, R libraries, the
 DICOM database, and anything lock-heavy.
 
-### 3. Central upload and download service
+### 3. Data portal
 
-- **Host:** an always-on Jetstream2 VM (the join VM or a dedicated one). Nothing
-  outside Jetstream2 can write to CephFS directly: the Manila API manages shares
-  but never file contents, and CephFS is served only on Jetstream2's internal
-  network.
-- **Software:** copyparty from the MorphoCloud/copyparty fork, the same build as
-  Data drop.
-- **Sign-in:** GitHub through an identity-provider proxy (oauth2-proxy) that
-  passes the verified user to copyparty's header authentication.
-- **Per-user folders:** copyparty's templated volumes, one per signed-in user,
-  pointing at that user's mounted share:
+Code:
+[MorphoCloud/morphocloud-data-portal](https://github.com/MorphoCloud/morphocloud-data-portal).
+
+- **Host:** its own always-on Jetstream2 VM, separate from the join VM, because
+  it holds a key to every user's share. Nothing outside Jetstream2 can write to
+  CephFS directly: the Manila API manages shares but never file contents.
+- **Pieces:** Caddy (HTTPS) in front of a small web app (GitHub sign-in, team
+  check, create and reset) and copyparty from the MorphoCloud/copyparty fork
+  (the file browser at `/files`). Caddy asks the web app before every `/files`
+  request; only then does it tell copyparty who the user is. The web app passes
+  the numeric GitHub ID itself, so no third-party proxy decides identity.
+- **Per-user folders:** copyparty's templated volumes, inside a parent volume
+  nobody can access:
 
   ```
-  [/u/${u}]
+  [/${u}]
     /mnt/shares/${u}
     accs:
       rwmd: ${u}
   ```
 
-  The username passed by the proxy must be the numeric GitHub ID, to match
-  decision 2.
-
-- **Sensitivity:** this VM holds every user's key. Harden it like the join
-  server.
+- **Mounts:** one systemd mount unit per share at `/mnt/shares/<id>`. The bare
+  mountpoint is immutable, so nothing can be written to local disk while a share
+  is unmounted. A root worker checks mounts every minute, remounts if needed,
+  and alerts.
+- **Files are owned by uid/gid 1001** (exouser), as on instances, so files
+  uploaded here stay editable on an instance.
+- **copyparty's upload index** stays on local disk, never on the share.
+- **Reset** empties the share after proving the path is that user's CephFS
+  mount; it never crosses filesystems or follows symlinks, and recreates the
+  four folders. It requires typing "reset my data". File access is blocked while
+  it runs. Warning users away from resetting with an instance running is text
+  only until instances mount shares (phase 2).
 - **Result:** a stable address that does not change on unshelve, unlike the
   per-instance Data drop link.
+
+**Test deployment:** `mc-data-portal` on BIO240357_IU,
+`https://mc-data-portal.bio240357.projects.jetstream-cloud.org` (Jetstream2's
+automatic DNS name with a real certificate). The pickup runs from the
+Test-Instances runner host.
 
 ### 4. Golden images
 
@@ -334,12 +342,13 @@ may be created, and there is none: a share can be as large as the remaining
 allocation total. Each user share is still capped at 100 GB, because that is the
 size it is created with, and CephFS enforces a share's size as a hard limit.
 
-A production rollout needs a higher share count and total. At 73 team members,
-the first reconciliation alone provisions 73 shares and 7,300 GB, against
-today's 50 shares and roughly 1,100 GB free. The increase has been requested;
-**do not enable the reconciliation in production until it lands**, or most
-members would get an admin alert instead of a share. Size the request for
-growth, not just today's members. Testing fits the Test-Instances allocation.
+A production rollout needs a higher share count and total. With on-demand
+creation, usage grows with the members who ask for storage rather than all at
+once, but 73 team members at 100 GB each is still 7,300 GB against today's 50
+shares and roughly 1,100 GB free. The increase has been requested; **do not open
+the portal in production until it lands**, or requests past the quota fail with
+an admin alert instead of a share. Size the request for growth. Testing fits the
+Test-Instances allocation.
 
 ## Test plan (Test-Instances, BIO240357_IU)
 
@@ -362,17 +371,25 @@ Run before building anything permanent.
    share; check both files arrive intact.
 10. Fill the share past 100 GB: a clear error both on the instance and in the
     browser.
-11. Run the reconciliation for an allowlisted test account: share created,
-    welcome sent once, and a second run changes nothing.
+11. Portal create: a share is created once; a repeated or retried request reuses
+    it and never makes a second one. **Passed 2026-09-26** (with test IDs, since
+    deleted).
 12. Share reuse across request issues: create an instance from one issue, save a
     file to the Desktop, `/delete_all`, open a new issue, `/create`; the same
-    Desktop reappears. Also `/create` for an account the reconciliation has not
-    reached yet: the share is created inline.
+    Desktop reappears. Also `/create` for an account with no share yet: the
+    share is created inline.
 13. Rotate the key of a share mounted on a running instance: record whether the
     active mount survives the denied rule, and confirm the instance mounts with
     the new key after a reboot.
-14. Confirm the name the sign-in proxy passes to copyparty is the numeric GitHub
-    ID, not the login.
+14. Confirm the name passed to copyparty is the numeric GitHub ID, not the
+    login. **Passed 2026-09-26.**
+15. Reset: wrong phrase and bad form token refused; a real reset empties only
+    the user's own share; a reset while the share is unmounted is refused,
+    alerts the admins, and the worker remounts the share with data intact.
+    **Passed 2026-09-26.**
+
+Test 7 (isolation between two users, including URL-encoded and `../` paths) also
+**passed 2026-09-26**.
 
 ## Out of scope for now
 
