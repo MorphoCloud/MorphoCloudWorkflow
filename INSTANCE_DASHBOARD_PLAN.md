@@ -211,6 +211,39 @@ Rejected: encrypted in the portal database (token and key both on disk).
 Nothing open. Renew (decision 4) and the expiry dates (decision 17) were decided
 on 2026-09-26. Anything new needs the maintainer's decision before it is added.
 
+## Later: one site (agreed direction, 2026-09-26)
+
+MorphoCloud should have one front door, morphocloud.org, whose page adapts to
+the visitor's state, instead of three places (morphocloud.org, join, the data
+portal) with two different sign-ins. Built when shares move to production (after
+the prototype is adopted and the quota increase lands), not before.
+
+**States of the one page:**
+
+| State                       | Page shows                                                         |
+| --------------------------- | ------------------------------------------------------------------ |
+| Visitor                     | What MorphoCloud is, availability, "Sign in with GitHub"           |
+| Signed in, not a member     | The application: verify ORCID and email, fill the form             |
+| Applied, invitation pending | "Accept your invitation" with a link to it                         |
+| Member                      | The dashboard: instance and storage cards (later the support card) |
+
+- **Sign in with GitHub first.** The application then knows the applicant's real
+  GitHub account instead of a typed username; ORCID becomes a verification step
+  inside the application.
+- **One front door, two services behind it.** The public app (anonymous traffic,
+  the application form, the Google credentials and the GitHub App that manages
+  org membership) and the storage and instance service (every share's key and
+  mount) stay on separate VMs. A reverse proxy routes the dashboard's actions
+  and `/files` to the storage service and everything else to the front door, as
+  the portal already does for `/files`. A bug in the public form must not be
+  able to reach anyone's files.
+- **One sign-in both services trust:** a shared signed session, or the front
+  door vouching for the user to the storage service.
+- **Unchanged addresses:** the email lookup API the workflows call keeps a
+  stable path.
+- **Applicant state** comes from data that already exists: the application sheet
+  and the org membership.
+
 ## Later: support chatbot (idea, not planned)
 
 Requested 2026-09-26, for later. A third card on the page, below the instance
