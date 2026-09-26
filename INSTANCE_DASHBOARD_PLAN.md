@@ -25,7 +25,7 @@ this table is updated first.
 | 3   | No Data drop entry. The data portal replaces it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 4   | Buttons: **Create**, **Shelve**, **Unshelve**, **Renew**, **Delete**. Renew runs `/renew` and is shown only while an extension is left (as `/renew` itself decides). Delete runs `/delete_instance` only, always asks for confirmation first, and the request is **closed by the workflow** once the delete has finished (share mode; see STORAGE_REDESIGN_PLAN.md). It never touches a data volume; volumes go away with the storage redesign (per-user shares). Revised 2026-09-25.                                                                                                                                                                             |
 | 5   | The **passphrase is shown** on the dashboard, behind GitHub sign-in.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| 6   | **Every Create opens a new request** and runs `/create` in one step, with the flavor chosen on the portal each time. A request is one instance's lifetime: the portal never runs `/create` on an existing request. Revised 2026-09-25 (this is how users change flavor). Built 2026-09-26: a request left without an instance (for example a failed create) never blocks the next Create.                                                                                                                                                                                                                                                                         |
+| 6   | **Every Create opens a new request** and runs `/create` in one step, with the flavor chosen on the portal each time. A request is one instance's lifetime: the portal never runs `/create` on an existing request. Revised 2026-09-25 (this is how users change flavor).                                                                                                                                                                                                                                                                                                                                                                                          |
 | 7   | GitHub issues and workflows stay the engine and the audit trail. The portal does not start, stop or change instances itself.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | 8   | **Primary path:** sign-in moves to a MorphoCloud **GitHub App**, and buttons post the command (`/shelve`, …) on the user's issue **as the user**. The existing workflow checks apply.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | 9   | **Backup / second test:** the portal checks that the user owns the issue, then the bot runs the existing `*-from-workflow` dispatch workflows. Built only if needed, or as a comparison.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -38,7 +38,6 @@ this table is updated first.
 | 16  | **Availability banner:** one line at the very top with every instance type and its current Jetstream2 vacancy, colored as on morphocloud.org (4+ green, 1–3 yellow, 0 red, unknown grey). The numbers come from a read-only endpoint on morphocloud.org, the same source as its landing page. Hidden when that endpoint cannot be reached.                                                                                                                                                                                                                                                                                                                        |
 | 17  | **Expiry dates**, shown separately: the instance (90 days after the request, 180 after `/renew`, computed from the issue's `expiration:*` and `renewed:*` labels exactly as the expiry sweep does) and the storage (180 days after the share was created, shown as "kept until at least"; nothing enforces it yet, see STORAGE_REDESIGN_PLAN.md decision 7).                                                                                                                                                                                                                                                                                                      |
 | 18  | **Only the portal (and admins) drive instances.** GitHub cannot stop members from opening issues or commenting, so the workflows act only on what came through the portal: a command runs only if its comment was made through the MorphoCloud Portal app (GitHub's own `performed_via_github_app` field, which users cannot fake) or by an admin, and an issue opened directly on GitHub is closed with a pointer to the portal. Issues stay readable for diagnosis. Agreed 2026-09-26; not built yet (with the next production step). Taking GitHub out of users' view entirely (bot-only posting, owner recorded in the issue) belongs with the one-site work. |
-| 15  | The GitHub App is **public** ("Any account"), so people who have not joined can authorize it and see the portal's "Not a MorphoCloud member" page with the join link. The portal's team check is the gate. The app has **no private key**.                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ## Sign-in (decision 8)
 
@@ -55,8 +54,6 @@ GitHub App settings:
 - Repository permissions: **Issues: read and write**; **Contents: read-only**
   (the portal reads the instance types from the request form)
 - Organization permissions: **Members: read** (team check)
-- Where can this GitHub App be installed: **Any account** (decision 15)
-- Private keys: **none**
 - Where can this GitHub App be installed: **Any account** (decision 15)
 - Private keys: **none**
 - Installed on **Test-Instances only**
@@ -89,15 +86,18 @@ once the GitHub App works.
 - State from `status:*` labels: `status:active` → active; `status:shelved` or
   `status:shelved_offloaded` → shelved; `status:deleted` or no label → no
   instance. Any other label is shown as-is with the issue link.
-- Buttons match the state: active → Shelve and Delete; shelved → Unshelve and
-  Delete; no instance → none (the Create form below applies). After a press, the
-  card names the action ("Shelving…", "Creating…") and the buttons are hidden
-  until the workflow reacts on the command comment (👍 finished, 👎 failed; see
-  `report-command-outcome`), at most 3 hours. A failed command is noted on the
-  card for a day.
-- Delete opens a confirmation page: "This removes your instance. Anything saved
-  only on the instance is lost. Your files in your storage are not affected."
-  with **Delete instance** and **Cancel**.
+- Buttons match the state: active → Shelve, Renew and Delete; shelved →
+  Unshelve, Renew and Delete (Renew only while an extension is left); no
+  instance → none (the Create form below applies); no storage → no buttons and
+  no Create form, only "Create your storage first to enable your instance".
+  After a press, the card names the action ("Shelving…", "Creating…") and the
+  buttons are hidden until the workflow reacts on the command comment (👍
+  finished, 👎 failed; see `report-command-outcome`), at most 3 hours. A failed
+  command is noted on the card for a day.
+- Delete asks for confirmation in a dialog (a confirmation page without
+  JavaScript): "This removes your instance. Anything saved only on the instance
+  is lost. Your files in your storage are not affected." with **Delete
+  instance** and **Cancel**.
 - After a successful delete, the workflow closes the request (share mode), the
   same for Delete on the portal and `/delete_instance` typed on GitHub. If the
   delete failed, the request stays open.
@@ -282,9 +282,17 @@ and storage cards: a support assistant that helps users diagnose problems.
 
 1. Sign in with the GitHub App; non-members are refused.
 2. First Create: issue opened, `/create` runs, card turns active, access details
-   and passphrase shown.
+   and passphrase shown. **Passed 2026-09-26** (Test-Instances#441).
 3. Shelve and Unshelve from the dashboard; the new address appears after
-   unshelve.
+   unshelve. **Passed 2026-09-26** (Test-Instances#438).
 4. The issue timeline shows the commands as posted by the user.
 5. A second user cannot see or act on the first user's instance.
 6. Backup path (decision 9) run once as a comparison.
+7. Delete: the confirmation, the clean shutdown, the request closes itself, and
+   the Create form comes back.
+8. Renew once: the expiry date moves to the next rung and the button disappears.
+9. Storage first: without storage the instance card only asks for it, and
+   `/create` on GitHub refuses. **The refusal passed 2026-09-26** (as amm554,
+   Test-Instances#443).
+10. A failed create (for example a type the allocation lacks) leaves the Create
+    form available; creating replaces the empty request.
