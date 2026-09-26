@@ -27,6 +27,7 @@ this table is updated first.
 | 10  | The portal gets **no OpenStack credentials**. State comes from the issue's `status:*` labels. Access details are pushed to the portal by the workflow over the restricted SSH channel.   |
 | 11  | Individual instances only. Courses and workshops are out of scope.                                                                                                                       |
 | 12  | A portal-opened issue is opened with the **user's token** (the user stays the author); the bot adds the labels, and the request handler also runs on the `labeled` event.                |
+| 13  | The user's GitHub token is kept **in the portal's memory only**: never on disk, never in the cookie. A portal restart signs everyone out.                                                |
 
 ## Sign-in (decision 8)
 
@@ -44,8 +45,8 @@ GitHub App settings:
 - Organization permissions: **Members: read** (team check)
 - Installed on **Test-Instances only**
 
-Where the user's token is kept between sign-in and a button press is an open
-question (below). The OAuth App is retired once the GitHub App works.
+The user's token is kept in memory only (decision 13). The OAuth App is retired
+once the GitHub App works.
 
 ## What the page shows
 
@@ -86,22 +87,18 @@ handler must run exactly once per issue.
 Rejected: the bot opens the issue and assigns the user. Every check that uses
 the issue author would need rewriting.
 
-## Open question to settle before building
+## User token (decision 13)
 
-**Where the user's token lives.** Today the data portal uses the sign-in token
-once (to read the user and check the team) and throws it away; the browser
-cookie holds only the user ID, login and a form token. Posting a command later
-needs the token again. Never in the cookie: it is signed, not encrypted, so
-anyone holding the cookie could read the token. Options:
+Posting a command after sign-in needs the user's GitHub token. It is kept **in
+the portal process's memory only**, keyed by a random session ID in the cookie.
+It is never written to disk and never put in the cookie (the cookie is signed,
+not encrypted).
 
-- **Memory only** (recommended): kept in the portal process, keyed by a random
-  session ID in the cookie. Nothing on disk. A portal restart signs everyone
-  out.
-- **Encrypted in the portal database**: survives restarts, but the token and its
-  key sit on disk.
+- Dropped on sign-out, after 8 hours, or when GitHub rejects it.
+- The refresh token is not kept; the user signs in again.
+- A portal restart signs everyone out. Accepted.
 
-Either way it is dropped on sign-out, after 8 hours, or when GitHub rejects it.
-The refresh token is not kept; the user signs in again.
+Rejected: encrypted in the portal database (token and key both on disk).
 
 ## Security
 
