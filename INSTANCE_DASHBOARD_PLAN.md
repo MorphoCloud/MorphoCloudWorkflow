@@ -65,8 +65,9 @@ once the GitHub App works.
 - Delete opens a confirmation page: "This removes your instance. Anything saved
   only on the instance is lost. Your files in your storage are not affected."
   with **Delete instance** and **Cancel**.
-- No open request → a **Create instance** button with the flavor list from the
-  request form.
+- No open request → a **Create instance** button with radio buttons for the
+  instance types, read from the request form. Create on an existing request
+  (after Delete) reuses that request's flavor.
 
 ## Access details (decisions 5, 10)
 
