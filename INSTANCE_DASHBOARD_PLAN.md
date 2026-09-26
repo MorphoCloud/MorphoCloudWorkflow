@@ -206,10 +206,10 @@ Rejected: encrypted in the portal database (token and key both on disk).
 - The data portal's rules carry over unchanged: nothing here can reset,
   overwrite or delete a user's share.
 
-## Not decided (not in the first version)
+## Not decided
 
-Renew and an expiration display. Each needs the maintainer's decision before it
-is added.
+Nothing open. Renew (decision 4) and the expiry dates (decision 17) were decided
+on 2026-09-26. Anything new needs the maintainer's decision before it is added.
 
 ## Later: support chatbot (idea, not planned)
 
