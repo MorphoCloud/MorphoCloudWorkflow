@@ -13,21 +13,21 @@ instruction.
 Agreed 2026-09-25. Changing any of these needs the maintainer's approval, and
 this table is updated first.
 
-| #   | Decision                                                                                                                                                                                 |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | The dashboard is part of the data portal: same VM, same sign-in, same page as the storage card.                                                                                          |
-| 2   | Each instance card shows the **state** (no instance, active, shelved), the **access details** (Web connect, SSH, TurboVNC) and a **link to the request issue** for diagnostics.          |
-| 3   | No Data drop entry. The data portal replaces it.                                                                                                                                         |
-| 4   | Buttons: **Create**, **Shelve**, **Unshelve**. Nothing else in the first version.                                                                                                        |
-| 5   | The **passphrase is shown** on the dashboard, behind GitHub sign-in.                                                                                                                     |
-| 6   | The first **Create** opens the request issue and runs `/create` in one step. The user picks the flavor on the portal. There is no separate "request" step.                               |
-| 7   | GitHub issues and workflows stay the engine and the audit trail. The portal does not start, stop or change instances itself.                                                             |
-| 8   | **Primary path:** sign-in moves to a MorphoCloud **GitHub App**, and buttons post the command (`/shelve`, …) on the user's issue **as the user**. The existing workflow checks apply.    |
-| 9   | **Backup / second test:** the portal checks that the user owns the issue, then the bot runs the existing `*-from-workflow` dispatch workflows. Built only if needed, or as a comparison. |
-| 10  | The portal gets **no OpenStack credentials**. State comes from the issue's `status:*` labels. Access details are pushed to the portal by the workflow over the restricted SSH channel.   |
-| 11  | Individual instances only. Courses and workshops are out of scope.                                                                                                                       |
-| 12  | A portal-opened issue is opened with the **user's token** (the user stays the author); the bot adds the labels, and the request handler also runs on the `labeled` event.                |
-| 13  | The user's GitHub token is kept **in the portal's memory only**: never on disk, never in the cookie. A portal restart signs everyone out.                                                |
+| #   | Decision                                                                                                                                                                                                       |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | The dashboard is part of the data portal: same VM, same sign-in, same page as the storage card.                                                                                                                |
+| 2   | Each instance card shows the **state** (no instance, active, shelved), the **access details** (Web connect, SSH, TurboVNC) and a **link to the request issue** for diagnostics.                                |
+| 3   | No Data drop entry. The data portal replaces it.                                                                                                                                                               |
+| 4   | Buttons: **Create**, **Shelve**, **Unshelve**. Nothing else in the first version.                                                                                                                              |
+| 5   | The **passphrase is shown** on the dashboard, behind GitHub sign-in.                                                                                                                                           |
+| 6   | The first **Create** opens the request issue and runs `/create` in one step. The user picks the flavor on the portal. There is no separate "request" step.                                                     |
+| 7   | GitHub issues and workflows stay the engine and the audit trail. The portal does not start, stop or change instances itself.                                                                                   |
+| 8   | **Primary path:** sign-in moves to a MorphoCloud **GitHub App**, and buttons post the command (`/shelve`, …) on the user's issue **as the user**. The existing workflow checks apply.                          |
+| 9   | **Backup / second test:** the portal checks that the user owns the issue, then the bot runs the existing `*-from-workflow` dispatch workflows. Built only if needed, or as a comparison.                       |
+| 10  | The portal gets **no OpenStack credentials**. State comes from the issue's `status:*` labels. Access details are pushed to the portal by the workflow over the restricted SSH channel.                         |
+| 11  | Individual instances only. Courses and workshops are out of scope.                                                                                                                                             |
+| 12  | A portal-opened issue is opened with the **user's token** (the user stays the author). A workflow adds the form's three labels plus `request-source:portal`, and the request handler runs once, on that label. |
+| 13  | The user's GitHub token is kept **in the portal's memory only**: never on disk, never in the cookie. A portal restart signs everyone out.                                                                      |
 
 ## Sign-in (decision 8)
 
@@ -74,15 +74,50 @@ restricted SSH channel as share creation, with one new command in the gate.
 
 ## Portal-opened issues (decision 12)
 
-The request handler and `/create` run only when the issue already has the
-`request-type:instance` label. GitHub drops labels on issues opened through the
-API by users without write access, so an issue the portal opens with the user's
-token arrives unlabeled. The bot adds the labels, and the handler also runs on
-the `labeled` event. The user stays the issue author, so the team check, the
-per-user limit and the `/create` allowlist work unchanged.
+The request form adds three labels, and the workflows depend on all of them:
 
-Issues opened from the request form fire both `opened` and `labeled`, so the
-handler must run exactly once per issue.
+- `request-type:instance` and `request-creator:user`: the request handler
+  (`on-instance-request-opened.yml`) and `/create`.
+- `instance-request`: `/shelve`, `/unshelve`, the credentials email, and the
+  close guard.
+
+GitHub drops labels on issues opened through the API by users without write
+access, so an issue the portal opens with the user's token arrives unlabeled.
+The user stays the author, so the team check, the per-user limit and the command
+allowlists work unchanged once the labels are on.
+
+Workflow changes (to be built; none of this exists yet):
+
+1. The portal writes a marker line in the issue body.
+2. A new labeler workflow runs on `issues: opened`. When the body has the marker
+   and the issue has no `request-type:*` label, it adds, in one call, the three
+   form labels plus `request-source:portal`, using the workflow GitHub App
+   token. A GitHub App token is used because label changes made with
+   `GITHUB_TOKEN` do not trigger other workflows.
+3. The request handler gains an `issues: labeled` trigger that runs **only when
+   the label just added is `request-source:portal`**. Form-opened issues never
+   get that label, so they run once, on `opened`. Portal-opened issues run once,
+   on that label. The existing per-issue concurrency group still applies.
+4. `request-source:portal` is added to `labels.yml`.
+
+Someone could put the marker in an issue opened by hand through the API. That
+issue would get the same labels and the same checks as a form request, so it
+gains nothing.
+
+The portal holds no GitHub App private key; only the workflows label.
+
+**Order of the first Create.** The portal opens the issue, then waits for the
+handler's result before posting `/create`:
+
+- "Instance request validated" comment → post `/create`.
+- Issue closed (not a member, or over the per-user limit) → show the handler's
+  message and the issue link. `/create` is not posted.
+
+The per-user limit counts open individual **and** course-instance requests by
+the same author, as it does today.
+
+Both paths (decisions 8 and 9) open the first issue with the user's token. The
+backup path changes only how commands run later.
 
 Rejected: the bot opens the issue and assigns the user. Every check that uses
 the issue author would need rewriting.
