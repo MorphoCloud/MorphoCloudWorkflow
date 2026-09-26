@@ -9,6 +9,10 @@ name: "Label Portal Request"
 # It must use the workflow app token: label changes made with GITHUB_TOKEN do
 # not trigger other workflows, so the handler would silently never run.
 #
+# The marker is the last line of the body: at the start it crashes the
+# issue-form parser (HTML before the first heading), after a heading it is
+# ignored.
+#
 # Anyone could put the marker in an issue opened through the API by hand; that
 # issue gets the same labels and the same checks as a form request.
 #
@@ -27,7 +31,7 @@ jobs:
   label:
     runs-on: ubuntu-latest
     if:
-      ${{ startsWith(github.event.issue.body, '<!-- morphocloud-portal -->') &&
+      ${{ contains(github.event.issue.body, '<!-- morphocloud-portal -->') &&
       !contains(join(github.event.issue.labels.*.name, ','), 'request-type:') }}
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0

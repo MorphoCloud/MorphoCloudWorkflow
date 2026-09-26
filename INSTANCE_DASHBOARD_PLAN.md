@@ -63,6 +63,10 @@ once the GitHub App works.
 
 ## What the page shows
 
+- The link on each card reads "Go to Issue N for full history".
+- While an instance is being created, the card shows the steps from the issue's
+  "Instance Creation Progress" comment (✅ done, ⏳ in progress). The volume
+  column is not shown, and "Attach volume" reads "Storage".
 - One card per open individual request the user opened. The per-user instance
   limit is still enforced by the workflows
   (`MORPHOCLOUD_MAX_INSTANCES_PER_USER`).
@@ -119,12 +123,16 @@ allowlists work unchanged once the labels are on.
 
 Workflow changes:
 
-1. The portal writes a marker line in the issue body.
-2. A new labeler workflow runs on `issues: opened`. When the body has the marker
-   and the issue has no `request-type:*` label, it adds the three form labels,
-   then, in a second call, `request-source:portal`. The handler reads the other
-   labels from that event's payload, so they must already be on the issue. It
-   uses the workflow GitHub App token (`vars.MORPHOCLOUD_WORKFLOW_APP_ID` +
+1. The portal writes a marker line, `<!-- morphocloud-portal -->`, at the
+   **end** of the issue body. At the start it crashes the issue-form parser
+   (`zentered/issue-forms-body-parser` fails on HTML before the first heading;
+   found 2026-09-26 on Test-Instances#440); after a heading it is ignored.
+2. A new labeler workflow runs on `issues: opened`. When the body contains the
+   marker and the issue has no `request-type:*` label, it adds the three form
+   labels, then, in a second call, `request-source:portal`. The handler reads
+   the other labels from that event's payload, so they must already be on the
+   issue. It uses the workflow GitHub App token
+   (`vars.MORPHOCLOUD_WORKFLOW_APP_ID` +
    `secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY`, as the request handler does).
    It **must not** use `GITHUB_TOKEN`: label changes made with it do not trigger
    other workflows, so the handler would never run and nothing would report an
