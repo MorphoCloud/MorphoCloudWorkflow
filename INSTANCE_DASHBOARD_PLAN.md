@@ -118,8 +118,11 @@ The portal reads the `### Validation Results` comment posted by
 - It contains `Instance request validated` → post `/create`.
 - It contains `The validation checks failed` → show that and the issue link.
   `/create` is not posted.
-- Issue closed (not a member, or over the per-user limit) → show the handler's
-  message and the issue link. `/create` is not posted.
+- Issue closed (not a member, or over the per-user limit; no validation comment
+  is posted in these cases) → show "Your request was closed" and the issue link,
+  where the reason is. `/create` is not posted. The portal checks the issue's
+  open/closed state on every poll, so this shows at once, and it does not parse
+  the close-reason comment.
 - None of these within 10 minutes → show "Something went wrong" with the issue
   link, and email the admins. `/create` is not posted.
 
