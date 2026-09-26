@@ -8,6 +8,11 @@ in once and see their storage and their instances on one page.
 Built and tested on **Test-Instances only**. Production needs explicit
 instruction.
 
+**Status (2026-09-25):** paused. The share-based provisioning prototype
+(STORAGE_REDESIGN_PLAN.md) comes first; many instance-management choices depend
+on whether data stays on volumes or moves to shares. Decisions 4 and 6 (revised)
+are not built yet.
+
 ## Decisions
 
 Agreed 2026-09-25. Changing any of these needs the maintainer's approval, and
@@ -30,6 +35,7 @@ this table is updated first.
 | 13  | The user's GitHub token is kept **in the portal's memory only**: never on disk, never in the cookie. A portal restart signs everyone out.                                                                                                                                                                     |
 | 14  | **One instance per user.** With per-user shares, two instances would mount the same share at once. The portal offers Create instance only when the user has no open request, and never a second one.                                                                                                          |
 | 15  | The GitHub App is **public** ("Any account"), so people who have not joined can authorize it and see the portal's "Not a MorphoCloud member" page with the join link. The portal's team check is the gate. The app has **no private key**.                                                                    |
+| 15  | The GitHub App is **public** ("Any account"), so people who have not joined can authorize it and see the portal's "Not a MorphoCloud member" page with the join link. The portal's team check is the gate. The app has **no private key**.                                                                    |
 
 ## Sign-in (decision 8)
 
@@ -45,6 +51,8 @@ GitHub App settings:
 - Webhook: **off**
 - Repository permissions: **Issues: read and write**
 - Organization permissions: **Members: read** (team check)
+- Where can this GitHub App be installed: **Any account** (decision 15)
+- Private keys: **none**
 - Where can this GitHub App be installed: **Any account** (decision 15)
 - Private keys: **none**
 - Installed on **Test-Instances only**
