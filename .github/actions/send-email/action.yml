@@ -131,6 +131,35 @@ runs:
         UPLOAD_URL: ${{ steps.upload_page.outputs.upload_url }}
         PASSPHRASE: ${{ steps.instance_metadata.outputs.instance_pwd }}
 
+    # The data portal's instance dashboard shows the same access details as
+    # this email. Only a runner set up for the portal has
+    # ~/mc-data/portal_target (Test-Instances); everywhere else this is a no-op.
+    # Never fails the email: a failure is reported on the issue instead.
+    - name: Send access details to the portal
+      shell: bash
+      run: |
+        target_file="$HOME/mc-data/portal_target"
+        [[ -s "$target_file" ]] || exit 0
+        payload=$(jq -n --argjson issue "$ISSUE_NUMBER" --arg login "$ISSUE_CREATOR" \
+          --arg instance_name "$INSTANCE_NAME" --arg web_url "$CONNECTION_URL" \
+          --arg ip "$INSTANCE_IP" --arg passphrase "$PASSPHRASE" \
+          '{issue: $issue, login: $login, instance_name: $instance_name,
+            web_url: $web_url, ip: $ip, passphrase: $passphrase}')
+        if ! printf '%s' "$payload" | ssh -o BatchMode=yes -o ConnectTimeout=15 \
+            "$(cat "$target_file")" connection "$ISSUE_NUMBER"; then
+          echo "::warning ::Could not send the access details to the data portal."
+          gh issue comment "$ISSUE_NUMBER" --body "The access details could not be shown on the data portal. They are in your email." || true
+        fi
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.instance_issue_number }}
+        ISSUE_CREATOR: ${{ inputs.issue_creator }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
+        INSTANCE_IP: ${{ steps.instance_metadata.outputs.instance_ip }}
+        CONNECTION_URL: ${{ steps.guacamole.outputs.connection_url }}
+        PASSPHRASE: ${{ steps.instance_metadata.outputs.instance_pwd }}
+
     - name: Send mail
       uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
       with:

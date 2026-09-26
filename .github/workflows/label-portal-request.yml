@@ -1,0 +1,56 @@
+name: "Label Portal Request"
+
+# The data portal opens an individual instance request with the user's own
+# token, so the user stays the issue author. GitHub drops labels set through
+# the API by users without write access, so the issue arrives unlabeled and
+# the request handler would never run. This adds the request form's labels,
+# then `request-source:portal`, on which on-instance-request-opened.yml runs.
+#
+# It must use the workflow app token: label changes made with GITHUB_TOKEN do
+# not trigger other workflows, so the handler would silently never run.
+#
+# Anyone could put the marker in an issue opened through the API by hand; that
+# issue gets the same labels and the same checks as a form request.
+#
+# See INSTANCE_DASHBOARD_PLAN.md (decision 12).
+
+on:
+  issues:
+    types:
+      - opened
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    if:
+      ${{ startsWith(github.event.issue.body, '<!-- morphocloud-portal -->') &&
+      !contains(join(github.event.issue.labels.*.name, ','), 'request-type:') }}
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      # Two calls: the handler starts on the second label and reads the first
+      # three from its event payload, so they must already be on the issue.
+      - name: Add the request form labels
+        run: |
+          gh issue edit "$ISSUE_NUMBER" \
+            --add-label "request-type:instance,request-creator:user,instance-request"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+      - name: Start the request handler
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --add-label "request-source:portal"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}

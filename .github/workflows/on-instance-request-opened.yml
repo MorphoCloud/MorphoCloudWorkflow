@@ -3,6 +3,12 @@ on:
   issues:
     types:
       - opened
+      # Issues opened from the data portal arrive unlabeled (GitHub drops
+      # labels set through the API by users without write access);
+      # label-portal-request.yml labels them and this run starts on its
+      # `request-source:portal` label. Every job is guarded so no other
+      # `labeled` event does anything.
+      - labeled
 
 permissions:
   issues: write
@@ -25,15 +31,23 @@ permissions:
 # and sharing one group is what let /create acquire that lock at queue time and
 # overtake an in-flight /delete_all (#290).
 concurrency:
-  group: morphocloud-instance-open-${{ github.event.issue.number }}
+  # `labeled` events that are not the portal label get a group of their own,
+  # so they never take the pending slot of a real run for this issue.
+  group:
+    ${{ (github.event.action == 'opened' || github.event.label.name ==
+    'request-source:portal') && format('morphocloud-instance-open-{0}',
+    github.event.issue.number) ||
+    format('morphocloud-instance-open-ignored-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:
   check-instance-team-membership:
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ (github.event.action == 'opened' || github.event.label.name ==
+      'request-source:portal') && contains(github.event.issue.labels.*.name,
+      'request-type:instance') && contains(github.event.issue.labels.*.name,
+      'request-creator:user') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -104,8 +118,10 @@ jobs:
     needs: [check-instance-team-membership]
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ (github.event.action == 'opened' || github.event.label.name ==
+      'request-source:portal') && contains(github.event.issue.labels.*.name,
+      'request-type:instance') && contains(github.event.issue.labels.*.name,
+      'request-creator:user') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -185,8 +201,10 @@ jobs:
         call-request-initial-comments,
       ]
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ (github.event.action == 'opened' || github.event.label.name ==
+      'request-source:portal') && contains(github.event.issue.labels.*.name,
+      'request-type:instance') && contains(github.event.issue.labels.*.name,
+      'request-creator:user') }}
     uses: ./.github/workflows/validate-request.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
@@ -195,8 +213,10 @@ jobs:
   check-workshop-organizer-membership:
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ (github.event.action == 'opened' || github.event.label.name ==
+      'request-source:portal') && contains(github.event.issue.labels.*.name,
+      'request-type:workshop') && contains(github.event.issue.labels.*.name,
+      'request-creator:user') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -330,8 +350,10 @@ jobs:
     needs: [check-workshop-organizer-membership]
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ (github.event.action == 'opened' || github.event.label.name ==
+      'request-source:portal') && contains(github.event.issue.labels.*.name,
+      'request-type:workshop') && contains(github.event.issue.labels.*.name,
+      'request-creator:user') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -454,8 +476,10 @@ jobs:
   call-validate-request-workshop:
     needs: [check-workshop-organizer-membership, validate-workshop-schedule]
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ (github.event.action == 'opened' || github.event.label.name ==
+      'request-source:portal') && contains(github.event.issue.labels.*.name,
+      'request-type:workshop') && contains(github.event.issue.labels.*.name,
+      'request-creator:user') }}
     uses: ./.github/workflows/validate-request.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
@@ -464,8 +488,10 @@ jobs:
   call-request-notify-admin-workshop:
     needs: [check-workshop-organizer-membership, validate-workshop-schedule]
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ (github.event.action == 'opened' || github.event.label.name ==
+      'request-source:portal') && contains(github.event.issue.labels.*.name,
+      'request-type:workshop') && contains(github.event.issue.labels.*.name,
+      'request-creator:user') }}
     uses: ./.github/workflows/request-notify-admin-workshop.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
@@ -474,8 +500,10 @@ jobs:
   call-request-labeler:
     needs: [check-instance-team-membership, check-instance-quota]
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ (github.event.action == 'opened' || github.event.label.name ==
+      'request-source:portal') && contains(github.event.issue.labels.*.name,
+      'request-type:instance') && contains(github.event.issue.labels.*.name,
+      'request-creator:user') }}
     uses: ./.github/workflows/request-labeler.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
@@ -484,8 +512,10 @@ jobs:
   call-request-initial-comments:
     needs: [check-instance-team-membership, check-instance-quota]
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ (github.event.action == 'opened' || github.event.label.name ==
+      'request-source:portal') && contains(github.event.issue.labels.*.name,
+      'request-type:instance') && contains(github.event.issue.labels.*.name,
+      'request-creator:user') }}
     uses: ./.github/workflows/request-initial-comments.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
@@ -495,8 +525,10 @@ jobs:
     needs: [check-instance-team-membership, check-instance-quota]
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name, 'request-type:instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ (github.event.action == 'opened' || github.event.label.name ==
+      'request-source:portal') && contains(github.event.issue.labels.*.name,
+      'request-type:instance') && contains(github.event.issue.labels.*.name,
+      'request-creator:user') }}
     steps:
       - name: Rename issue to canonical title
         run: |

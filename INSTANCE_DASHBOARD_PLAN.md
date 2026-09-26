@@ -66,7 +66,10 @@ once the GitHub App works.
 
 The workflow step that sends the credentials email also sends the Web connect,
 SSH and TurboVNC details and the passphrase to the portal. It uses the same
-restricted SSH channel as share creation, with one new command in the gate.
+restricted SSH channel as share creation, with two new commands in the gate
+(`connection` and `connection-clear`). Only a runner with
+`~/mc-data/portal_target` sends them (the Test-Instances runner); on every other
+runner the steps do nothing.
 
 - Replaced on every create and unshelve (the address changes).
 - Cleared on shelve and delete.
@@ -86,13 +89,14 @@ access, so an issue the portal opens with the user's token arrives unlabeled.
 The user stays the author, so the team check, the per-user limit and the command
 allowlists work unchanged once the labels are on.
 
-Workflow changes (to be built; none of this exists yet):
+Workflow changes:
 
 1. The portal writes a marker line in the issue body.
 2. A new labeler workflow runs on `issues: opened`. When the body has the marker
-   and the issue has no `request-type:*` label, it adds, in one call, the three
-   form labels plus `request-source:portal`, using the workflow GitHub App token
-   (`vars.MORPHOCLOUD_WORKFLOW_APP_ID` +
+   and the issue has no `request-type:*` label, it adds the three form labels,
+   then, in a second call, `request-source:portal`. The handler reads the other
+   labels from that event's payload, so they must already be on the issue. It
+   uses the workflow GitHub App token (`vars.MORPHOCLOUD_WORKFLOW_APP_ID` +
    `secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY`, as the request handler does).
    It **must not** use `GITHUB_TOKEN`: label changes made with it do not trigger
    other workflows, so the handler would never run and nothing would report an
@@ -100,7 +104,9 @@ Workflow changes (to be built; none of this exists yet):
 3. The request handler gains an `issues: labeled` trigger that runs **only when
    the label just added is `request-source:portal`**. Form-opened issues never
    get that label, so they run once, on `opened`. Portal-opened issues run once,
-   on that label. The existing per-issue concurrency group still applies.
+   on that label. The existing per-issue concurrency group still applies; every
+   other `labeled` event gets a group of its own, so it cannot take the pending
+   slot of a real run.
 4. `request-source:portal` is added to `labels.yml`.
 
 Someone could put the marker in an issue opened by hand through the API. That
