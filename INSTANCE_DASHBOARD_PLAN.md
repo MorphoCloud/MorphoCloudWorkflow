@@ -49,7 +49,8 @@ GitHub App settings:
 - Callback URL: `https://<portal host>/auth/callback`
 - Expire user authorization tokens: **on** (8 hours)
 - Webhook: **off**
-- Repository permissions: **Issues: read and write**
+- Repository permissions: **Issues: read and write**; **Contents: read-only**
+  (the portal reads the instance types from the request form)
 - Organization permissions: **Members: read** (team check)
 - Where can this GitHub App be installed: **Any account** (decision 15)
 - Private keys: **none**
