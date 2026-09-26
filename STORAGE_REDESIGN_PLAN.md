@@ -262,6 +262,27 @@ Test-Instances runner host.
   launcher, which would be wrong on a CPU flavor booted from a GPU image.
 - **Slicer upgrade procedure** becomes: rebuild both images.
 
+**Build plan (prototype, Test-Instances, share mode only).** Started 2026-09-26.
+
+- Exosphere, branch `share-prototype`: with `storage_mode=share`, Slicer
+  installs to `/opt/slicer` (not `/media/volume/MyData`, which only exists as a
+  volume mount point in volume mode), the launcher checks `nvidia-smi` at
+  launch, and Slicer's default save folder is `~/Documents` (on the share).
+  Volume mode is unchanged.
+- `cloud-config` passes `storage_mode` and `slicer_install_dir` to ansible;
+  `/create` fills them in.
+- `/create` in share mode picks the image from repository variables:
+  `MORPHOCLOUD_IMAGE_VGPU` for the flavors in `MORPHOCLOUD_VGPU_FLAVORS`
+  (`g3.large`), `MORPHOCLOUD_IMAGE_REGULAR` for all others. An unset image falls
+  back to `Featured-Ubuntu24`, as today.
+- `scripts/bake-image.sh <flavor> <image name>`, run by an admin on the runner:
+  boots the stock image with the same cloud-config, waits for setup to finish,
+  cleans the instance (pitfalls below), shuts it down, snapshots it as a raw
+  image, and deletes the build instance. Each new instance still runs ansible at
+  first boot, which skips the Slicer download because it is already there.
+- Each bake is a real instance for about 20 minutes plus a 60 GB image on the
+  Test-Instances allocation. Bakes run only after approval.
+
 Known bake pitfalls, from the first test image (2026-08-08):
 
 1. **Disable `vncserver@1` during sysprep.** Enabled in an image, it starts
