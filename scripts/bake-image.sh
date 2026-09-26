@@ -50,6 +50,8 @@ sed -i "s|{runner-ssh-public-key}|$(cat ~/.ssh/id_ed25519.pub)|g" "$WORK/cloud-c
 sed -i "s|{session-timeout-hrs}|4|g" "$WORK/cloud-config"
 sed -i 's|\\"guac_enabled\\":true,|\\"guac_enabled\\":true,\\"storage_mode\\":\\"share\\",\\"slicer_install_dir\\":\\"/opt/slicer\\",\\"slicer_default_scene_path\\":\\"/home/exouser/Documents\\",|' "$WORK/cloud-config"
 grep -q 'storage_mode' "$WORK/cloud-config" || { echo "could not add the share-mode variables" >&2; exit 1; }
+# No Data drop in share mode: the data portal replaces it.
+sed -i 's|\\"dropzone_enabled\\":true|\\"dropzone_enabled\\":false|' "$WORK/cloud-config"
 
 log "creating build instance $NAME ($FLAVOR)"
 openstack server create "$NAME" \

@@ -33,6 +33,12 @@ inputs:
   instance_issue_number:
     description: "Reference of the GitHub issue associated with the instance"
     required: true
+  storage_mode:
+    description:
+      "'share' in share mode (Test-Instances): no Data drop line in the email;
+      the data portal replaces it. Empty keeps it (production)."
+    required: false
+    default: ""
   expect_upload_page:
     description:
       "true when the instance was just created with the upload page, so an
@@ -74,6 +80,10 @@ runs:
       id: upload_page
       shell: bash
       run: |
+        if [[ "$STORAGE_MODE" == "share" ]]; then
+          echo "upload_url=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
         # Right after creation the page may still be starting, so retry for
         # up to a minute; on /email and /unshelve one probe is enough.
         attempts=1
@@ -104,6 +114,7 @@ runs:
       env:
         UPLOAD_URL: ${{ steps.guacamole.outputs.upload_url }}
         EXPECT: ${{ inputs.expect_upload_page }}
+        STORAGE_MODE: ${{ inputs.storage_mode }}
         GH_TOKEN: ${{ inputs.token }}
         GH_REPO: ${{ github.repository }}
         ISSUE_NUMBER: ${{ inputs.instance_issue_number }}

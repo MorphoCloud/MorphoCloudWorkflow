@@ -1194,6 +1194,7 @@ runs:
         inputs.command_name == 'unshelve' && inputs.course_team_slug == '' }}
       uses: ./.github/actions/send-email
       with:
+        storage_mode: ${{ inputs.storage_mode }}
         os_cloud: ${{ inputs.os_cloud }}
         token: ${{ inputs.token }}
         email_lookup_url: ${{ inputs.email_lookup_url }}

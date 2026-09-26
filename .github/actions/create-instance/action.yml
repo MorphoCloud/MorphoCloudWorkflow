@@ -355,6 +355,8 @@ runs:
         if [[ "$STORAGE_MODE" == "share" ]]; then
           sed -i 's|\\"guac_enabled\\":true,|\\"guac_enabled\\":true,\\"storage_mode\\":\\"share\\",\\"slicer_install_dir\\":\\"/opt/slicer\\",\\"slicer_default_scene_path\\":\\"/home/exouser/Documents\\",|' ./cloud-config
           grep -q 'storage_mode' ./cloud-config || { echo "::error ::could not add the share-mode ansible variables to cloud-config"; exit 1; }
+          # No Data drop in share mode: the data portal replaces it.
+          sed -i 's|\\"dropzone_enabled\\":true|\\"dropzone_enabled\\":false|' ./cloud-config
           if [[ ",$VGPU_FLAVORS," == *",$INSTANCE_FLAVOR,"* ]]; then
             INSTANCE_IMAGE="${IMAGE_VGPU:-Featured-Ubuntu24}"
           else
