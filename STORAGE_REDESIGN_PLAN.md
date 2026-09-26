@@ -380,6 +380,17 @@ path exactly.
 4. Skipped: the MyData rename, Slicer copy (Slicer stays on the root disk where
    ansible installs it), home relocation, and `.Renviron`.
 
+**Delete in share mode.** Every delete of an instance (`/delete_instance`,
+`/delete_all`, expiry) first shuts it down cleanly and waits up to 3 minutes, so
+everything written to the share is flushed. If it does not stop in time, it is
+deleted anyway and the issue says that changes from the last few seconds may be
+lost. Found by test 4 on 2026-09-26: a file saved about 10 seconds before
+`/delete_instance` came back empty; a hard reset confirmed that unflushed writes
+are lost.
+
+**Known gap:** if Ceph is unreachable at boot, the mount is not retried when it
+comes back; the desktop stays down until the next reboot or unshelve (test 8).
+
 **Not in the prototype** (later, if adopted): golden images (tests 5 and 6 use
 today's image), the failure message shown in place of the desktop (the desktop
 simply does not start), Slicer's DICOM folder, share metadata bookkeeping,
