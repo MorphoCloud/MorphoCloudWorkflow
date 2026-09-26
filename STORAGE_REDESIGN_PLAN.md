@@ -17,25 +17,25 @@ allocation. Nothing here is in production. Tracking issue:
 
 These are settled. Revisit only with new facts, not preference.
 
-| #   | Decision                                                                                                                                                                                                                  |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Each user gets their own 100 GB Manila CephFS share. It replaces the per-instance MyData Cinder volume.                                                                                                                   |
-| 2   | Shares are keyed on the **GitHub numeric user ID**, not the login. Logins can be renamed or reclaimed; the ID never changes.                                                                                              |
-| 3   | The home directory and all settings stay on the instance's root disk. Only the user-facing folders live on the share.                                                                                                     |
-| 4   | A data portal on its own VM provides browser upload and download to each user's share, with GitHub sign-in (members of MorphoCloudUsers only). It works with or without an instance.                                      |
-| 5   | Two golden images, both with the NVIDIA driver: a vGPU (GRID) image for g3.large, and a regular-driver image for every other flavor, including CPU-only.                                                                  |
-| 6   | Slicer and the standard extension set are baked into the images. Extensions a user adds are lost when the instance is recreated. Accepted.                                                                                |
-| 7   | Share lifecycle target is 6 months, renewable. **Start with no expiry** and measure how much accumulates first.                                                                                                           |
-| 8   | No backups. Same as MyData volumes today.                                                                                                                                                                                 |
-| 9   | No migration path from MyData during testing. Designed only if this is adopted.                                                                                                                                           |
-| 10  | The current per-instance upload page ("Data drop") stays in production until this design is adopted.                                                                                                                      |
-| 11  | Workshop instances get no per-attendee share or volume. They use one centralized workshop share.                                                                                                                          |
-| 12  | R libraries live on the root disk. MorphoCloud no longer installs them.                                                                                                                                                   |
-| 13  | Slicer's DICOM database moves to local disk. DICOM is not a common use case.                                                                                                                                              |
-| 14  | Shares are created on demand: a user presses "Create my storage" on the portal, or runs `/create` without one, which creates it automatically. No automatic provisioning of every member.                                 |
-| 16  | Reset empties the share (share and key are kept). Nothing ever deletes or recreates a user's share automatically.                                                                                                         |
-| 15  | The request issue's lifecycle covers the instance only. Volume commands and `volume:*` labels are removed; the share has its own lifecycle.                                                                               |
-| 17  | **One instance per user.** Two instances would mount the same share at once. Enforced with the existing per-user limit (`MORPHOCLOUD_MAX_INSTANCES_PER_USER=1`) when shares are adopted; the data portal offers only one. |
+| #   | Decision                                                                                                                                                                                                                                               |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Each user gets their own 100 GB Manila CephFS share. It replaces the per-instance MyData Cinder volume.                                                                                                                                                |
+| 2   | Shares are keyed on the **GitHub numeric user ID**, not the login. Logins can be renamed or reclaimed; the ID never changes.                                                                                                                           |
+| 3   | The home directory and all settings stay on the instance's root disk. Only the user-facing folders live on the share.                                                                                                                                  |
+| 4   | A data portal on its own VM provides browser upload and download to each user's share, with GitHub sign-in (members of MorphoCloudUsers only). It works with or without an instance.                                                                   |
+| 5   | Two golden images, both with the NVIDIA driver: a vGPU (GRID) image for g3.large, and a regular-driver image for every other flavor, including CPU-only.                                                                                               |
+| 6   | Slicer and the standard extension set are baked into the images. Extensions a user adds are lost when the instance is recreated. Accepted.                                                                                                             |
+| 7   | Share lifecycle target is 6 months, renewable. **Start with no expiry** and measure how much accumulates first.                                                                                                                                        |
+| 8   | No backups. Same as MyData volumes today.                                                                                                                                                                                                              |
+| 9   | No migration path from MyData during testing. Designed only if this is adopted.                                                                                                                                                                        |
+| 10  | The current per-instance upload page ("Data drop") stays in production until this design is adopted.                                                                                                                                                   |
+| 11  | Workshop instances get no per-attendee share or volume. They use one centralized workshop share.                                                                                                                                                       |
+| 12  | R libraries live on the root disk. MorphoCloud no longer installs them.                                                                                                                                                                                |
+| 13  | Slicer's DICOM database moves to local disk. DICOM is not a common use case.                                                                                                                                                                           |
+| 14  | Shares are created on demand: a user presses "Create my storage" on the portal, or runs `/create` without one, which creates it automatically. No automatic provisioning of every member.                                                              |
+| 16  | Reset empties the share (share and key are kept). Nothing ever deletes or recreates a user's share automatically.                                                                                                                                      |
+| 15  | The request issue's lifecycle covers the instance only. Volume commands and `volume:*` labels are removed; the share has its own lifecycle.                                                                                                            |
+| 17  | **One instance per user.** Two instances would mount the same share at once. Enforced with the existing per-user limit, `MORPHOCLOUD_MAX_INSTANCES_PER_USER=1` (set on Test-Instances for the prototype). Admins are exempt from that limit, as today. |
 
 ## Why per-user shares, not one big share with folders
 
@@ -384,9 +384,12 @@ path exactly.
 `/delete_all`, expiry) first shuts it down cleanly and waits up to 3 minutes, so
 everything written to the share is flushed. If it does not stop in time, it is
 deleted anyway and the issue says that changes from the last few seconds may be
-lost. Found by test 4 on 2026-09-26: a file saved about 10 seconds before
-`/delete_instance` came back empty; a hard reset confirmed that unflushed writes
-are lost.
+lost. After a successful delete of a user's own request
+(`request-creator:user`), the workflow **closes the request issue**: a request
+covers one instance's lifetime (decision 15), and the next instance starts from
+a new request. Found by test 4 on 2026-09-26: a file saved about 10 seconds
+before `/delete_instance` came back empty; a hard reset confirmed that unflushed
+writes are lost.
 
 **Known gap:** if Ceph is unreachable at boot, the mount is not retried when it
 comes back; the desktop stays down until the next reboot or unshelve (test 8).
