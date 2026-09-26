@@ -283,19 +283,15 @@ courses; workshops stay out of scope.
   Create, Shelve, Unshelve, Extend session, Renew and Delete. Only workshop
   organizers provision instances in bulk.
 - **Courses are short** (a few months at most).
-
-**Not decided:**
-
-- Where a course's storage lives. Courses run on their own Jetstream2
-  allocations, so the share is probably created in the course's project, which
-  needs share quota there and the portal's and runner's access to that project.
-- What happens to a course's storage when the course ends (kept for a grace
-  period to download, then deleted?).
-- Which image course instances start from: courses can have their own software
-  (course branches of exosphere), so share-mode golden images per course, or the
-  full setup at first boot.
-- The availability line: it shows the production allocation, not a course's.
-  Hide it for course contexts, or label it.
+- **Course storage lives on the course's own Jetstream2 allocation.** That needs
+  share quota there and the portal's and runner's access to that project.
+- **Course storage after the course ends** is not planned now: it is on the
+  course's own allocation, and what happens to it is up to the instructor.
+- **Images:** a course chooses its instance types when it is created, and its
+  instances use the base image for that type (vGPU or regular). To do: let
+  instructors customize their course's image.
+- **The availability line stays** for every context: it shows Jetstream2-wide
+  vacancy, not an allocation's.
 - The portal needs the list of contexts instead of one request repository, the
   GitHub App installed on each course repository, and permission to read the
   member's teams.
