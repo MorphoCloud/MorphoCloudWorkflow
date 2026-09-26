@@ -66,6 +66,10 @@ once the GitHub App works.
 ## What the page shows
 
 - The link on each card reads "Go to Issue N for full history".
+- "Open my files" opens the file browser in a panel on the right half of the
+  window (below the cards on narrow screens), so the instance status stays in
+  view; the panel also links to a full tab. While an action is in progress the
+  page refreshes only the cards, never the panel, so uploads are not cut off.
 - The section is titled "Your instance" (one per user, decision 14). The expiry
   date sits below the buttons; storage is a card like the instance.
 - While an instance is being created, the card shows the steps from the issue's
