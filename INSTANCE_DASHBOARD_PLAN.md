@@ -70,12 +70,18 @@ once the GitHub App works.
   "Create your storage first to enable your instance" (no buttons, no instance
   types). Storage the portal cannot reach at the moment still counts: instances
   mount the share themselves.
+- The header has two links right of the logo, one above the other:
+  **Documentation** (https://github.com/MorphoCloud/docs) and **User guide**
+  (its `user-guide` folder).
 - "Open my files" opens the file browser in a panel on the right half of the
   window (below the cards on narrow screens), so the instance status stays in
-  view; the panel also links to a full tab. While an action is in progress the
-  page refreshes only the cards, never the panel, so uploads are not cut off.
-  The buttons (Create, Shelve, Unshelve, Renew, Delete) also act without leaving
-  the page, so an upload keeps running while an instance is created.
+  view; the panel also links to a full tab. On wide screens the panel runs from
+  the top of the storage card to the bottom of the instance card (at least 460
+  px tall), and the Help card (CHATBOT_PLAN.md) spans the full width below both.
+  While an action is in progress the page refreshes only the cards, never the
+  panel, so uploads are not cut off. The buttons (Create, Shelve, Unshelve,
+  Renew, Delete) also act without leaving the page, so an upload keeps running
+  while an instance is created.
 - The section is titled "Your instance" (one per user, decision 14). The expiry
   date sits below the buttons; storage is a card like the instance.
 - While an instance is being created, the card shows the steps from the issue's
