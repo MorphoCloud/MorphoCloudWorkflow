@@ -259,7 +259,8 @@ runs:
         MP=/media/share/MyDrive
         UNIT=media-share-MyDrive.mount
         H=/home/exouser
-        FOLDERS="Desktop Documents Downloads Uploads"
+        # No Uploads folder: the data portal uploads into any folder.
+        FOLDERS="Desktop Documents Downloads"
 
         # Bare mountpoint is immutable: nothing lands on the root disk while
         # the share is not mounted.
@@ -312,8 +313,6 @@ runs:
             rm -f "$f"
           done
         fi
-        ln -sfn "$MP/Uploads" "$MP/Desktop/Uploads"
-        chown -h exouser:exouser "$MP/Desktop/Uploads"
 
         # Home folders become links to the share. Anything left in a local
         # folder is moved aside, never deleted.
@@ -331,17 +330,6 @@ runs:
           ln -s "$MP/$d" "$p"
           chown -h exouser:exouser "$p"
         done
-
-        # Data drop serves /media/volume/MyData, which exists on the root
-        # disk because ansible installs Slicer there. Its Uploads folder is
-        # the share's, so browser uploads land on the share too.
-        if [ -d /media/volume/MyData ]; then
-          u=/media/volume/MyData/Uploads
-          if [ -d "$u" ] && [ ! -L "$u" ] && [ -z "$(ls -A "$u")" ]; then rmdir "$u"; fi
-          [ -e "$u" ] || ln -s "$MP/Uploads" "$u"
-        else
-          echo "WARNING: /media/volume/MyData missing; Data drop uploads are not on the share" >&2
-        fi
 
         # No desktop without the share: a local fallback Desktop would hold
         # work that disappears with the instance.
