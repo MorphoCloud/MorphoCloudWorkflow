@@ -574,6 +574,28 @@ runs:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         COMMAND_NAME: ${{ inputs.command_name }}
 
+    # The data portal's instance dashboard shows the access details sent with
+    # the credentials email (send-email). They stop being valid once the
+    # instance is shelved or deleted. Only a runner set up for the portal has
+    # ~/mc-data/portal_target (Test-Instances); everywhere else this is a no-op.
+    - name: Clear access details on the portal
+      # After the command succeeds, so a failed shelve or delete leaves the
+      # details of a still-running instance in place.
+      if:
+        ${{ steps.execute_command.outcome == 'success' &&
+        inputs.course_team_slug == '' && (inputs.command_name == 'shelve' ||
+        inputs.command_name == 'delete') }}
+      shell: bash
+      run: |
+        target_file="$HOME/mc-data/portal_target"
+        [[ -s "$target_file" ]] || exit 0
+        if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "$(cat "$target_file")" \
+            connection-clear "$ISSUE_NUMBER" < /dev/null; then
+          echo "::warning ::Could not clear the access details on the data portal for #$ISSUE_NUMBER."
+        fi
+      env:
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+
     - name: command results comment (failure)
       id: comment_execute_failed
       if: ${{ steps.execute_command.outcome == 'failure' && failure() }}

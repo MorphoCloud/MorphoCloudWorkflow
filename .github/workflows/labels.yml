@@ -39,6 +39,7 @@ jobs:
           {"name": "request-type:course-instance", "color": "0A84FF", "description": "Issue tracks a course/class instance request"},
           {"name": "instance-request", "color": "0075CA", "description": "Shared lifecycle trigger label for all instance issue types"},
           {"name": "request-creator:user", "color": "7B6F4C", "description": "Issue was explicitly created by the user"},
+          {"name": "request-source:portal", "color": "7B6F4C", "description": "Request opened from the data portal"},
           {"name": "renewed:1", "color": "1550D4", "description": "Instance lifespan renewed once"},
           {"name": "renewed:2", "color": "1550D4", "description": "Instance lifespan renewed twice"},
           {"name": "renewal-notice:first", "color": "FBCA04", "description": "First expiration warning sent (warning window opened)"},
