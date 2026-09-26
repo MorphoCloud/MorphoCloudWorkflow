@@ -84,7 +84,11 @@ once the GitHub App works.
   While an action is in progress the page refreshes only the cards, never the
   panel, so uploads are not cut off. The buttons (Create, Shelve, Unshelve,
   Renew, Delete) also act without leaving the page, so an upload keeps running
-  while an instance is created.
+  while an instance is created. The panel's header is the current path as plain
+  text links, for example "MyDrive / Documents /": each folder in it opens that
+  folder and "MyDrive" the top one, whatever the panel shows (also after a file
+  was opened in it). copyparty's own path heading is hidden in the panel and
+  stays in the full tab.
 - The section is titled "Your instance" (one per user, decision 14). The expiry
   date sits below the buttons; storage is a card like the instance.
 - While an instance is being created, the card shows the steps from the issue's
