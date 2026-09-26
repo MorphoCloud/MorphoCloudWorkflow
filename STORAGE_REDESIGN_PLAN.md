@@ -428,6 +428,22 @@ yet (decision 7).
 new instances do not install it; the portal's file browser replaces it.
 Production (volume mode) keeps Data drop for now (decision 10).
 
+**Test-Instances settings for the prototype** (repository variables; unset means
+today's behaviour):
+
+| Variable                             | Value                                                           |
+| ------------------------------------ | --------------------------------------------------------------- |
+| `MORPHOCLOUD_STORAGE_MODE`           | `share`                                                         |
+| `MORPHOCLOUD_IMAGE_VGPU`             | `morphocloud-share-vgpu-20260926`                               |
+| `MORPHOCLOUD_IMAGE_REGULAR`          | `morphocloud-share-regular-20260926`                            |
+| `MORPHOCLOUD_VGPU_FLAVORS`           | `g3.large`                                                      |
+| `MORPHOCLOUD_EXPIRATION_LADDER`      | `90d,180d`                                                      |
+| `MORPHOCLOUD_MAX_INSTANCES_PER_USER` | `1`                                                             |
+| `MORPHOCLOUD_DATA_PORTAL_URL`        | `https://mc-data-portal.bio240357.projects.jetstream-cloud.org` |
+
+The runner host also needs `~/mc-data/` from `runner/install-runner.sh` in the
+data portal repo (share pickup, `lookup`/`ensure`, `portal_target`).
+
 **Known gap:** if Ceph is unreachable at boot, the mount is not retried when it
 comes back; the desktop stays down until the next reboot or unshelve (test 8).
 
