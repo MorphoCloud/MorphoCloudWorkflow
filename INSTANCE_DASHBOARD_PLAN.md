@@ -36,8 +36,9 @@ this table is updated first.
 | 14  | **One instance per user.** With per-user shares, two instances would mount the same share at once. The portal offers Create instance only when the user has no open request, and never a second one.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | 15  | The GitHub App is **public** ("Any account"), so people who have not joined can authorize it and see the portal's "Not a MorphoCloud member" page with the join link. The portal's team check is the gate. The app has **no private key**.                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | 16  | **Availability banner:** one line at the very top with every instance type and its current Jetstream2 vacancy, colored as on morphocloud.org (4+ green, 1–3 yellow, 0 red, unknown grey). The numbers come from a read-only endpoint on morphocloud.org, the same source as its landing page. Hidden when that endpoint cannot be reached.                                                                                                                                                                                                                                                                                                                        |
-| 17  | **Expiry dates**, shown separately: the instance (90 days after the request, 180 after `/renew`, computed from the issue's `expiration:*` and `renewed:*` labels exactly as the expiry sweep does) and the storage (180 days after the share was created, shown as "kept until at least"; nothing enforces it yet, see STORAGE_REDESIGN_PLAN.md decision 7).                                                                                                                                                                                                                                                                                                      |
+| 17  | **Expiry dates**, shown separately: the instance (90 days after the request, 180 after `/renew`, followed by "(can be renewed)" or "(no more renewals)", computed from the issue's `expiration:*` and `renewed:*` labels exactly as the expiry sweep does) and the storage (180 days after the share was created, shown as "kept until at least"; nothing enforces it yet, see STORAGE_REDESIGN_PLAN.md decision 7).                                                                                                                                                                                                                                              |
 | 18  | **Only the portal (and admins) drive instances.** GitHub cannot stop members from opening issues or commenting, so the workflows act only on what came through the portal: a command runs only if its comment was made through the MorphoCloud Portal app (GitHub's own `performed_via_github_app` field, which users cannot fake) or by an admin, and an issue opened directly on GitHub is closed with a pointer to the portal. Issues stay readable for diagnosis. Agreed 2026-09-26; not built yet (with the next production step). Taking GitHub out of users' view entirely (bot-only posting, owner recorded in the issue) belongs with the one-site work. |
+| 19  | **Session countdown and Extend session.** An active instance's card shows the time left before automatic shelving (session start + the request's `timeout:<N>hrs`, else 4 hours) and an **Extend session** button, which posts a new `/extend` command: the workflow resets the instance's session timer exactly as the desktop ExtendInstanceSession icon does and reports the new start. Create and unshelve report a fresh start; the 5-minute auto-shelving sweep reports every instance's session age, so an extend made on the desktop shows within 5 minutes. `/extend` typed on GitHub works the same. Agreed 2026-09-26.                                 |
 
 ## Sign-in (decision 8)
 
@@ -69,12 +70,28 @@ once the GitHub App works.
   "Create your storage first to enable your instance" (no buttons, no instance
   types). Storage the portal cannot reach at the moment still counts: instances
   mount the share themselves.
-- "Open my files" opens the file browser in a panel on the right half of the
-  window (below the cards on narrow screens), so the instance status stays in
-  view; the panel also links to a full tab. While an action is in progress the
-  page refreshes only the cards, never the panel, so uploads are not cut off.
-  The buttons (Create, Shelve, Unshelve, Renew, Delete) also act without leaving
-  the page, so an upload keeps running while an instance is created.
+- The header has two links right of the logo, one above the other:
+  **Documentation** (https://github.com/MorphoCloud/docs) and **User guide**
+  (its `user-guide` folder).
+- The top line ends with the funding acknowledgement, "Funded by NSF
+  (DBI/2301405)", linked to the funding section of morphocloud.org. It is shown
+  even when the availability numbers are not.
+- "Open my files" opens the file browser in a panel to the right of the cards
+  (windows 700 px and wider), so the instance status stays in view; the panel
+  also links to a full tab. Narrower windows (phones) open the file browser in a
+  new tab instead; the panel is never stacked under the cards. The panel runs
+  from the top of the storage card to the bottom of the instance card (at least
+  460 px tall). A closed panel takes no space. The Help card (CHATBOT_PLAN.md)
+  spans the full page width below everything, with or without the panel; the
+  storage and instance cards stay at most 640 px wide. While an action is in
+  progress the page refreshes only the cards, never the panel, so uploads are
+  not cut off. The buttons (Create, Shelve, Unshelve, Renew, Delete) also act
+  without leaving the page, so an upload keeps running while an instance is
+  created. The panel's header is the current path as plain text links, for
+  example "MyDrive / Documents /": each folder in it opens that folder and
+  "MyDrive" the top one, whatever the panel shows (also after a file was opened
+  in it). copyparty's own path heading is hidden in the panel and stays in the
+  full tab.
 - The section is titled "Your instance" (one per user, decision 14). The expiry
   date sits below the buttons; storage is a card like the instance.
 - While an instance is being created, the card shows the steps from the issue's
@@ -106,6 +123,10 @@ once the GitHub App works.
   still has an open request with no instance (for example opened on GitHub, or a
   failed create), the portal closes that request and opens a new one. It never
   closes a request that has an instance.
+- Instance types listed in the portal setting `MC_UNAVAILABLE_FLAVORS` (names or
+  patterns, for example `g4.xl,r3.*`) stay in the list, greyed out with "(not
+  available for the prototype)", and the portal refuses them. On the Test
+  portal, during the evaluations: g4.xl and every r3 type.
 - Closing a request runs `guard-issue-close.yml`. With no instance and no volume
   it does nothing. On Test-Instances, where instances still get a `My-Data-<n>`
   volume, the volume stays after the close (only the volume expiry schedule
@@ -255,6 +276,43 @@ the prototype is adopted and the quota increase lands), not before.
   stable path.
 - **Applicant state** comes from data that already exists: the application sheet
   and the org membership.
+
+## Later: members of more than one team (agreed direction, 2026-09-26)
+
+A member can belong to MorphoCloudUsers and to a course team at the same time.
+Each of these is a **context**: a team and the repository its requests go to
+(MorphoCloudUsers → Instances; a course team → that course's repository). Built
+after shares reach production for individual members. It reopens decision 11 for
+courses; workshops stay out of scope.
+
+- **Selector:** a menu next to the user name in the header, shown only to
+  members of two or more contexts. The choice is kept in the session.
+- **Everything follows the context:** the storage card, the instance card, the
+  instance types, the limits and the request repository.
+- **Storage per context:** one personal storage and one per course, never shared
+  between them.
+- **One instance per context** (decision 14 applies within each context), so no
+  share is mounted by two instances.
+- **Course members manage their own instance** exactly like individual members:
+  Create, Shelve, Unshelve, Extend session, Renew and Delete. Only workshop
+  organizers provision instances in bulk.
+- **Courses are short** (a few months at most).
+- **Course storage lives on the course's own Jetstream2 allocation.** That needs
+  share quota there and the portal's and runner's access to that project.
+- **Course storage after the course ends** is not planned now: it is on the
+  course's own allocation, and what happens to it is up to the instructor.
+- **Images:** a course chooses its instance types when it is created, and its
+  instances use the base image for that type (vGPU or regular). To do: let
+  instructors customize their course's image.
+- **The availability line stays** for every context: it shows Jetstream2-wide
+  vacancy, not an allocation's.
+- The portal needs the list of contexts instead of one request repository, the
+  GitHub App installed on each course repository, and permission to read the
+  member's teams.
+- **Possibly one management VM per course** instead: courses have their own
+  allocation and resources, so each could run its own copy of the portal from a
+  template, which also isolates courses from each other. Decided after the
+  prototype for individual members is complete.
 
 ## Later: support chatbot (idea, not planned)
 

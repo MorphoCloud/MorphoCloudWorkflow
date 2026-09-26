@@ -181,6 +181,9 @@ jobs:
           steps.check_type.outputs.is_workshop != 'true' }}
         uses: ./.github/actions/send-email
         with:
+          storage_mode:
+            ${{ contains(github.event.issue.labels.*.name,
+            'request-creator:user') && vars.MORPHOCLOUD_STORAGE_MODE || '' }}
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           token: ${{ secrets.GITHUB_TOKEN }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}

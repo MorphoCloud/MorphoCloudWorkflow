@@ -34,6 +34,7 @@ jobs:
             "/unshelve"
             "/email"
             "/renew"
+            "/extend"
             "/create"
             "/delete_instance"
             "/delete_volume"

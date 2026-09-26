@@ -192,6 +192,7 @@ jobs:
         uses: ./.github/actions/control-instance
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          storage_mode: ${{ vars.MORPHOCLOUD_STORAGE_MODE }}
           issue_number: ${{ github.event.issue.number }}
           command_name: ${{ needs.authorize.outputs.command_name }}
           instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}

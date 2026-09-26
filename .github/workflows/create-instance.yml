@@ -411,6 +411,17 @@ jobs:
           volume_size_gb: ${{ vars.VOLUME_SIZE_GB || '100' }}
           default_session_timeout_hrs: ${{ vars.INSTANCE_SHELVING_TIMEOUT_HRS }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Per-user share instead of a volume: only when the repo opts in
+          # (Test-Instances) and only for a user's own request, never a
+          # workshop sub-issue. STORAGE_REDESIGN_PLAN.md, phase 2 prototype.
+          storage_mode:
+            ${{ contains(github.event.issue.labels.*.name,
+            'request-creator:user') && vars.MORPHOCLOUD_STORAGE_MODE || '' }}
+          github_id: ${{ github.event.issue.user.id }}
+          portal_url: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
+          image_vgpu: ${{ vars.MORPHOCLOUD_IMAGE_VGPU }}
+          image_regular: ${{ vars.MORPHOCLOUD_IMAGE_REGULAR }}
+          vgpu_flavors: ${{ vars.MORPHOCLOUD_VGPU_FLAVORS || 'g3.large' }}
 
       # Individual creates stay one job (acquire + setup back-to-back on the
       # acquire runner) — same behaviour as before the split; only the workshop
@@ -427,12 +438,22 @@ jobs:
           instance_ip: ${{ steps.provision.outputs.floating_ip_address }}
           progress_comment_id:
             ${{ steps.provision.outputs.progress_comment_id }}
+          storage_mode:
+            ${{ contains(github.event.issue.labels.*.name,
+            'request-creator:user') && vars.MORPHOCLOUD_STORAGE_MODE || '' }}
+          # The share belongs to the issue creator (the instance owner), keyed
+          # on the numeric ID, which never changes.
+          github_id: ${{ github.event.issue.user.id }}
+          github_login: ${{ github.event.issue.user.login }}
 
       - name: Send email
         id: send_email
         if: ${{ steps.setup.outputs.setup_status == 'complete' }}
         uses: ./.github/actions/send-email
         with:
+          storage_mode:
+            ${{ contains(github.event.issue.labels.*.name,
+            'request-creator:user') && vars.MORPHOCLOUD_STORAGE_MODE || '' }}
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           token: ${{ secrets.GITHUB_TOKEN }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
@@ -477,7 +498,8 @@ jobs:
       - name: comment (retry guidance on provisioning failure)
         if:
           ${{ failure() && steps.provision.outcome == 'failure' &&
-          env.CREATE_ALREADY_EXISTS != 'true' }}
+          env.CREATE_ALREADY_EXISTS != 'true' && env.CREATE_NO_STORAGE != 'true'
+          }}
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}

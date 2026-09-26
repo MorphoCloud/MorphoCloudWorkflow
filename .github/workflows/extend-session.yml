@@ -1,0 +1,119 @@
+name: Process /extend Command
+
+# /extend resets the instance's session timer, exactly as the desktop
+# ExtendInstanceSession icon does, so automatic shelving is pushed back by a
+# full session (the request's timeout:<N>hrs, else 4 hours). The data portal's
+# Extend session button posts it (INSTANCE_DASHBOARD_PLAN.md, decision 19).
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  checks: read
+  contents: read
+
+jobs:
+  extend:
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    if:
+      ${{ !github.event.issue.pull_request &&
+      contains(github.event.issue.labels.*.name, 'instance-request') &&
+      contains(github.event.comment.body, '/extend') }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: admin-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Resolve admins from morphocloud-admins team
+        id: admins
+        uses: ./.github/actions/resolve-team-members
+        with:
+          token: ${{ steps.admin-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: morphocloud-admins
+
+      - name: extend command
+        id: extend_command
+        uses: github/command@3442f3fa1efe01bdb024b157083c337902d17372 # v2.0.3
+        with:
+          command: "/extend"
+          reaction: "rocket"
+          # Keep the 🚀; the last step reports the real outcome.
+          skip_completing: "true"
+          allowed_contexts: "issue"
+          permissions: "read,triage,write,maintain,admin"
+          allowlist:
+            "${{ steps.admins.outputs.members }},${{
+            github.event.issue.user.login }},${{
+            join(github.event.issue.assignees.*.login, ',') }}"
+
+      - name: Define instance name
+        id: define
+        if: ${{ steps.extend_command.outputs.continue == 'true' }}
+        uses: ./.github/actions/define-instance-name
+        with:
+          prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
+          issue_number: ${{ github.event.issue.number }}
+
+      - name: Reset the session timer
+        id: extend
+        if: ${{ steps.extend_command.outputs.continue == 'true' }}
+        shell: bash
+        run: |
+          source ~/venv/bin/activate
+          server=$(openstack server show "$INSTANCE_NAME" -f json -c status -c addresses 2>/dev/null) || server=""
+          status=$(jq -r '.status // empty' <<<"$server")
+          if [[ "$status" != "ACTIVE" ]]; then
+            printf 'The instance is not running (%s), so there is no session to extend.\n' "${status:-not found}" > "$RUNNER_TEMP/extend.md"
+            gh issue comment "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/extend.md"
+            exit 1
+          fi
+          ip=$(jq -r '.addresses | to_entries[].value[] | select(test("^10\\.") | not)' <<<"$server" | head -1)
+          ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+                    -o ConnectTimeout=15 -o LogLevel=ERROR)
+          script=/opt/instance-config-support/dist/check-instance-shelve.sh
+          # No arguments: reset the timer (what the desktop icon does, minus
+          # its on-screen notice). -d: hours since the last reset.
+          elapsed=$(ssh "${ssh_opts[@]}" exouser@"$ip" "$script >/dev/null && $script -d" < /dev/null)
+          if ! [[ "$elapsed" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "::error ::Could not reset the session timer on $INSTANCE_NAME"
+            exit 1
+          fi
+          echo "elapsed=$elapsed" >> "$GITHUB_OUTPUT"
+          # Share mode: tell the data portal (only a runner set up for it has
+          # ~/mc-data/portal_target).
+          target_file="$HOME/mc-data/portal_target"
+          if [[ -s "$target_file" ]]; then
+            printf '{"issue": %d, "elapsed_hours": %s}' "$ISSUE_NUMBER" "$elapsed" \
+              | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+                  "$(cat "$target_file")" session "$ISSUE_NUMBER" \
+              || echo "::warning ::Could not update the session on the data portal"
+          fi
+          hours=$(jq -r '[.labels[].name | select(test("^timeout:[0-9]+hrs$"))
+                  | capture(":(?<n>[0-9]+)hrs$").n | tonumber] | max // empty' <<<"$LABELS")
+          printf 'Session extended: the instance shelves automatically in %s hours unless extended again.\n' \
+            "${hours:-${DEFAULT_TIMEOUT:-4}}" > "$RUNNER_TEMP/extend.md"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/extend.md"
+        env:
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          LABELS: ${{ toJSON(github.event.issue) }}
+          DEFAULT_TIMEOUT: ${{ vars.INSTANCE_SHELVING_TIMEOUT_HRS }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Report command outcome on the comment
+        if: ${{ always() && steps.extend_command.outputs.continue == 'true' }}
+        uses: ./.github/actions/report-command-outcome
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          comment_id: ${{ github.event.comment.id }}
+          reaction_id: ${{ steps.extend_command.outputs.initial_reaction_id }}
+          status: ${{ job.status }}

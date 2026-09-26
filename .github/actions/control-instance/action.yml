@@ -59,6 +59,13 @@ inputs:
       (MORPHOCLOUD_GITHUB_ADMIN_EMAILS). Leave blank to disable the alert."
     required: false
     default: ""
+  storage_mode:
+    description:
+      "'share' when instances keep user files on a data share (phase 2
+      prototype, Test-Instances only): a delete first shuts the instance down
+      cleanly so everything is flushed to the share"
+    required: false
+    default: ""
 runs:
   using: "composite"
   steps:
@@ -557,6 +564,56 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+    # Share mode: a hard delete loses writes the instance has not flushed to
+    # the share yet (STORAGE_REDESIGN_PLAN.md, test 4). The mode is per
+    # repository, so on Test-Instances every delete (workshop instances too)
+    # shuts down first; that costs up to a minute and loses nothing. A clean shutdown
+    # flushes them. A hung instance must not block deletion, so after 3
+    # minutes it is deleted anyway and the issue says so.
+    - name: Shut down cleanly before delete
+      id: clean_stop
+      if:
+        ${{ inputs.storage_mode == 'share' && inputs.command_name == 'delete' &&
+        steps.check_instance.outputs.exists == 'true' }}
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+        status=$(openstack server show "$INSTANCE_NAME" -f value -c status || echo UNKNOWN)
+        echo "Status before delete: $status"
+        case "$status" in
+          SHUTOFF|SHELVED|SHELVED_OFFLOADED)
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+            exit 0 ;;
+          ACTIVE) ;;
+          *)
+            echo "::warning ::$INSTANCE_NAME is $status; it cannot be shut down cleanly before delete."
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+            exit 0 ;;
+        esac
+        if ! openstack server stop "$INSTANCE_NAME"; then
+          echo "::warning ::Could not ask $INSTANCE_NAME to shut down."
+          echo "clean=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        for i in $(seq 1 18); do
+          sleep 10
+          status=$(openstack server show "$INSTANCE_NAME" -f value -c status || echo UNKNOWN)
+          if [[ "$status" == "SHUTOFF" ]]; then
+            echo "Shut down cleanly after $((i * 10))s."
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Anything but still-running means it will not reach SHUTOFF.
+          if [[ "$status" != "ACTIVE" && "$status" != "UNKNOWN" ]]; then
+            break
+          fi
+        done
+        echo "::warning ::$INSTANCE_NAME did not shut down within 3 minutes (status $status); deleting anyway."
+        echo "clean=false" >> "$GITHUB_OUTPUT"
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
     - name: Execute command
       id: execute_command
       # noop is only set for shelve/unshelve; for delete it is empty and the
@@ -595,6 +652,16 @@ runs:
         fi
       env:
         ISSUE_NUMBER: ${{ inputs.issue_number }}
+
+    - name: comment (deleted without a clean shutdown)
+      if:
+        ${{ steps.clean_stop.outputs.clean == 'false' &&
+        steps.execute_command.outcome == 'success' }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          **${{ steps.define.outputs.instance_name }}** could not be shut down cleanly before it was deleted. Changes saved in the last few seconds before the delete may be missing from your storage.
 
     - name: command results comment (failure)
       id: comment_execute_failed
@@ -1127,6 +1194,7 @@ runs:
         inputs.command_name == 'unshelve' && inputs.course_team_slug == '' }}
       uses: ./.github/actions/send-email
       with:
+        storage_mode: ${{ inputs.storage_mode }}
         os_cloud: ${{ inputs.os_cloud }}
         token: ${{ inputs.token }}
         email_lookup_url: ${{ inputs.email_lookup_url }}
@@ -1248,6 +1316,30 @@ runs:
         instance_name: ${{ steps.define.outputs.instance_name }}
         instance_status:
           ${{ inputs.command_name == 'delete' && 'DELETED' || '' }}
+
+    # Share mode: a request covers one instance's lifetime
+    # (STORAGE_REDESIGN_PLAN.md, decision 15), so after a successful delete of
+    # a user's own request the issue is closed and the next instance starts
+    # from a new request. Closed with the workflow token, so
+    # guard-issue-close (which skips bot closes) does nothing.
+    - name: Close the request after delete
+      if:
+        ${{ inputs.storage_mode == 'share' && inputs.command_name == 'delete' &&
+        steps.execute_command.outcome == 'success' && inputs.course_team_slug ==
+        '' }}
+      shell: bash
+      run: |
+        labels=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '[.labels[].name] | join(",")')
+        if [[ ",$labels," != *",request-creator:user,"* ]]; then
+          echo "Not a user's own request; left open."
+          exit 0
+        fi
+        gh issue close "$ISSUE_NUMBER" --reason completed \
+          --comment "The instance was deleted, so this request is closed. Your files stay in your storage."
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
 
     # Safety net: every failure MUST surface on the issue. Steps without a
     # dedicated failure comment (e.g. release_stuck_ip hanging on a wedged
