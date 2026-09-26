@@ -83,8 +83,10 @@ permissions.
 - **Export path format** (from an existing share):
   `<mon1>:6789,...:/volumes/_nogroup/<uuid>/<uuid>`.
 - **Bookkeeping lives on the share itself**, as Manila share metadata: the
-  GitHub login at creation and when the welcome email was sent. No new database
-  or sheet column.
+  GitHub login at creation, when the welcome email was sent, and when the share
+  was last mounted by an instance (updated at every create and unshelve). No new
+  database or sheet column. The last-mounted time is what a future expiry rule
+  will be measured against.
 
 **Provisioning: reconcile the MorphoCloudUsers team.** Membership in the team is
 the signup record, and GitHub's team-members API returns each member's numeric
@@ -104,6 +106,19 @@ ID. So provisioning needs nothing from the intake app:
    the next run.
 6. Members who have left the team are reported, not deleted (no expiry yet).
 
+**One shared action, two callers.** Share creation is a single idempotent
+composite action, `ensure-user-share`, used by both the reconciliation and
+`/create`. So a user who runs `/create` before the next reconciliation still
+gets their share, created inline; the reconciliation later only sends the
+welcome email. `/create` takes the numeric ID straight from the event payload,
+`github.event.issue.user.id`, with no extra API call and no dependence on the
+current login.
+
+**Why scheduled, not event-driven.** GitHub Actions cannot be triggered by
+organization or team membership events; those exist only as webhooks, which
+would need a receiver on the join VM plus a dispatch. With a run every few
+minutes and the inline creation above, that machinery buys nothing.
+
 At adoption, the join app's welcome sweep is retired so users get one welcome
 email, sent only once their share exists. Existing members are backfilled by the
 first run: 73 team members today, so about 7.3 TB provisioned at once.
@@ -117,7 +132,10 @@ At create and unshelve the runner reads the key from Manila and writes it to a
 root-only file on the instance, which the mount uses after reboots. The user can
 read it with sudo; it grants only their own share. **Rotation** for a
 compromised key: deny the share's access rule, grant a new one, and redeliver
-the key with the next create or unshelve. The data is untouched.
+the key with the next create or unshelve. The data is untouched. A mount that is
+already active may keep working on the old key until it is remounted, so an
+emergency rotation also reboots or shelves the affected instance (test 13 checks
+whether denying the rule already cuts active mounts).
 
 ### 2. Instance side
 
@@ -156,7 +174,9 @@ user folders, which resolve through these links.
 - **A failed mount must block the desktop, not degrade it.** `vncserver@1`
   requires the mount unit, so a failed mount means no desktop session and a
   visible error, never an empty local Desktop where the user would save work
-  that disappears with the instance.
+  that disappears with the instance. A small failure handler replaces the
+  generic error with a plain message: the user's storage could not be reached,
+  try again shortly, and contact us if it persists.
 - Turn off the automatic XDG folder reset (`xdg-user-dirs` update) so a late
   mount can never replace the links.
 - Setup copies the desktop launchers (Slicer, ExtendInstanceSession) into the
@@ -216,6 +236,11 @@ DICOM database, and anything lock-heavy.
   | g3.xl, g4.xl            | passthrough | regular-driver |
   | m3.\*, r3.\* (CPU-only) | none        | regular-driver |
 
+  The two image names and the list of vGPU flavors live in repository variables,
+  so a rebuilt image goes live by updating a variable, with no code change or
+  vendorize. `create-instance` replaces its hard-coded `Featured-Ubuntu24` with
+  this lookup.
+
 - **Slicer launcher decides at launch time**, not bake time: use `vglrun` only
   when `nvidia-smi` sees a GPU, otherwise start Slicer directly with software
   rendering. Today ansible makes this decision once and bakes it into the
@@ -265,23 +290,43 @@ Known bake pitfalls, from the first test image (2026-08-08):
     removed.
   - `/renew` extends the instance, as today. Share renewal is designed with the
     share expiry rule, later.
-- **Setup steps removed:** the volume create and attach, the `MyData-tmp` rename
-  and Slicer copy, the home relocation with its VNC password and `.ssh` copies,
-  the `.cache` redirect onto the volume, and the `.Renviron` step.
+- **Setup steps removed:** the volume create and attach, the `exoVolumes`
+  instance property, the `MyData-tmp` rename and Slicer copy, the home
+  relocation with its VNC password and `.ssh` copies, the `.cache` redirect onto
+  the volume, and the `.Renviron` step. The VNC password and `.ssh` stay on the
+  root disk and are generated fresh on every create, as on any stock instance.
+- **Workflow files with volume logic:**
+  - Removed: `delete-volume.yml`, `delete-volume-from-workflow.yml`,
+    `automatic-volume-deleting.yml` (already retired and excluded from
+    vendorize).
+  - Rewritten: `delete-instance-and-volume.yml` (becomes instance-only),
+    `close-expired-issues.yml` (volume steps and labels), `labels.yml` (volume
+    labels).
+  - Audited for volume references: `control-instance.yml`,
+    `create-instance.yml`, `create-instance-from-workflow.yml`,
+    `guard-issue-close.yml`, `report-dropped-command.yml`,
+    `request-initial-comments.yml`, `send-renewal-email.yml`,
+    `update-renew-label.yml`, `validate-command-instance.yml`,
+    `workshop-backfill.yml`, `test-workshop-deletion.yml`.
+  - Course workflows (`create-course-instance.yml`,
+    `validate-command-course.yml`) are out of scope.
 - Exosphere's UI no longer lists a MyData volume; shares are not volumes. User
   documentation should say where files now live.
 
 ## Quota
 
-| Allocation                    | Share space | Used   | Share count | Per-share cap |
-| ----------------------------- | ----------- | ------ | ----------- | ------------- |
-| BIO180006_IU (production)     | 2,000 GB    | 900 GB | 50          | none          |
-| BIO240357_IU (Test-Instances) | 1,000 GB    | 100 GB | 50          | none          |
+| Allocation                    | Share space | Used   | Share count | Manila per-share limit |
+| ----------------------------- | ----------- | ------ | ----------- | ---------------------- |
+| BIO180006_IU (production)     | 2,000 GB    | 900 GB | 50          | none                   |
+| BIO240357_IU (Test-Instances) | 1,000 GB    | 100 GB | 50          | none                   |
 
-Ceph and Manila impose no per-share size limit; a share can use whatever the
-allocation total allows. A production rollout needs a higher share count and
-total. That increase has been requested. Testing fits the Test-Instances
-allocation.
+"Manila per-share limit" is the allocation's ceiling on how large any one share
+may be created, and there is none: a share can be as large as the remaining
+allocation total. Each user share is still capped at 100 GB, because that is the
+size it is created with, and CephFS enforces a share's size as a hard limit.
+
+A production rollout needs a higher share count and total. That increase has
+been requested. Testing fits the Test-Instances allocation.
 
 ## Test plan (Test-Instances, BIO240357_IU)
 
@@ -306,6 +351,15 @@ Run before building anything permanent.
     browser.
 11. Run the reconciliation for an allowlisted test account: share created,
     welcome sent once, and a second run changes nothing.
+12. Share reuse across request issues: create an instance from one issue, save a
+    file to the Desktop, `/delete_all`, open a new issue, `/create`; the same
+    Desktop reappears. Also `/create` for an account the reconciliation has not
+    reached yet: the share is created inline.
+13. Rotate the key of a share mounted on a running instance: record whether the
+    active mount survives the denied rule, and confirm the instance mounts with
+    the new key after a reboot.
+14. Confirm the name the sign-in proxy passes to copyparty is the numeric GitHub
+    ID, not the login.
 
 ## Out of scope for now
 
