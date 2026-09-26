@@ -116,6 +116,10 @@ once the GitHub App works.
   still has an open request with no instance (for example opened on GitHub, or a
   failed create), the portal closes that request and opens a new one. It never
   closes a request that has an instance.
+- Instance types listed in the portal setting `MC_UNAVAILABLE_FLAVORS` (names or
+  patterns, for example `g4.xl,r3.*`) stay in the list, greyed out with "(not
+  available for the prototype)", and the portal refuses them. On the Test
+  portal, during the evaluations: g4.xl and every r3 type.
 - Closing a request runs `guard-issue-close.yml`. With no instance and no volume
   it does nothing. On Test-Instances, where instances still get a `My-Data-<n>`
   volume, the volume stays after the close (only the volume expiry schedule
