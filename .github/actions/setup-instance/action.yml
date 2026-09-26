@@ -30,6 +30,20 @@ inputs:
       "GitHub comment ID for the progress tracking comment (from the acquire
       job)"
     required: true
+  storage_mode:
+    description:
+      "'share' to mount the owner's data share instead of the volume (phase 2
+      prototype, Test-Instances only); empty for the volume path"
+    required: false
+    default: ""
+  github_id:
+    description: "Numeric GitHub ID of the instance owner (share mode)"
+    required: false
+    default: ""
+  github_login:
+    description: "GitHub login of the instance owner (share mode)"
+    required: false
+    default: ""
 outputs:
   setup_status:
     description: "Instance setup status ('complete' when ready)"
@@ -178,8 +192,189 @@ runs:
         attach_volume: ⏳
         send_email: ""
 
+    # Share mode (STORAGE_REDESIGN_PLAN.md, phase 2 prototype; Test-Instances
+    # only): the owner's per-user share replaces the MyData volume. The
+    # volume steps below are skipped; this mounts the share at
+    # /media/share/MyDrive and links the home folders into it. Home, Slicer and
+    # settings stay on the root disk.
+    - name: Mount the owner's data share
+      id: mount_share
+      if: ${{ inputs.storage_mode == 'share' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+                  -o ConnectTimeout=10 -o LogLevel=ERROR)
+
+        # Wait for sshd, as the volume path's rename step does: right after
+        # setup the instance may still be finishing cloud-init.
+        start=$SECONDS
+        until out=$(ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" true 2>&1); do
+          if grep -qi "permission denied" <<<"$out"; then
+            echo "::error ::SSH auth rejected by $INSTANCE_IP"
+            exit 1
+          fi
+          if (( SECONDS - start >= 300 )); then
+            echo "::error ::sshd on $INSTANCE_IP not reachable after 300s"
+            exit 1
+          fi
+          sleep 15
+        done
+
+        # The same fail-closed ensure as the data portal (never a second
+        # share, never deletes), under the same lock as the portal pickup.
+        source ~/venv/bin/activate
+        if ! details=$(python3 "$HOME/mc-data/mc_share_runner.py" ensure "$GITHUB_ID" "$GITHUB_LOGIN"); then
+          echo "::error ::Could not create or find the data share for $GITHUB_LOGIN ($GITHUB_ID)"
+          exit 1
+        fi
+        key=$(jq -r '.access_key // empty' <<<"$details")
+        if [[ -z "$key" ]]; then
+          echo "::error ::The data share has no access key"
+          exit 1
+        fi
+        echo "::add-mask::$key"
+        export_path=$(jq -r '.export_path // empty' <<<"$details")
+        access_to=$(jq -r '.access_to // empty' <<<"$details")
+        if ! [[ "$export_path" =~ ^[0-9.:,]+:/volumes/_nogroup/[0-9a-f-]+/[0-9a-f-]+$ ]] \
+            || ! [[ "$access_to" =~ ^mc-[a-z0-9]+-u${GITHUB_ID}$ ]]; then
+          echo "::error ::Unexpected share details for $GITHUB_ID"
+          exit 1
+        fi
+        echo "Share for $GITHUB_LOGIN ($GITHUB_ID): $(jq -r .share_id <<<"$details")"
+
+        # The key goes over stdin, never on a command line.
+        printf '%s' "$key" | ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" \
+          "sudo install -d -m 0755 /etc/ceph && sudo sh -c 'umask 077; cat > /etc/ceph/mc-user.secret'"
+
+        ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" \
+          "sudo bash -s -- '$export_path' '$access_to'" <<'EOF'
+        set -euo pipefail
+        EXPORT="$1"
+        NAME="$2"
+        MP=/media/share/MyDrive
+        UNIT=media-share-MyDrive.mount
+        H=/home/exouser
+        FOLDERS="Desktop Documents Downloads Uploads"
+
+        # Bare mountpoint is immutable: nothing lands on the root disk while
+        # the share is not mounted.
+        if ! mountpoint -q "$MP"; then
+          mkdir -p "$MP"
+          if [ -n "$(ls -A "$MP")" ]; then
+            echo "$MP is not empty while unmounted; refusing" >&2
+            exit 1
+          fi
+          chattr +i "$MP"
+        fi
+
+        cat > "/etc/systemd/system/$UNIT" <<UNITEOF
+        [Unit]
+        Description=MorphoCloud user storage
+        After=network-online.target
+        Wants=network-online.target
+
+        [Mount]
+        What=$EXPORT
+        Where=$MP
+        Type=ceph
+        Options=name=$NAME,secretfile=/etc/ceph/mc-user.secret,noatime,_netdev
+        TimeoutSec=90
+
+        [Install]
+        WantedBy=remote-fs.target
+        UNITEOF
+        systemctl daemon-reload
+        systemctl enable --now "$UNIT"
+
+        # Prove it is this user's share, not something else at that path.
+        read -r src fstype < <(findmnt -n -o SOURCE,FSTYPE "$MP")
+        if [ "$fstype" != "ceph" ] || [ "${src#*:}" != "${EXPORT#*:}" ]; then
+          echo "$MP is not the expected share ($fstype $src)" >&2
+          exit 1
+        fi
+
+        chown exouser:exouser "$MP"
+        for d in $FOLDERS; do
+          [ -e "$MP/$d" ] || install -d -o exouser -g exouser "$MP/$d"
+        done
+
+        # Launchers written by setup into the local Desktop: refresh them on
+        # the share, then drop the local copies.
+        if [ -d "$H/Desktop" ] && [ ! -L "$H/Desktop" ]; then
+          for f in "$H"/Desktop/*.desktop; do
+            [ -e "$f" ] || continue
+            install -o exouser -g exouser -m 0755 "$f" "$MP/Desktop/"
+            rm -f "$f"
+          done
+        fi
+        ln -sfn "$MP/Uploads" "$MP/Desktop/Uploads"
+        chown -h exouser:exouser "$MP/Desktop/Uploads"
+
+        # Home folders become links to the share. Anything left in a local
+        # folder is moved aside, never deleted.
+        stamp=$(date +%Y%m%d-%H%M%S)
+        for d in $FOLDERS; do
+          p="$H/$d"
+          if [ -L "$p" ]; then
+            [ "$(readlink "$p")" = "$MP/$d" ] && continue
+            rm -f "$p"
+          elif [ -d "$p" ] && [ -z "$(ls -A "$p")" ]; then
+            rmdir "$p"
+          elif [ -e "$p" ]; then
+            mv "$p" "$H/$d.local-$stamp"
+          fi
+          ln -s "$MP/$d" "$p"
+          chown -h exouser:exouser "$p"
+        done
+
+        # Data drop serves /media/volume/MyData; its Uploads folder is the
+        # share's, so browser uploads land on the share too.
+        if [ -d /media/volume/MyData ]; then
+          u=/media/volume/MyData/Uploads
+          if [ -d "$u" ] && [ ! -L "$u" ] && [ -z "$(ls -A "$u")" ]; then rmdir "$u"; fi
+          [ -e "$u" ] || ln -s "$MP/Uploads" "$u"
+        fi
+
+        # No desktop without the share: a local fallback Desktop would hold
+        # work that disappears with the instance.
+        install -d /etc/systemd/system/vncserver@1.service.d
+        cat > /etc/systemd/system/vncserver@1.service.d/mc-share.conf <<VNCEOF
+        [Unit]
+        Requires=$UNIT
+        After=$UNIT
+        VNCEOF
+        systemctl daemon-reload
+
+        # A late or failed mount must never reset the folders to local ones.
+        if grep -q '^enabled=' /etc/xdg/user-dirs.conf 2>/dev/null; then
+          sed -i 's/^enabled=.*/enabled=False/' /etc/xdg/user-dirs.conf
+        else
+          echo 'enabled=False' >> /etc/xdg/user-dirs.conf
+        fi
+        echo "Share mounted at $MP; home folders linked."
+        EOF
+      env:
+        INSTANCE_IP: ${{ inputs.instance_ip }}
+        GITHUB_ID: ${{ inputs.github_id }}
+        GITHUB_LOGIN: ${{ inputs.github_login }}
+        OS_CLOUD: ${{ inputs.os_cloud }}
+
+    - name: comment (failed to mount the data share)
+      if: ${{ steps.mount_share.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Failed to mount the data share on instance **${{ inputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
     - name: Rename MyData directory to MyData-tmp
       id: rename_mydata
+      if: ${{ inputs.storage_mode != 'share' }}
       shell: bash
       run: |
         # This is the first SSH-to-instance step of the volume phase. Right
@@ -256,6 +451,7 @@ runs:
 
     - name: Attach Volume
       id: attach_volume
+      if: ${{ inputs.storage_mode != 'share' }}
       shell: bash
       run: |
         source ~/venv/bin/activate
@@ -332,6 +528,7 @@ runs:
 
     - name: Copy installed files into attached volume
       id: copy_installed_files
+      if: ${{ inputs.storage_mode != 'share' }}
       shell: bash
       run: |
         function check_mountpoint_ready {
@@ -383,6 +580,7 @@ runs:
 
     - name: Relocate home directory to persistent volume
       id: relocate_home_directory
+      if: ${{ inputs.storage_mode != 'share' }}
       shell: bash
       run: |
         ssh \
@@ -469,6 +667,7 @@ runs:
     # of the home directory. Idempotent for re-attached volumes.
     - name: Create Uploads folder and desktop shortcut
       id: create_uploads_folder
+      if: ${{ inputs.storage_mode != 'share' }}
       shell: bash
       run: |
         ssh \
@@ -494,6 +693,7 @@ runs:
 
     - name: Create Renviron file
       id: create_renviron_file
+      if: ${{ inputs.storage_mode != 'share' }}
       shell: bash
       run: |
         ssh \
@@ -571,6 +771,44 @@ runs:
           ### Instance Creation Results ❌
 
           Failed to reboot instance **${{ inputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    # Share mode: after the reboot the share must mount on its own and the
+    # desktop must start on it; this is what every unshelve relies on.
+    - name: Verify the data share after reboot
+      id: verify_share
+      if: ${{ inputs.storage_mode == 'share' }}
+      shell: bash
+      run: |
+        ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+                  -o ConnectTimeout=10 -o LogLevel=ERROR)
+        check='mountpoint -q /media/share/MyDrive &&
+          [ "$(readlink /home/exouser/Desktop)" = /media/share/MyDrive/Desktop ] &&
+          systemctl is-active --quiet vncserver@1'
+        for attempt in $(seq 1 12); do
+          if ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" "$check"; then
+            echo "Share mounted, Desktop linked, desktop session running."
+            exit 0
+          fi
+          sleep 10
+        done
+        ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" \
+          'systemctl --no-pager status media-share-MyDrive.mount vncserver@1 | tail -30' || true
+        echo "::error ::The data share or the desktop did not come up after the reboot"
+        exit 1
+      env:
+        INSTANCE_IP: ${{ inputs.instance_ip }}
+
+    - name: comment (data share not up after reboot)
+      if: ${{ steps.verify_share.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          The data share or the desktop did not come up after rebooting **${{ inputs.instance_name }}**.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
