@@ -29,6 +29,7 @@ this table is updated first.
 | 12  | A portal-opened issue is opened with the **user's token** (the user stays the author). A workflow adds the form's three labels plus `request-source:portal`, and the request handler runs once, on that label.                                                                                                |
 | 13  | The user's GitHub token is kept **in the portal's memory only**: never on disk, never in the cookie. A portal restart signs everyone out.                                                                                                                                                                     |
 | 14  | **One instance per user.** With per-user shares, two instances would mount the same share at once. The portal offers Create instance only when the user has no open request, and never a second one.                                                                                                          |
+| 15  | The GitHub App is **public** ("Any account"), so people who have not joined can authorize it and see the portal's "Not a MorphoCloud member" page with the join link. The portal's team check is the gate. The app has **no private key**.                                                                    |
 
 ## Sign-in (decision 8)
 
@@ -44,6 +45,8 @@ GitHub App settings:
 - Webhook: **off**
 - Repository permissions: **Issues: read and write**
 - Organization permissions: **Members: read** (team check)
+- Where can this GitHub App be installed: **Any account** (decision 15)
+- Private keys: **none**
 - Installed on **Test-Instances only**
 
 The user's token is kept in memory only (decision 13). The OAuth App is retired
