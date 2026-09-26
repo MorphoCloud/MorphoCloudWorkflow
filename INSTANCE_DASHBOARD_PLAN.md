@@ -295,6 +295,10 @@ courses; workshops stay out of scope.
 - The portal needs the list of contexts instead of one request repository, the
   GitHub App installed on each course repository, and permission to read the
   member's teams.
+- **Possibly one management VM per course** instead: courses have their own
+  allocation and resources, so each could run its own copy of the portal from a
+  template, which also isolates courses from each other. Decided after the
+  prototype for individual members is complete.
 
 ## Later: support chatbot (idea, not planned)
 
