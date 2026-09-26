@@ -145,7 +145,7 @@ runs:
           --arg ip "$INSTANCE_IP" --arg passphrase "$PASSPHRASE" \
           '{issue: $issue, login: $login, instance_name: $instance_name,
             web_url: $web_url, ip: $ip, passphrase: $passphrase}')
-        if ! printf '%s' "$payload" | ssh -o BatchMode=yes -o ConnectTimeout=15 \
+        if ! printf '%s' "$payload" | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
             "$(cat "$target_file")" connection "$ISSUE_NUMBER"; then
           echo "::warning ::Could not send the access details to the data portal."
           gh issue comment "$ISSUE_NUMBER" --body "The access details could not be shown on the data portal. They are in your email." || true

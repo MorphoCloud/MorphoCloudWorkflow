@@ -33,6 +33,7 @@ permissions:
 concurrency:
   # `labeled` events that are not the portal label get a group of their own,
   # so they never take the pending slot of a real run for this issue.
+  # (`cond && x || y` is the expressions ternary; format() is never empty.)
   group:
     ${{ (github.event.action == 'opened' || github.event.label.name ==
     'request-source:portal') && format('morphocloud-instance-open-{0}',
