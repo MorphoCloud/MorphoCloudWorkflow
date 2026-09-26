@@ -112,7 +112,9 @@ composite action, `ensure-user-share`, used by both the reconciliation and
 gets their share, created inline; the reconciliation later only sends the
 welcome email. `/create` takes the numeric ID straight from the event payload,
 `github.event.issue.user.id`, with no extra API call and no dependence on the
-current login.
+current login. The same field serves `/unshelve` and every other
+comment-triggered command: it is the ID of the issue's creator, who owns the
+instance, not of whoever posted the comment.
 
 **Why scheduled, not event-driven.** GitHub Actions cannot be triggered by
 organization or team membership events; those exist only as webhooks, which
@@ -228,7 +230,11 @@ DICOM database, and anything lock-heavy.
 - **Contents:** everything ansible installs today, plus Slicer and the standard
   extensions with their Python dependencies.
 - **Selection:** `create-instance` picks the image from the flavor. This is a
-  fifth place a flavor is listed (see the flavor sync note in MAINTENANCE.md).
+  fifth place a flavor is listed. The other four, which must stay in sync, are
+  the flavor dropdowns in `ISSUE_TEMPLATE/01-individual-instance-request.yml`
+  and `03-workshop-request.yml`, the `flavor:*` labels in `labels.yml`, and
+  `app/js2_availability.py` in morphocloud-intake. The implementation adds this
+  list to MAINTENANCE.md.
 
   | Flavor                  | GPU mode    | Image          |
   | ----------------------- | ----------- | -------------- |
@@ -268,8 +274,9 @@ Known bake pitfalls, from the first test image (2026-08-08):
 - **Chosen:** no per-attendee share or volume. Workshop instances use one
   centralized workshop share. They are temporary by nature.
 - The workshop share is a new dedicated share, not MorphoCloudCephShare (which
-  holds the R libraries). Attendees share read and write access. The organizer
-  instructions state that workshop data must not be sensitive.
+  holds the R libraries and is retired at adoption, since decision 12 ends the
+  preinstalled R libraries). Attendees share read and write access. The
+  organizer instructions state that workshop data must not be sensitive.
 - **Fallback, if attendees need separate space:** one share sized 50 GB times
   the number of attendees, with folder N mapped to instance N. Assigning
   instances to attendees is the organizer's job. In this layout attendees could
@@ -297,8 +304,10 @@ Known bake pitfalls, from the first test image (2026-08-08):
   root disk and are generated fresh on every create, as on any stock instance.
 - **Workflow files with volume logic:**
   - Removed: `delete-volume.yml`, `delete-volume-from-workflow.yml`,
-    `automatic-volume-deleting.yml` (already retired and excluded from
-    vendorize).
+    `automatic-volume-deleting.yml`. The last one is live today: the runner
+    crontab (`scripts/instances-runner.crontab`, documented in
+    `runner-cron-dispatcher.md`) dispatches it daily, so its crontab entry and
+    that documentation are removed with it.
   - Rewritten: `delete-instance-and-volume.yml` (becomes instance-only),
     `close-expired-issues.yml` (volume steps and labels), `labels.yml` (volume
     labels).
@@ -325,8 +334,12 @@ may be created, and there is none: a share can be as large as the remaining
 allocation total. Each user share is still capped at 100 GB, because that is the
 size it is created with, and CephFS enforces a share's size as a hard limit.
 
-A production rollout needs a higher share count and total. That increase has
-been requested. Testing fits the Test-Instances allocation.
+A production rollout needs a higher share count and total. At 73 team members,
+the first reconciliation alone provisions 73 shares and 7,300 GB, against
+today's 50 shares and roughly 1,100 GB free. The increase has been requested;
+**do not enable the reconciliation in production until it lands**, or most
+members would get an admin alert instead of a share. Size the request for
+growth, not just today's members. Testing fits the Test-Instances allocation.
 
 ## Test plan (Test-Instances, BIO240357_IU)
 
