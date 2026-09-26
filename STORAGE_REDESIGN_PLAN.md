@@ -33,8 +33,8 @@ These are settled. Revisit only with new facts, not preference.
 | 12  | R libraries live on the root disk. MorphoCloud no longer installs them.                                                                                                                                                                                             |
 | 13  | Slicer's DICOM database moves to local disk. DICOM is not a common use case.                                                                                                                                                                                        |
 | 14  | Shares are created on demand, **only from the data portal** ("Create my storage"). `/create` without a share refuses and points to the portal; it never creates a share. No automatic provisioning of every member. Revised 2026-09-26 (was: `/create` creates it). |
-| 16  | Reset empties the share (share and key are kept). Nothing ever deletes or recreates a user's share automatically.                                                                                                                                                   |
 | 15  | The request issue's lifecycle covers the instance only. Volume commands and `volume:*` labels are removed; the share has its own lifecycle.                                                                                                                         |
+| 16  | Reset empties the share (share and key are kept). Nothing ever deletes or recreates a user's share automatically.                                                                                                                                                   |
 | 17  | **One instance per user.** Two instances would mount the same share at once. Enforced with the existing per-user limit, `MORPHOCLOUD_MAX_INSTANCES_PER_USER=1` (set on Test-Instances for the prototype). Admins are exempt from that limit, as today.              |
 
 ## Why per-user shares, not one big share with folders
@@ -101,7 +101,8 @@ permissions.
    2026-09-26), so every share is created by the portal and the portal always
    knows about it.
 
-Both call the same share-creation logic (`ensure`), which **fails closed**:
+The portal's creation path uses the share-creation logic (`ensure`), which
+**fails closed** (`/create` only looks the share up, see the Phase 2 prototype):
 
 - every OpenStack error stops the run; a failed lookup is never read as "no
   share exists";
@@ -224,7 +225,7 @@ Code:
   mount; it never crosses filesystems or follows symlinks, and recreates the
   three folders. It requires typing "reset my data". File access is blocked
   while it runs. Warning users away from resetting with an instance running is
-  text only until instances mount shares (phase 2).
+  text only until instances mount shares (see "Phase 2 prototype" below).
 - **Result:** a stable address that does not change on unshelve, unlike the
   per-instance Data drop link.
 
@@ -324,7 +325,8 @@ Known bake pitfalls, from the first test image (2026-08-08):
 - **Instance expiry** no longer deletes user files; deleting the share becomes
   its own decision.
 - **Issue commands and labels:**
-  - The request issue tracks the instance only.
+  - The request issue tracks the instance only. In share mode a successful
+    delete closes it (see "Delete in share mode" in the Phase 2 prototype).
   - `/delete_volume` is removed. `/delete_all` becomes "delete the instance".
   - The `volume:*` labels and the volume steps in the end-of-life sweep are
     removed.
@@ -409,13 +411,12 @@ path exactly.
 **Delete in share mode.** Every delete of an instance (`/delete_instance`,
 `/delete_all`, expiry) first shuts it down cleanly and waits up to 3 minutes, so
 everything written to the share is flushed. If it does not stop in time, it is
-deleted anyway and the issue says that changes from the last few seconds may be
-lost. After a successful delete of a user's own request
-(`request-creator:user`), the workflow **closes the request issue**: a request
-covers one instance's lifetime (decision 15), and the next instance starts from
-a new request. Found by test 4 on 2026-09-26: a file saved about 10 seconds
-before `/delete_instance` came back empty; a hard reset confirmed that unflushed
-writes are lost.
+deleted anyway and the issue says that recent unflushed changes may be lost.
+After a successful delete of a user's own request (`request-creator:user`), the
+workflow **closes the request issue**: a request covers one instance's lifetime
+(decision 15), and the next instance starts from a new request. Found by test 4
+on 2026-09-26: a file saved about 10 seconds before `/delete_instance` came back
+empty; a hard reset confirmed that unflushed writes are lost.
 
 **Instance lifetime on Test-Instances:** 90 days, and `/renew` adds 90 (180 in
 total), set by the repository variable `MORPHOCLOUD_EXPIRATION_LADDER`
@@ -430,40 +431,48 @@ Production (volume mode) keeps Data drop for now (decision 10).
 **Known gap:** if Ceph is unreachable at boot, the mount is not retried when it
 comes back; the desktop stays down until the next reboot or unshelve (test 8).
 
-**Not in the prototype** (later, if adopted): golden images (tests 5 and 6 use
-today's image), the failure message shown in place of the desktop (the desktop
-simply does not start), Slicer's DICOM folder, share metadata bookkeeping,
-removing volume commands, workshops. A share created by `/create` is not yet
-known to the portal; the user's "Create my storage" then reuses it.
+**Not in the prototype** (later, if adopted): the failure message shown in place
+of the desktop (the desktop simply does not start), Slicer's DICOM folder, share
+metadata bookkeeping, removing volume commands, workshops. Golden images are in
+the prototype (section 4, "Build plan").
 
 ## Test plan (Test-Instances, BIO240357_IU)
 
 Run before building anything permanent.
 
 1. Create one share and mount it on a test instance with the links above.
+   **Passed 2026-09-26** (Test-Instances#439).
 2. Normal desktop session: files on the Desktop, a Firefox download, Slicer
    saving a scene to the Desktop. Watch for lock-related errors or eviction.
 3. Reboot and unshelve: the share mounts before the session and the links hold.
-4. Delete the instance and create a new one: the same Desktop reappears.
+   **Passed 2026-09-26** (mount one second before the desktop).
+4. Delete the instance and create a new one: the same Desktop reappears. The
+   Desktop came back, but a file saved seconds before the delete was empty:
+   fixed by the clean shutdown ("Delete in share mode"); retest pending.
 5. Load a large microCT volume from the share into Slicer; compare with root
    disk load time.
 6. Boot the regular-driver image on an m3 flavor; confirm Slicer starts with
    software rendering.
 7. Stand up the central service against the test share; confirm a second GitHub
-   user cannot see or reach the first user's files.
+   user cannot see or reach the first user's files. **Passed 2026-09-26**
+   (including URL-encoded and `../` paths).
 8. Break the mount (wrong key, then Ceph unreachable): the desktop session must
-   not start, and no local Desktop folder may appear.
+   not start, and no local Desktop folder may appear. **Passed 2026-09-26** (no
+   retry once Ceph is back: known gap).
 9. Upload through the central service while the instance writes to the same
-   share; check both files arrive intact.
+   share; check both files arrive intact. **Passed 2026-09-26** (400 MB each
+   side, checksums match).
 10. Fill the share past 100 GB: a clear error both on the instance and in the
-    browser.
+    browser. **Passed 2026-09-26** ("Disk quota exceeded" on the instance and on
+    the portal host; the browser's own message not checked).
 11. Portal create: a share is created once; a repeated or retried request reuses
     it and never makes a second one. **Passed 2026-09-26** (with test IDs, since
     deleted).
 12. Share reuse across request issues: create an instance from one issue, save a
     file to the Desktop, `/delete_all`, open a new issue, `/create`; the same
-    Desktop reappears. Also `/create` for an account with no share yet: the
-    share is created inline.
+    Desktop reappears. Also `/create` for an account with no share yet: it
+    refuses with a link to the portal and creates nothing. **The refusal passed
+    2026-09-26** (as amm554, Test-Instances#443).
 13. Rotate the key of a share mounted on a running instance: record whether the
     active mount survives the denied rule, and confirm the instance mounts with
     the new key after a reboot.
@@ -473,9 +482,6 @@ Run before building anything permanent.
     the user's own share; a reset while the share is unmounted is refused,
     alerts the admins, and the worker remounts the share with data intact.
     **Passed 2026-09-26.**
-
-Test 7 (isolation between two users, including URL-encoded and `../` paths) also
-**passed 2026-09-26**.
 
 ## Out of scope for now
 
