@@ -76,19 +76,22 @@ once the GitHub App works.
 - The top line ends with the funding acknowledgement, "Funded by NSF
   (DBI/2301405)", linked to the funding section of morphocloud.org. It is shown
   even when the availability numbers are not.
-- "Open my files" opens the file browser in a panel on the right half of the
-  window (below the cards on narrow screens), so the instance status stays in
-  view; the panel also links to a full tab. On wide screens the panel runs from
-  the top of the storage card to the bottom of the instance card (at least 460
-  px tall), and the Help card (CHATBOT_PLAN.md) spans the full width below both.
-  While an action is in progress the page refreshes only the cards, never the
-  panel, so uploads are not cut off. The buttons (Create, Shelve, Unshelve,
-  Renew, Delete) also act without leaving the page, so an upload keeps running
-  while an instance is created. The panel's header is the current path as plain
-  text links, for example "MyDrive / Documents /": each folder in it opens that
-  folder and "MyDrive" the top one, whatever the panel shows (also after a file
-  was opened in it). copyparty's own path heading is hidden in the panel and
-  stays in the full tab.
+- "Open my files" opens the file browser in a panel to the right of the cards
+  (windows 700 px and wider), so the instance status stays in view; the panel
+  also links to a full tab. Narrower windows (phones) open the file browser in a
+  new tab instead; the panel is never stacked under the cards. The panel runs
+  from the top of the storage card to the bottom of the instance card (at least
+  460 px tall). A closed panel takes no space. The Help card (CHATBOT_PLAN.md)
+  spans the full page width below everything, with or without the panel; the
+  storage and instance cards stay at most 640 px wide. While an action is in
+  progress the page refreshes only the cards, never the panel, so uploads are
+  not cut off. The buttons (Create, Shelve, Unshelve, Renew, Delete) also act
+  without leaving the page, so an upload keeps running while an instance is
+  created. The panel's header is the current path as plain text links, for
+  example "MyDrive / Documents /": each folder in it opens that folder and
+  "MyDrive" the top one, whatever the panel shows (also after a file was opened
+  in it). copyparty's own path heading is hidden in the panel and stays in the
+  full tab.
 - The section is titled "Your instance" (one per user, decision 14). The expiry
   date sits below the buttons; storage is a card like the instance.
 - While an instance is being created, the card shows the steps from the issue's
