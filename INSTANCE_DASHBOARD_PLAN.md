@@ -263,6 +263,43 @@ the prototype is adopted and the quota increase lands), not before.
 - **Applicant state** comes from data that already exists: the application sheet
   and the org membership.
 
+## Later: members of more than one team (agreed direction, 2026-09-26)
+
+A member can belong to MorphoCloudUsers and to a course team at the same time.
+Each of these is a **context**: a team and the repository its requests go to
+(MorphoCloudUsers → Instances; a course team → that course's repository). Built
+after shares reach production for individual members. It reopens decision 11 for
+courses; workshops stay out of scope.
+
+- **Selector:** a menu next to the user name in the header, shown only to
+  members of two or more contexts. The choice is kept in the session.
+- **Everything follows the context:** the storage card, the instance card, the
+  instance types, the limits and the request repository.
+- **Storage per context:** one personal storage and one per course, never shared
+  between them.
+- **One instance per context** (decision 14 applies within each context), so no
+  share is mounted by two instances.
+- **Course members manage their own instance** exactly like individual members:
+  Create, Shelve, Unshelve, Extend session, Renew and Delete. Only workshop
+  organizers provision instances in bulk.
+- **Courses are short** (a few months at most).
+
+**Not decided:**
+
+- Where a course's storage lives. Courses run on their own Jetstream2
+  allocations, so the share is probably created in the course's project, which
+  needs share quota there and the portal's and runner's access to that project.
+- What happens to a course's storage when the course ends (kept for a grace
+  period to download, then deleted?).
+- Which image course instances start from: courses can have their own software
+  (course branches of exosphere), so share-mode golden images per course, or the
+  full setup at first boot.
+- The availability line: it shows the production allocation, not a course's.
+  Hide it for course contexts, or label it.
+- The portal needs the list of contexts instead of one request repository, the
+  GitHub App installed on each course repository, and permission to read the
+  member's teams.
+
 ## Later: support chatbot (idea, not planned)
 
 Requested 2026-09-26, for later. A third card on the page, below the instance
