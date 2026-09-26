@@ -146,9 +146,12 @@ mount script (`mount_ceph.py`) used for the R library share.
 /media/share/MyDrive/
 ├── Desktop/
 ├── Documents/
-├── Downloads/
-└── Uploads/
+└── Downloads/
 ```
+
+No Uploads folder: the portal's file browser can upload into any folder on the
+share (decided 2026-09-26). An existing Uploads folder is left alone; nothing
+deletes user files.
 
 **Links in the home directory** (home stays on the root disk):
 
@@ -156,7 +159,6 @@ mount script (`mount_ceph.py`) used for the R library share.
 /home/exouser/Desktop   -> /media/share/MyDrive/Desktop
 /home/exouser/Documents -> /media/share/MyDrive/Documents
 /home/exouser/Downloads -> /media/share/MyDrive/Downloads
-/home/exouser/Uploads   -> /media/share/MyDrive/Uploads
 ```
 
 GNOME, the file manager, Firefox, file dialogs and Slicer use the standard XDG
@@ -219,9 +221,9 @@ Code:
 - **copyparty's upload index** stays on local disk, never on the share.
 - **Reset** empties the share after proving the path is that user's CephFS
   mount; it never crosses filesystems or follows symlinks, and recreates the
-  four folders. It requires typing "reset my data". File access is blocked while
-  it runs. Warning users away from resetting with an instance running is text
-  only until instances mount shares (phase 2).
+  three folders. It requires typing "reset my data". File access is blocked
+  while it runs. Warning users away from resetting with an instance running is
+  text only until instances mount shares (phase 2).
 - **Result:** a stable address that does not change on unshelve, unlike the
   per-instance Data drop link.
 
@@ -392,7 +394,7 @@ path exactly.
    - key in `/etc/ceph/mc-user.secret` (root only);
    - a systemd mount unit for `/media/share/MyDrive`; the bare mountpoint is
      immutable;
-   - the four folders on the share if missing, owned by exouser;
+   - the three folders on the share if missing, owned by exouser;
    - launchers copied into the share's Desktop;
    - each home folder replaced by a link to the share. A local folder that is
      not empty is moved aside to `~/<name>.local-<date>`, never deleted;
