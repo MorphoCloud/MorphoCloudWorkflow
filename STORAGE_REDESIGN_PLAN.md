@@ -420,6 +420,10 @@ total), set by the repository variable `MORPHOCLOUD_EXPIRATION_LADDER`
 (180 days after the share was created) is a target only; nothing expires shares
 yet (decision 7).
 
+**No Data drop in share mode:** the credentials email has no Data drop line and
+new instances do not install it; the portal's file browser replaces it.
+Production (volume mode) keeps Data drop for now (decision 10).
+
 **Known gap:** if Ceph is unreachable at boot, the mount is not retried when it
 comes back; the desktop stays down until the next reboot or unshelve (test 8).
 
