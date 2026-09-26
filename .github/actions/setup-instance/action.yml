@@ -225,10 +225,10 @@ runs:
           sleep 15
         done
 
-        # The same fail-closed ensure as the data portal (never a second
-        # share, never deletes), under the same lock as the portal pickup.
+        # The same fail-closed ensure as the data portal, with --existing: it
+        # only reads the share /create already required; it never creates one.
         source ~/venv/bin/activate
-        if ! details=$(python3 "$HOME/mc-data/mc_share_runner.py" ensure "$GITHUB_ID" "$GITHUB_LOGIN"); then
+        if ! details=$(python3 "$HOME/mc-data/mc_share_runner.py" ensure "$GITHUB_ID" "$GITHUB_LOGIN" --existing); then
           echo "::error ::Could not create or find the data share for $GITHUB_LOGIN ($GITHUB_ID)"
           exit 1
         fi

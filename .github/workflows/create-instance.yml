@@ -417,6 +417,8 @@ jobs:
           storage_mode:
             ${{ contains(github.event.issue.labels.*.name,
             'request-creator:user') && vars.MORPHOCLOUD_STORAGE_MODE || '' }}
+          github_id: ${{ github.event.issue.user.id }}
+          portal_url: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
           image_vgpu: ${{ vars.MORPHOCLOUD_IMAGE_VGPU }}
           image_regular: ${{ vars.MORPHOCLOUD_IMAGE_REGULAR }}
           vgpu_flavors: ${{ vars.MORPHOCLOUD_VGPU_FLAVORS || 'g3.large' }}
@@ -496,7 +498,8 @@ jobs:
       - name: comment (retry guidance on provisioning failure)
         if:
           ${{ failure() && steps.provision.outcome == 'failure' &&
-          env.CREATE_ALREADY_EXISTS != 'true' }}
+          env.CREATE_ALREADY_EXISTS != 'true' && env.CREATE_NO_STORAGE != 'true'
+          }}
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}
