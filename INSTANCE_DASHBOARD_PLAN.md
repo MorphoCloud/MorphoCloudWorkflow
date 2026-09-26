@@ -211,6 +211,28 @@ Rejected: encrypted in the portal database (token and key both on disk).
 Renew and an expiration display. Each needs the maintainer's decision before it
 is added.
 
+## Later: support chatbot (idea, not planned)
+
+Requested 2026-09-26, for later. A third card on the page, below the instance
+and storage cards: a support assistant that helps users diagnose problems.
+
+- **Model:** Jetstream2's own inference service, since the portal runs inside
+  Jetstream2. To check first: which models are offered, whether one accepts
+  images, rate limits, and the terms for sending user content to it.
+- **Knowledge:** MorphoCloud's documentation (the user guide, the issue command
+  lists, the known problems), given to the model as a skill or retrieved per
+  question. A small fine-tune on the documentation is the fallback if retrieval
+  is not good enough.
+- **Input:** a description, pasted output (for example a failed command's
+  comment or a terminal error), or a screenshot.
+- **Output:** the likely cause and the steps to fix it. When it cannot find an
+  answer, it offers to ask the MorphoCloud admins for help, sending the
+  conversation to them with the user's consent.
+- **Care needed:** screenshots and pasted output can contain the passphrase or
+  other personal information; warn before sending, and keep as little as
+  possible (collect no more personal data than needed). The assistant answers
+  questions only; it never runs commands on the user's instance.
+
 ## Test plan (Test-Instances)
 
 1. Sign in with the GitHub App; non-members are refused.
