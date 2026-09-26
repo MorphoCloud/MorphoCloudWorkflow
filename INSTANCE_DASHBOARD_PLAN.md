@@ -91,9 +91,12 @@ Workflow changes (to be built; none of this exists yet):
 1. The portal writes a marker line in the issue body.
 2. A new labeler workflow runs on `issues: opened`. When the body has the marker
    and the issue has no `request-type:*` label, it adds, in one call, the three
-   form labels plus `request-source:portal`, using the workflow GitHub App
-   token. A GitHub App token is used because label changes made with
-   `GITHUB_TOKEN` do not trigger other workflows.
+   form labels plus `request-source:portal`, using the workflow GitHub App token
+   (`vars.MORPHOCLOUD_WORKFLOW_APP_ID` +
+   `secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY`, as the request handler does).
+   It **must not** use `GITHUB_TOKEN`: label changes made with it do not trigger
+   other workflows, so the handler would never run and nothing would report an
+   error.
 3. The request handler gains an `issues: labeled` trigger that runs **only when
    the label just added is `request-source:portal`**. Form-opened issues never
    get that label, so they run once, on `opened`. Portal-opened issues run once,
@@ -109,9 +112,19 @@ The portal holds no GitHub App private key; only the workflows label.
 **Order of the first Create.** The portal opens the issue, then waits for the
 handler's result before posting `/create`:
 
-- "Instance request validated" comment → post `/create`.
+The portal reads the `### Validation Results` comment posted by
+`validate-request.yml`:
+
+- It contains `Instance request validated` → post `/create`.
+- It contains `The validation checks failed` → show that and the issue link.
+  `/create` is not posted.
 - Issue closed (not a member, or over the per-user limit) → show the handler's
   message and the issue link. `/create` is not posted.
+- None of these within 10 minutes → show "Something went wrong" with the issue
+  link, and email the admins. `/create` is not posted.
+
+These strings are a contract: changing them in `validate-request.yml` requires
+changing the portal.
 
 The per-user limit counts open individual **and** course-instance requests by
 the same author, as it does today.
