@@ -203,6 +203,10 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        if ! [[ "$GITHUB_ID" =~ ^[0-9]{1,12}$ ]]; then
+          echo "::error ::No numeric GitHub ID for the instance owner"
+          exit 1
+        fi
         ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
                   -o ConnectTimeout=10 -o LogLevel=ERROR)
 
@@ -247,11 +251,11 @@ runs:
         printf '%s' "$key" | ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" \
           "sudo install -d -m 0755 /etc/ceph && sudo sh -c 'umask 077; cat > /etc/ceph/mc-user.secret'"
 
-        ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" \
-          "sudo bash -s -- '$export_path' '$access_to'" <<'EOF'
+        # The values travel in the script body (quoted with %q), never on the
+        # remote command line.
+        { printf 'EXPORT=%q\nNAME=%q\n' "$export_path" "$access_to"
+          cat <<'EOF'
         set -euo pipefail
-        EXPORT="$1"
-        NAME="$2"
         MP=/media/share/MyDrive
         UNIT=media-share-MyDrive.mount
         H=/home/exouser
@@ -328,12 +332,15 @@ runs:
           chown -h exouser:exouser "$p"
         done
 
-        # Data drop serves /media/volume/MyData; its Uploads folder is the
-        # share's, so browser uploads land on the share too.
+        # Data drop serves /media/volume/MyData, which exists on the root
+        # disk because ansible installs Slicer there. Its Uploads folder is
+        # the share's, so browser uploads land on the share too.
         if [ -d /media/volume/MyData ]; then
           u=/media/volume/MyData/Uploads
           if [ -d "$u" ] && [ ! -L "$u" ] && [ -z "$(ls -A "$u")" ]; then rmdir "$u"; fi
           [ -e "$u" ] || ln -s "$MP/Uploads" "$u"
+        else
+          echo "WARNING: /media/volume/MyData missing; Data drop uploads are not on the share" >&2
         fi
 
         # No desktop without the share: a local fallback Desktop would hold
@@ -354,6 +361,7 @@ runs:
         fi
         echo "Share mounted at $MP; home folders linked."
         EOF
+        } | ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" 'sudo bash -s'
       env:
         INSTANCE_IP: ${{ inputs.instance_ip }}
         GITHUB_ID: ${{ inputs.github_id }}
@@ -783,6 +791,16 @@ runs:
       run: |
         ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
                   -o ConnectTimeout=10 -o LogLevel=ERROR)
+        # Wait for sshd first (up to 300 s, like the rename step), so a slow
+        # boot is not mistaken for a missing share.
+        start=$SECONDS
+        until ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" true; do
+          if (( SECONDS - start >= 300 )); then
+            echo "::error ::sshd on $INSTANCE_IP not reachable after the reboot (300s)"
+            exit 1
+          fi
+          sleep 10
+        done
         check='mountpoint -q /media/share/MyDrive &&
           [ "$(readlink /home/exouser/Desktop)" = /media/share/MyDrive/Desktop ] &&
           systemctl is-active --quiet vncserver@1'
