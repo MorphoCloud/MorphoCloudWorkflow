@@ -794,7 +794,11 @@ runs:
         # Wait for sshd first (up to 300 s, like the rename step), so a slow
         # boot is not mistaken for a missing share.
         start=$SECONDS
-        until ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" true; do
+        until out=$(ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" true 2>&1); do
+          if grep -qi "permission denied" <<<"$out"; then
+            echo "::error ::SSH auth rejected by $INSTANCE_IP after the reboot"
+            exit 1
+          fi
           if (( SECONDS - start >= 300 )); then
             echo "::error ::sshd on $INSTANCE_IP not reachable after the reboot (300s)"
             exit 1

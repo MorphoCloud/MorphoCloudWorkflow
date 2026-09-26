@@ -565,7 +565,9 @@ runs:
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     # Share mode: a hard delete loses writes the instance has not flushed to
-    # the share yet (STORAGE_REDESIGN_PLAN.md, test 4). A clean shutdown
+    # the share yet (STORAGE_REDESIGN_PLAN.md, test 4). The mode is per
+    # repository, so on Test-Instances every delete (workshop instances too)
+    # shuts down first; that costs up to a minute and loses nothing. A clean shutdown
     # flushes them. A hung instance must not block deletion, so after 3
     # minutes it is deleted anyway and the issue says so.
     - name: Shut down cleanly before delete
@@ -600,6 +602,10 @@ runs:
             echo "Shut down cleanly after $((i * 10))s."
             echo "clean=true" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          # Anything but still-running means it will not reach SHUTOFF.
+          if [[ "$status" != "ACTIVE" && "$status" != "UNKNOWN" ]]; then
+            break
           fi
         done
         echo "::warning ::$INSTANCE_NAME did not shut down within 3 minutes (status $status); deleting anyway."
