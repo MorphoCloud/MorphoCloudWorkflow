@@ -66,6 +66,11 @@ once the GitHub App works.
 ## What the page shows
 
 - The link on each card reads "Go to Issue N for full history".
+- **Storage comes first.** The storage card is the first card and the instance
+  card the second. Until the user has storage, the instance card only says
+  "Create your storage first to enable your instance" (no buttons, no instance
+  types). Storage the portal cannot reach at the moment still counts: instances
+  mount the share themselves.
 - "Open my files" opens the file browser in a panel on the right half of the
   window (below the cards on narrow screens), so the instance status stays in
   view; the panel also links to a full tab. While an action is in progress the
