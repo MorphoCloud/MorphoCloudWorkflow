@@ -58,8 +58,16 @@ jobs:
           permissions: "read,triage,write,maintain,admin"
           allowlist:
             "${{ steps.admins.outputs.members }},${{
-            vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
-            }},${{ join(github.event.issue.assignees.*.login, ',') }}"
+            vars.COURSE_INSTRUCTOR_GITHUB }},${{ (vars.MORPHOCLOUD_PORTAL_ONLY
+            != 'true' || !contains(github.event.issue.labels.*.name,
+            'request-type:instance') ||
+            github.event.comment.performed_via_github_app.slug ==
+            vars.MORPHOCLOUD_PORTAL_APP_SLUG) && github.event.issue.user.login
+            || '' }},${{ (vars.MORPHOCLOUD_PORTAL_ONLY != 'true' ||
+            !contains(github.event.issue.labels.*.name, 'request-type:instance')
+            || github.event.comment.performed_via_github_app.slug ==
+            vars.MORPHOCLOUD_PORTAL_APP_SLUG) &&
+            join(github.event.issue.assignees.*.login, ',') || '' }}"
 
       - name: shelve command
         id: shelve_command
@@ -72,8 +80,16 @@ jobs:
           permissions: "read,triage,write,maintain,admin"
           allowlist:
             "${{ steps.admins.outputs.members }},${{
-            vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
-            }},${{ join(github.event.issue.assignees.*.login, ',') }}"
+            vars.COURSE_INSTRUCTOR_GITHUB }},${{ (vars.MORPHOCLOUD_PORTAL_ONLY
+            != 'true' || !contains(github.event.issue.labels.*.name,
+            'request-type:instance') ||
+            github.event.comment.performed_via_github_app.slug ==
+            vars.MORPHOCLOUD_PORTAL_APP_SLUG) && github.event.issue.user.login
+            || '' }},${{ (vars.MORPHOCLOUD_PORTAL_ONLY != 'true' ||
+            !contains(github.event.issue.labels.*.name, 'request-type:instance')
+            || github.event.comment.performed_via_github_app.slug ==
+            vars.MORPHOCLOUD_PORTAL_APP_SLUG) &&
+            join(github.event.issue.assignees.*.login, ',') || '' }}"
 
       - name: delete command
         id: delete_command
@@ -86,8 +102,16 @@ jobs:
           permissions: "read,triage,write,maintain,admin"
           allowlist:
             "${{ steps.admins.outputs.members }},${{
-            vars.COURSE_INSTRUCTOR_GITHUB }},${{ github.event.issue.user.login
-            }},${{ join(github.event.issue.assignees.*.login, ',') }}"
+            vars.COURSE_INSTRUCTOR_GITHUB }},${{ (vars.MORPHOCLOUD_PORTAL_ONLY
+            != 'true' || !contains(github.event.issue.labels.*.name,
+            'request-type:instance') ||
+            github.event.comment.performed_via_github_app.slug ==
+            vars.MORPHOCLOUD_PORTAL_APP_SLUG) && github.event.issue.user.login
+            || '' }},${{ (vars.MORPHOCLOUD_PORTAL_ONLY != 'true' ||
+            !contains(github.event.issue.labels.*.name, 'request-type:instance')
+            || github.event.comment.performed_via_github_app.slug ==
+            vars.MORPHOCLOUD_PORTAL_APP_SLUG) &&
+            join(github.event.issue.assignees.*.login, ',') || '' }}"
 
       # No if-guard: always runs so the job output is an explicit "false"
       # (a skipped step would yield "" — confusing, and an authorization

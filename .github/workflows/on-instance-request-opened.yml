@@ -58,6 +58,56 @@ jobs:
           app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
           private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
 
+      # Portal-only mode (INSTANCE_DASHBOARD_PLAN.md decision 18): a request
+      # opened directly on GitHub, not through the portal's GitHub App (a field
+      # users cannot fake), is closed before anything else runs, unless an
+      # admin or a bot opened it. Off unless MORPHOCLOUD_PORTAL_ONLY is 'true'.
+      - name: Check admin team membership (portal-only mode)
+        id: portal_admin
+        if:
+          ${{ vars.MORPHOCLOUD_PORTAL_ONLY == 'true' &&
+          github.event.issue.performed_via_github_app.slug !=
+          vars.MORPHOCLOUD_PORTAL_APP_SLUG && github.event.issue.user.type !=
+          'Bot' }}
+        uses: ./.github/actions/check-team-membership
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: morphocloud-admins
+          username: ${{ github.event.issue.user.login }}
+
+      - name: Close a request opened outside the portal
+        if: ${{ steps.portal_admin.outputs.is_member == 'false' }}
+        run: |
+          printf 'Please request and manage your instance on the MorphoCloud portal: %s\n\nThis request was closed; nothing was created.\n' \
+            "${PORTAL_URL:-https://morphocloud.org}" > "$RUNNER_TEMP/portal-only.md"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/portal-only.md"
+          gh issue close "$ISSUE_NUMBER" --reason "not planned"
+          echo "::error ::Request opened outside the portal; closed (portal-only mode)"
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          PORTAL_URL: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
+
+      # 'unknown' is GitHub failing to answer, not a verdict: stop without
+      # closing, as the membership check below does.
+      - name: Halt on inconclusive admin check (portal-only mode)
+        if: ${{ steps.portal_admin.outputs.is_member == 'unknown' }}
+        run: |
+          printf "### Validation Could Not Complete ⚠️\n\nGitHub's API returned an error (HTTP %s), so this request was not validated. This issue was **not** closed; an admin can re-run the validation once GitHub recovers.\n" \
+            "$HTTP_CODE" > "$RUNNER_TEMP/portal-only-unknown.md"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/portal-only-unknown.md" || true
+          echo "::error ::Could not check whether $ISSUE_CREATOR is an admin (GitHub API HTTP $HTTP_CODE); halting without closing the issue"
+          exit 1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATOR: ${{ github.event.issue.user.login }}
+          HTTP_CODE: ${{ steps.portal_admin.outputs.http_code }}
+
       - name: Check MorphoCloudUsers team membership
         id: check_membership
         uses: ./.github/actions/check-team-membership
