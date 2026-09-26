@@ -79,9 +79,10 @@ once the GitHub App works.
   instance. Any other label is shown as-is with the issue link.
 - Buttons match the state: active → Shelve and Delete; shelved → Unshelve and
   Delete; no instance → none (the Create form below applies). After a press, the
-  card shows "Working…" and the buttons are hidden until the workflow reacts on
-  the command comment (👍 finished, 👎 failed; see `report-command-outcome`), at
-  most 3 hours. A failed command is noted on the card for a day.
+  card names the action ("Shelving…", "Creating…") and the buttons are hidden
+  until the workflow reacts on the command comment (👍 finished, 👎 failed; see
+  `report-command-outcome`), at most 3 hours. A failed command is noted on the
+  card for a day.
 - Delete opens a confirmation page: "This removes your instance. Anything saved
   only on the instance is lost. Your files in your storage are not affected."
   with **Delete instance** and **Cancel**.
