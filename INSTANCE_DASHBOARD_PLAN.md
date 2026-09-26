@@ -28,6 +28,7 @@ this table is updated first.
 | 11  | Individual instances only. Courses and workshops are out of scope.                                                                                                                                                                                    |
 | 12  | A portal-opened issue is opened with the **user's token** (the user stays the author). A workflow adds the form's three labels plus `request-source:portal`, and the request handler runs once, on that label.                                        |
 | 13  | The user's GitHub token is kept **in the portal's memory only**: never on disk, never in the cookie. A portal restart signs everyone out.                                                                                                             |
+| 14  | **One instance per user.** With per-user shares, two instances would mount the same share at once. The portal offers Create instance only when the user has no open request, and never a second one.                                                  |
 
 ## Sign-in (decision 8)
 
@@ -172,8 +173,8 @@ Rejected: encrypted in the portal database (token and key both on disk).
 
 ## Not decided (not in the first version)
 
-Renew, an expiration display, and creating a second instance while one request
-is open. Each needs the maintainer's decision before it is added.
+Renew and an expiration display. Each needs the maintainer's decision before it
+is added.
 
 ## Test plan (Test-Instances)
 
