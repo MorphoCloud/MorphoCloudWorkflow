@@ -440,6 +440,13 @@ today's behaviour):
 | `MORPHOCLOUD_EXPIRATION_LADDER`      | `90d,180d`                                                      |
 | `MORPHOCLOUD_MAX_INSTANCES_PER_USER` | `1`                                                             |
 | `MORPHOCLOUD_DATA_PORTAL_URL`        | `https://mc-data-portal.bio240357.projects.jetstream-cloud.org` |
+| `MORPHOCLOUD_PORTAL_ONLY`            | `true` (INSTANCE_DASHBOARD_PLAN.md decision 18)                 |
+| `MORPHOCLOUD_PORTAL_APP_SLUG`        | `morphocloud-portal-test`                                       |
+
+The data portal's own settings (`/etc/mc-data-portal/portal.env` on its VM),
+beyond those `deploy/provision.sh` writes: `MC_UNAVAILABLE_FLAVORS=g4.xl,r3.*`
+(instance types greyed out during the evaluation). The Help card needs none; its
+defaults are in CHATBOT_PLAN.md in the data portal repo.
 
 The runner host also needs `~/mc-data/` from `runner/install-runner.sh` in the
 data portal repo (share pickup, `lookup`/`ensure`, `portal_target`).
