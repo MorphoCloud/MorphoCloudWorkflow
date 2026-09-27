@@ -440,6 +440,11 @@ pixels). Images come from Docker Hub (`guacamole/guacd:1.6.0`,
 and Safari still need the side panel. Decided by the maintainer 2026-09-27, for
 the prototype only; production keeps 1.5.5 until it moves to the prototype.
 
+**Desktop launchers start without "Allow Launching":** setup marks the launchers
+on the share trusted for exouser (`gio set … metadata::trusted true`) before the
+first desktop session. The login-time autostart that also does this can run
+after GNOME has drawn the icons, which then show as untrusted (seen on #452).
+
 **No Guacamole side panel in share mode:** the Ctrl+Alt+Shift menu (and the
 touch swipe that opens it) is switched off, and files dropped onto the web
 desktop are ignored instead of starting an upload that cannot finish. A second

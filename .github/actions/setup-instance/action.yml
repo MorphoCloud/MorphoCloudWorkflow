@@ -347,6 +347,18 @@ runs:
         else
           echo 'enabled=False' >> /etc/xdg/user-dirs.conf
         fi
+        # Trust the desktop launchers before the first desktop session, so they
+        # start without "Allow Launching". The login-time autostart that also
+        # does this can run after GNOME has drawn the icons (seen on #452). The
+        # mark lives in exouser's local home, set through a private session bus.
+        for f in "$MP"/Desktop/*.desktop; do
+          [ -e "$f" ] || continue
+          runuser -u exouser -- env HOME="$H" dbus-run-session -- sh -c \
+            'gio set "$1" metadata::trusted true && gio set "$2" metadata::trusted true' \
+            sh "$f" "$H/Desktop/$(basename "$f")" \
+            || echo "Could not mark $(basename "$f") as trusted" >&2
+        done
+
         echo "Share mounted at $MP; home folders linked."
         EOF
         } | ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" 'sudo bash -s'
