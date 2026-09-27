@@ -144,6 +144,9 @@ runner the steps do nothing.
 - Replaced on every create and unshelve (the address changes).
 - Cleared on shelve and delete.
 - Shown only to the issue's author.
+- Under Open in browser, one line: "Works best in Chrome or Edge; copy and paste
+  won't work in Firefox or Safari." (The web desktop has no side panel in share
+  mode, STORAGE_REDESIGN_PLAN.md.)
 
 ## Portal-opened issues (decision 12)
 
