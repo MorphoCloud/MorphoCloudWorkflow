@@ -440,6 +440,15 @@ pixels). Images come from Docker Hub (`guacamole/guacd:1.6.0`,
 and Safari still need the side panel. Decided by the maintainer 2026-09-27, for
 the prototype only; production keeps 1.5.5 until it moves to the prototype.
 
+**No Guacamole side panel in share mode:** the Ctrl+Alt+Shift menu (and the
+touch swipe that opens it) is switched off, and files dropped onto the web
+desktop are ignored instead of starting an upload that cannot finish. A second
+Guacamole extension, installed only when `storage_mode=share`, keeps the menu
+closed. Cost: in Firefox and Safari there is no way to paste into or copy out of
+the web desktop (Chrome and Edge sync the clipboard natively); TurboVNC is the
+alternative there. Decided by the maintainer 2026-09-27. Production (volume
+mode) keeps the panel.
+
 **Test-Instances settings for the prototype** (repository variables; unset means
 today's behaviour):
 
