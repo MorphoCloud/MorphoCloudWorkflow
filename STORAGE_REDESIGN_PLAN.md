@@ -428,6 +428,10 @@ yet (decision 7).
 new instances do not install it; the portal's file browser replaces it.
 Production (volume mode) keeps Data drop for now (decision 10).
 
+**No Guacamole file transfer in share mode:** the web desktop and web shell have
+no upload/download panel (`enable-sftp` off); the portal's file browser replaces
+it. Decided by the maintainer 2026-09-26. Production (volume mode) keeps it.
+
 **Test-Instances settings for the prototype** (repository variables; unset means
 today's behaviour):
 
