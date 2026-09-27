@@ -432,6 +432,14 @@ Production (volume mode) keeps Data drop for now (decision 10).
 no upload/download panel (`enable-sftp` off); the portal's file browser replaces
 it. Decided by the maintainer 2026-09-26. Production (volume mode) keeps it.
 
+**Guacamole 1.6.0, desktop sized to the browser window:** the web desktop
+resizes with the browser window, and text stays at the local OS size on Retina
+and scaled displays (the Exosphere Guacamole extension sizes the desktop in CSS
+pixels). Images come from Docker Hub (`guacamole/guacd:1.6.0`,
+`guacamole/guacamole:1.6.0`). Clipboard syncs natively in Chrome/Edge; Firefox
+and Safari still need the side panel. Decided by the maintainer 2026-09-27, for
+the prototype only; production keeps 1.5.5 until it moves to the prototype.
+
 **Test-Instances settings for the prototype** (repository variables; unset means
 today's behaviour):
 

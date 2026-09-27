@@ -208,7 +208,7 @@ retry git clone \
   /opt/instance-config-mgt \
   || fail "could not clone MorphoCloud/exosphere"
 
-exosphere_sha="0d180bc3708825a1f5bbbc574079355d997aa560" # share-prototype (Test-Instances only; volume mode unchanged)
+exosphere_sha="3d2751e211da9d07959e3c3e217507574cfa7b09" # share-prototype (Test-Instances only; volume mode unchanged)
 (cd /opt/instance-config-mgt && git reset --hard "$exosphere_sha") \
   || fail "could not check out exosphere commit $exosphere_sha"
 
