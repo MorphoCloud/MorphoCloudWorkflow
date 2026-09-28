@@ -29,6 +29,35 @@ inputs:
   token:
     description: "GITHUB_TOKEN or repo scoped PAT"
     required: true
+  storage_mode:
+    description:
+      "'share' to use the owner's data share instead of a volume (phase 2
+      prototype, Test-Instances only); empty for the volume path"
+    required: false
+    default: ""
+  image_vgpu:
+    description:
+      "Share mode: baked image for the vGPU flavors (empty = Featured-Ubuntu24)"
+    required: false
+    default: ""
+  image_regular:
+    description:
+      "Share mode: baked image for every other flavor (empty =
+      Featured-Ubuntu24)"
+    required: false
+    default: ""
+  vgpu_flavors:
+    description: "Share mode: comma-separated vGPU flavors"
+    required: false
+    default: "g3.large"
+  github_id:
+    description: "Share mode: numeric GitHub ID of the instance owner"
+    required: false
+    default: ""
+  portal_url:
+    description: "Share mode: data portal address, for the no-storage message"
+    required: false
+    default: ""
 outputs:
   instance_name:
     description: "Name of the provisioned instance"
@@ -46,6 +75,43 @@ outputs:
 runs:
   using: "composite"
   steps:
+    # Share mode: storage is created only on the data portal
+    # (STORAGE_REDESIGN_PLAN.md, decision 14). Refuse before creating anything.
+    # A failed lookup stops too; it is never read as "no storage".
+    - name: Require the owner's data share
+      id: require_share
+      if: ${{ inputs.storage_mode == 'share' }}
+      shell: bash
+      run: |
+        if ! [[ "$GITHUB_ID" =~ ^[0-9]{1,12}$ ]]; then
+          echo "::error ::No numeric GitHub ID for the instance owner"
+          exit 1
+        fi
+        source ~/venv/bin/activate
+        if ! out=$(python3 "$HOME/mc-data/mc_share_runner.py" lookup "$GITHUB_ID"); then
+          echo "CREATE_NO_STORAGE=true" >> "$GITHUB_ENV"
+          printf '### Instance Creation Results ❌\n\nYour storage could not be checked, so nothing was created. Please run `/create` again in a few minutes.\n' > "$RUNNER_TEMP/no-share.md"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/no-share.md"
+          echo "::error ::Could not look up the data share for $GITHUB_ID"
+          exit 1
+        fi
+        if [[ "$(jq -r '.exists' <<<"$out")" != "true" ]]; then
+          echo "CREATE_NO_STORAGE=true" >> "$GITHUB_ENV"
+          printf '### Instance Creation Results ❌\n\nCreate your storage first: sign in at %s and press **Create my storage**, then run `/create` again. Nothing was created.\n' \
+            "${PORTAL_URL:-the data portal}" > "$RUNNER_TEMP/no-share.md"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/no-share.md"
+          echo "::error ::$GITHUB_ID has no data share"
+          exit 1
+        fi
+        echo "Data share found for $GITHUB_ID."
+      env:
+        GITHUB_ID: ${{ inputs.github_id }}
+        PORTAL_URL: ${{ inputs.portal_url }}
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+
     - name: Define instance name
       id: define
       uses: ./.github/actions/define-instance-name
@@ -218,15 +284,18 @@ runs:
         issue_number: ${{ inputs.issue_number }}
         suffix: ${{ inputs.volume_name_suffix }}
 
+    # Share mode (STORAGE_REDESIGN_PLAN.md phase 2): no volume at all; the
+    # owner's share is mounted during setup instead.
     - name: Check volume exists
       id: check_volume
+      if: ${{ inputs.storage_mode != 'share' }}
       uses: ./.github/actions/check-volume-exists
       with:
         os_cloud: ${{ inputs.os_cloud }}
         volume_name: ${{ steps.define_volume_name.outputs.volume_name }}
 
     - name: comment (volume already exists)
-      if: ${{ fromJSON(steps.check_volume.outputs.exists) }}
+      if: ${{ steps.check_volume.outputs.exists == 'true' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
@@ -236,7 +305,9 @@ runs:
           Volume **${{ steps.define_volume_name.outputs.volume_name }}** already exists.
 
     - name: Create Volume
-      if: ${{ ! fromJSON(steps.check_volume.outputs.exists) }}
+      if:
+        ${{ inputs.storage_mode != 'share' && steps.check_volume.outputs.exists
+        == 'false' }}
       id: create_volume
       shell: bash
       run: |
@@ -321,12 +392,30 @@ runs:
         echo "Session timeout for this instance: ${TIMEOUT_HRS}h"
         sed -i "s|{session-timeout-hrs}|${TIMEOUT_HRS}|g" ./cloud-config
 
+        # Share mode (STORAGE_REDESIGN_PLAN.md, golden images): Slicer lives
+        # on the root disk at /opt/slicer and saves to Documents (on the
+        # share), and the instance boots from the baked image for its GPU
+        # kind. Volume mode keeps the stock image and ansible defaults.
+        INSTANCE_IMAGE="Featured-Ubuntu24"
+        if [[ "$STORAGE_MODE" == "share" ]]; then
+          sed -i 's|\\"guac_enabled\\":true,|\\"guac_enabled\\":true,\\"storage_mode\\":\\"share\\",\\"slicer_install_dir\\":\\"/opt/slicer\\",\\"slicer_default_scene_path\\":\\"/home/exouser/Documents\\",|' ./cloud-config
+          grep -q 'storage_mode' ./cloud-config || { echo "::error ::could not add the share-mode ansible variables to cloud-config"; exit 1; }
+          # No Data drop in share mode: the data portal replaces it.
+          sed -i 's|\\"dropzone_enabled\\":true|\\"dropzone_enabled\\":false|' ./cloud-config
+          if [[ ",$VGPU_FLAVORS," == *",$INSTANCE_FLAVOR,"* ]]; then
+            INSTANCE_IMAGE="${IMAGE_VGPU:-Featured-Ubuntu24}"
+          else
+            INSTANCE_IMAGE="${IMAGE_REGULAR:-Featured-Ubuntu24}"
+          fi
+        fi
+        echo "Image for this instance: $INSTANCE_IMAGE"
+
 
         openstack server create "$INSTANCE_NAME" \
           --nic net-id="auto_allocated_network" \
           --security-group "exosphere" \
           --flavor "$INSTANCE_FLAVOR" \
-          --image "Featured-Ubuntu24" \
+          --image "$INSTANCE_IMAGE" \
           --key-name "murat-key" \
           --property "exoGuac={\"v\":1,\"ssh\":true,\"vnc\":true}" \
           --property "exoClientUuid=$exoClientUuid" \
@@ -351,6 +440,10 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         GH_REPO: ${{ github.repository }}
         DEFAULT_SESSION_TIMEOUT_HRS: ${{ inputs.default_session_timeout_hrs }}
+        STORAGE_MODE: ${{ inputs.storage_mode }}
+        IMAGE_VGPU: ${{ inputs.image_vgpu }}
+        IMAGE_REGULAR: ${{ inputs.image_regular }}
+        VGPU_FLAVORS: ${{ inputs.vgpu_flavors }}
 
     - name: Wait for instance to reach stable state
       id: wait_instance_state
@@ -474,8 +567,8 @@ runs:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         CURRENT_STATUS: ${{ steps.wait_instance_state.outputs.final_status }}
 
-    # env.CREATE_ALREADY_EXISTS: a redundant /create is refused up front with
-    # its own explanation; adding a generic "Failed to create instance" on top
+    # env.CREATE_ALREADY_EXISTS / CREATE_NO_STORAGE: a /create refused up
+    # front (already exists; no data share) carries its own explanation; adding a generic "Failed to create instance" on top
     # of it is the noise that sent users to /delete_all (Instances#168).
     - name: comment (instance creation failed)
       if:
@@ -483,7 +576,8 @@ runs:
         steps.wait_instance_state.outcome == 'failure' ||
         steps.check_capacity_error.outputs.capacity_error != 'true') &&
         failure() && steps.check_capacity_error.outputs.capacity_error != 'true'
-        && env.CREATE_ALREADY_EXISTS != 'true' }}
+        && env.CREATE_ALREADY_EXISTS != 'true' && env.CREATE_NO_STORAGE !=
+        'true' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}

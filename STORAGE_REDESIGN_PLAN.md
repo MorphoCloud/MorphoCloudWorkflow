@@ -428,6 +428,55 @@ yet (decision 7).
 new instances do not install it; the portal's file browser replaces it.
 Production (volume mode) keeps Data drop for now (decision 10).
 
+**No Guacamole file transfer in share mode:** the web desktop and web shell have
+no upload/download panel (`enable-sftp` off); the portal's file browser replaces
+it. Decided by the maintainer 2026-09-26. Production (volume mode) keeps it.
+
+**Guacamole 1.6.0, desktop sized to the browser window:** the web desktop
+resizes with the browser window, and text stays at the local OS size on Retina
+and scaled displays (the Exosphere Guacamole extension sizes the desktop in CSS
+pixels). Images come from Docker Hub (`guacamole/guacd:1.6.0`,
+`guacamole/guacamole:1.6.0`). Clipboard syncs natively in Chrome/Edge; Firefox
+and Safari still need the side panel. Decided by the maintainer 2026-09-27, for
+the prototype only; production keeps 1.5.5 until it moves to the prototype.
+
+**Desktop launchers start without "Allow Launching":** setup marks the launchers
+on the share trusted for exouser (`gio set … metadata::trusted true`) before the
+first desktop session. The login-time autostart that also does this can run
+after GNOME has drawn the icons, which then show as untrusted (seen on #452).
+
+**No Guacamole side panel in share mode:** the Ctrl+Alt+Shift menu (and the
+touch swipe that opens it) is switched off, and files dropped onto the web
+desktop are ignored instead of starting an upload that cannot finish. A second
+Guacamole extension, installed only when `storage_mode=share`, keeps the menu
+closed. Cost: in Firefox and Safari there is no way to paste into or copy out of
+the web desktop (Chrome and Edge sync the clipboard natively); TurboVNC is the
+alternative there. Decided by the maintainer 2026-09-27. Production (volume
+mode) keeps the panel.
+
+**Test-Instances settings for the prototype** (repository variables; unset means
+today's behaviour):
+
+| Variable                             | Value                                                           |
+| ------------------------------------ | --------------------------------------------------------------- |
+| `MORPHOCLOUD_STORAGE_MODE`           | `share`                                                         |
+| `MORPHOCLOUD_IMAGE_VGPU`             | `morphocloud-share-vgpu-20260926`                               |
+| `MORPHOCLOUD_IMAGE_REGULAR`          | `morphocloud-share-regular-20260926`                            |
+| `MORPHOCLOUD_VGPU_FLAVORS`           | `g3.large`                                                      |
+| `MORPHOCLOUD_EXPIRATION_LADDER`      | `90d,180d`                                                      |
+| `MORPHOCLOUD_MAX_INSTANCES_PER_USER` | `1`                                                             |
+| `MORPHOCLOUD_DATA_PORTAL_URL`        | `https://mc-data-portal.bio240357.projects.jetstream-cloud.org` |
+| `MORPHOCLOUD_PORTAL_ONLY`            | `true` (INSTANCE_DASHBOARD_PLAN.md decision 18)                 |
+| `MORPHOCLOUD_PORTAL_APP_SLUG`        | `morphocloud-portal-test`                                       |
+
+The data portal's own settings (`/etc/mc-data-portal/portal.env` on its VM),
+beyond those `deploy/provision.sh` writes: `MC_UNAVAILABLE_FLAVORS=g4.xl,r3.*`
+(instance types greyed out during the evaluation). The Help card needs none; its
+defaults are in CHATBOT_PLAN.md in the data portal repo.
+
+The runner host also needs `~/mc-data/` from `runner/install-runner.sh` in the
+data portal repo (share pickup, `lookup`/`ensure`, `portal_target`).
+
 **Known gap:** if Ceph is unreachable at boot, the mount is not retried when it
 comes back; the desktop stays down until the next reboot or unshelve (test 8).
 

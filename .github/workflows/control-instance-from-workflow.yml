@@ -72,6 +72,7 @@ jobs:
         uses: ./.github/actions/control-instance
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          storage_mode: ${{ vars.MORPHOCLOUD_STORAGE_MODE }}
           issue_number: ${{ inputs.issue_number }}
           command_name: ${{ inputs.command_name }}
           unapprove_after_delete: ${{ inputs.unapprove_after_delete }}
