@@ -70,6 +70,12 @@ once the GitHub App works.
   "Create your storage first to enable your instance" (no buttons, no instance
   types). Storage the portal cannot reach at the moment still counts: instances
   mount the share themselves.
+- **No reset under a running instance.** "Reset my storage" works only when
+  every instance is shelved or deleted and no action is in progress; otherwise
+  the button is unavailable with "Shelve or delete your instance first", and the
+  reset page refuses too (also when the instance state cannot be checked). While
+  a reset is queued or running, Unshelve and Create are refused, so an instance
+  cannot mount the storage mid-reset. Decided by the maintainer 2026-09-28.
 - The header has two links right of the logo, one above the other:
   **Documentation** (https://github.com/MorphoCloud/docs) and **User guide**
   (its `user-guide` folder).
