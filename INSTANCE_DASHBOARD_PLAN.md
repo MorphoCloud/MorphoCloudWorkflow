@@ -147,6 +147,11 @@ runner the steps do nothing.
 - Under Open in browser, one line: "Works best in Chrome or Edge; copy and paste
   won't work in Firefox or Safari." (The web desktop has no side panel in share
   mode, STORAGE_REDESIGN_PLAN.md.)
+- Order: Username and Passphrase first, then the ways to connect: Web connect,
+  SSH, TurboVNC. The TurboVNC label links to the latest TurboVNC release on
+  GitHub (https://github.com/TurboVNC/turbovnc/releases/latest, never a fixed
+  version), and a line under the list reads "Click TurboVNC to download the
+  viewer."
 
 ## Portal-opened issues (decision 12)
 
