@@ -48,27 +48,44 @@ with a Create button for over an hour; the 5-minute label sync that should have
 repaired the label is a GitHub-scheduled workflow, which GitHub delivers about 8
 times a day on Test-Instances). Every run of the runner's `pickup` (once a
 minute, under its lock, each OpenStack call with a 60-second timeout) also lists
-the project's instances — status, floating IP, `exoSetup` — and for each request
-issue compares that with what the portal holds. On a difference it writes: the
-**state row** through a new gate command `state <issue>` (a JSON object: status,
-setup done, has IP, verified-at; no secrets), the **access details** through the
-existing `connection` / `connection-clear` commands (the passphrase from the
-`exoPw` tag, with the existing SSH fallback), and on Test-Instances the
-**`status:*` label**, which the reconciliation owns there —
-`update-request-status-label.yml` is disabled on Test-Instances, and a label is
-changed only when the difference has persisted for two consecutive runs, so an
-in-flight workflow is never fought mid-swap. In steady state it reads two lists
-and writes nothing. **Freshness:** the portal uses the state row only while it
-is younger than two cycles; older, the card falls back to the labels and says
-the state is unverified, so a stopped runner can never show a gone instance as
-alive. This costs no GitHub Actions minutes: it is the runner host's crontab,
+the project's instances and sends the portal **one snapshot** through a new gate
+command `state`: per issue, the status, task state, whether setup finished (the
+`exoSetup` marker) and the floating IP — only an active server's, since a
+shelved server still lists the address it held before shelving. No secrets. The
+portal stores the snapshot in place of the previous one and stamps it with its
+own clock (the runner's clock is not trusted), **clears the access details**
+itself for every instance that is gone or settled in a state other than active
+(nothing is decided mid-task), and answers with the issues whose details it
+lacks or whose address changed. For those the runner sends the **access
+details** through the existing `connection` command, passphrase from the `exoPw`
+tag, else read from the instance over SSH and cached as that tag exactly as the
+workflows' retrieve-metadata action does, marked as a restore so the session
+timer is left alone. `connection` is an upsert on the issue — last write wins,
+identical values are a no-op — and the gate runs one command per SSH connection,
+so the workflow's push and this one never interleave. On Test-Instances the
+reconciliation also owns the **`status:*` label**
+(`update-request-status-label.yml` is disabled there): a label is changed only
+when the same difference from Jetstream2 has been seen on two consecutive runs;
+that count is kept on the runner in `~/mc-data`, per issue with the value seen,
+and a restart or a different value starts it again from one, so a single
+observation never changes a label, and a workflow's own label write that matches
+Jetstream2 ends the difference. In steady state it reads two lists, sends the
+snapshot and writes nothing else. **Freshness:** the portal uses the state rows
+only while the snapshot's stamp is younger than 150 seconds (two one-minute
+cycles plus slack, `MC_RECONCILE_FRESH_SECONDS`); older, the card falls back to
+the labels and says the state is unverified, so a stopped runner can never show
+a gone instance as alive. The card, the command gates and the "Create replaces
+an empty request" check all read the state through one function, so they never
+disagree. This costs no GitHub Actions minutes: it is the runner host's crontab,
 not a workflow, and it replaces the label-sync workflow's runs on
-Test-Instances. The gate command carries one JSON object about one issue, and
-the runner can read nothing through it. **Scope now: the instance only.** The
-session (decision 19) and the share's state are the same mechanism and will join
-it through the same command later, which is why the row is a JSON object rather
+Test-Instances. The runner can read nothing through the gate but the answer to
+its own snapshot (issue numbers and logins). **Scope now: the instance only.**
+The session (decision 19) and the share's state are the same mechanism and will
+join it through the same snapshot later, which is why it is a JSON object rather
 than fixed columns. Production is untouched: the portal and its runner exist
-only on Test. |
+only on Test. Built and live on Test 2026-10-07 (data portal PR #5), except the
+label ownership, which needs a GitHub credential on the runner and is a separate
+decision. |
 
 ## Sign-in (decision 8)
 
