@@ -62,30 +62,35 @@ tag, else read from the instance over SSH and cached as that tag exactly as the
 workflows' retrieve-metadata action does, marked as a restore so the session
 timer is left alone. `connection` is an upsert on the issue — last write wins,
 identical values are a no-op — and the gate runs one command per SSH connection,
-so the workflow's push and this one never interleave. On Test-Instances the
-reconciliation also owns the **`status:*` label**
-(`update-request-status-label.yml` is disabled there): a label is changed only
-when the same difference from Jetstream2 has been seen on two consecutive runs;
-that count is kept on the runner in `~/mc-data`, per issue with the value seen,
-and a restart or a different value starts it again from one, so a single
-observation never changes a label, and a workflow's own label write that matches
-Jetstream2 ends the difference. In steady state it reads two lists, sends the
-snapshot and writes nothing else. **Freshness:** the portal uses the state rows
-only while the snapshot's stamp is younger than 150 seconds (two one-minute
-cycles plus slack, `MC_RECONCILE_FRESH_SECONDS`); older, the card falls back to
-the labels and says the state is unverified, so a stopped runner can never show
-a gone instance as alive. The card, the command gates and the "Create replaces
-an empty request" check all read the state through one function, so they never
-disagree. This costs no GitHub Actions minutes: it is the runner host's crontab,
-not a workflow, and it replaces the label-sync workflow's runs on
-Test-Instances. The runner can read nothing through the gate but the answer to
-its own snapshot (issue numbers and logins). **Scope now: the instance only.**
-The session (decision 19) and the share's state are the same mechanism and will
-join it through the same snapshot later, which is why it is a JSON object rather
-than fixed columns. Production is untouched: the portal and its runner exist
-only on Test. Built and live on Test 2026-10-07 (data portal PR #5), except the
-label ownership, which needs a GitHub credential on the runner and is a separate
-decision. |
+so the workflow's push and this one never interleave. **The reconciliation
+writes nothing on GitHub.** The `status:*` labels stay with the workflows and
+the scheduled sync, and the portal no longer depends on them: the card, the
+assistant's verdicts and the command gates read the runner's report while it is
+fresh and fall back to the labels only when it is not. Decided 2026-10-07 by the
+maintainer, instead of giving the runner a GitHub credential to keep the labels
+right (a PAT would act as an admin, and admin comments are the command control
+plane; a dedicated App was the safer shape, and still a credential to watch).
+The cost is that an issue's label can lag Jetstream2 for hours on Test-Instances
+until the sync fires, so the issue page is no longer the admin's view of a
+member's state; `sudo mc-data-admin status` on the portal VM is — it prints, per
+request, the runner's last report, whether the portal holds the access details
+(never the passphrase) and any Check again now waiting, over the SSH and sudo an
+admin already has, with no new credential and no new web surface. In steady
+state the reconciliation reads two lists, sends the snapshot and writes nothing
+else. **Freshness:** the portal uses the state rows only while the snapshot's
+stamp is younger than 150 seconds (two one-minute cycles plus slack,
+`MC_RECONCILE_FRESH_SECONDS`); older, the card falls back to the labels and says
+the state is unverified, so a stopped runner can never show a gone instance as
+alive. The card, the command gates and the "Create replaces an empty request"
+check all read the state through one function, so they never disagree. This
+costs no GitHub Actions minutes: it is the runner host's crontab, not a
+workflow. The runner can read nothing through the gate but the answer to its own
+snapshot (issue numbers and logins). **Scope now: the instance only.** The
+session (decision 19) and the share's state are the same mechanism and will join
+it through the same snapshot later, which is why it is a JSON object rather than
+fixed columns. Production is untouched: the portal and its runner exist only on
+Test. Built and live on Test 2026-10-07 (data portal PRs #5 and #6, the latter
+the assistant's use of it, CHATBOT_PLAN.md decision 19). |
 
 ## Sign-in (decision 8)
 
