@@ -239,6 +239,12 @@ def vendorize(session: nox.Session) -> None:
             # Retired — replaced by the close-expired-issues.yml end-of-life
             # sweep; excluded so _prune_orphans removes downstream copies.
             ".github/workflows/automatic-instance-deleting.yml",
+            # Retired with the per-instance data volume (STORAGE_REDESIGN_PLAN.md,
+            # "Workflow files with volume logic"); excluded so the copies go too.
+            ".github/workflows/delete-volume.yml",
+            ".github/workflows/delete-volume-from-workflow.yml",
+            ".github/workflows/automatic-volume-deleting.yml",
+            ".github/actions/delete-volume/action.yml",
             # Claude PR reviewer — MWF-only (needs the CLAUDE_CODE_OAUTH_TOKEN
             # secret, which only exists here; downstream repos take direct
             # pushes, not PRs)
