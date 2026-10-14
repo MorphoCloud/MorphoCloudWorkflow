@@ -368,6 +368,24 @@ runs:
         GITHUB_LOGIN: ${{ inputs.github_login }}
         OS_CLOUD: ${{ inputs.os_cloud }}
 
+    # Share expiry (STORAGE_REDESIGN_PLAN.md): the share records which instance
+    # holds it and when; the expiry sweep keeps a held share whatever its age.
+    # Never fails the create: a missed stamp costs at most an early warning.
+    - name: Record the mount on the data share
+      if:
+        ${{ inputs.storage_mode == 'share' && steps.mount_share.outcome ==
+        'success' }}
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+        if ! python3 "$HOME/mc-data/mc_share_runner.py" touch "$GITHUB_ID" --instance "$INSTANCE_NAME" > /dev/null; then
+          echo "::warning ::Could not record the mount on the data share for $GITHUB_ID"
+        fi
+      env:
+        GITHUB_ID: ${{ inputs.github_id }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
+        OS_CLOUD: ${{ inputs.os_cloud }}
+
     - name: comment (failed to mount the data share)
       if: ${{ steps.mount_share.outcome == 'failure' && failure() }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
