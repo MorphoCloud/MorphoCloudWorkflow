@@ -129,6 +129,8 @@ jobs:
       # event, so it reaches nobody (see control-instance): the email is what
       # makes "the admins have been notified" true.
       - name: Notify admins by email (dispatch failed)
+        # A mail outage must never replace the real failure in the run log.
+        continue-on-error: true
         if: ${{ failure() && vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS != '' }}
         uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
         with:
