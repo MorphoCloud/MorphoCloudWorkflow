@@ -1406,9 +1406,10 @@ runs:
           exit 0
         fi
         if [[ "$(jq -r .state <<<"$issue")" == "CLOSED" ]]; then
-          # Closed by its owner before the delete (guard-issue-close): say so
-          # without closing twice.
-          gh issue comment "$ISSUE_NUMBER" --body "The instance was deleted. Your files stay in your storage."
+          # Closed by its owner before the delete (guard-issue-close, which
+          # already told them where their files are): nothing to close, and
+          # the success comment above has said the instance is gone.
+          echo "Request #$ISSUE_NUMBER was already closed."
           exit 0
         fi
         gh issue close "$ISSUE_NUMBER" --reason completed \
