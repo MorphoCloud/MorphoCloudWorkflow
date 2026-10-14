@@ -419,6 +419,7 @@ jobs:
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          PORTAL_URL: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
           CANDIDATES: ${{ needs.sweep.outputs.candidates }}
 

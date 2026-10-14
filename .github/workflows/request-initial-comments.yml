@@ -98,9 +98,8 @@ jobs:
       # the request gets a note with its address instead of the command table.
       - name: Render the portal note
         id: portal_note
-        if:
-          ${{ inputs.commands_md_path == '' && vars.MORPHOCLOUD_PORTAL_ONLY ==
-          'true' }}
+        # Course repositories pass their own table and never set PORTAL_ONLY.
+        if: ${{ vars.MORPHOCLOUD_PORTAL_ONLY == 'true' }}
         uses: chuhlomin/render-template@a7c644e341797d050d1cb24332d83791b9a46dae # v1
         with:
           template: issue-commands-portal.md

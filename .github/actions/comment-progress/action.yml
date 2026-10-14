@@ -45,22 +45,34 @@ runs:
       run: |
         # Share mode has no volume steps: they count as done.
         volume_steps_done=true
-        if [[ "{{ inputs.storage_mode }}" != "share" ]]; then
-          [[ "{{ inputs.create_volume }}" == "✅" && "{{ inputs.attach_volume }}" == "✅" ]] || volume_steps_done=false
+        if [[ "$STORAGE_MODE" != "share" ]]; then
+          [[ "$CREATE_VOLUME" == "✅" && "$ATTACH_VOLUME" == "✅" ]] || volume_steps_done=false
         fi
         if [[ \
-          "{{ inputs.create_ip }}" == "✅" && \
+          "$CREATE_IP" == "✅" && \
           "$volume_steps_done" == "true" && \
-          "{{ inputs.create_instance }}" == "✅" && \
-          "{{ inputs.associate_ip }}" == "✅" && \
-          "{{ inputs.setup_instance }}" == "✅" && \
-          "{{ inputs.send_email }}" == "✅" \
+          "$CREATE_INSTANCE" == "✅" && \
+          "$ASSOCIATE_IP" == "✅" && \
+          "$SETUP_INSTANCE" == "✅" && \
+          "$SEND_EMAIL" == "✅" \
           ]]; then
           value="✅"
         else
           value="⏳"
         fi
         echo "value=$value" >> $GITHUB_OUTPUT
+      env:
+        # The inputs reach the shell through the environment; the bare
+        # {{ }} the step used before was never expanded, so the header's
+        # status stayed ⏳ for every create.
+        STORAGE_MODE: ${{ inputs.storage_mode }}
+        CREATE_IP: ${{ inputs.create_ip }}
+        CREATE_VOLUME: ${{ inputs.create_volume }}
+        CREATE_INSTANCE: ${{ inputs.create_instance }}
+        ASSOCIATE_IP: ${{ inputs.associate_ip }}
+        SETUP_INSTANCE: ${{ inputs.setup_instance }}
+        ATTACH_VOLUME: ${{ inputs.attach_volume }}
+        SEND_EMAIL: ${{ inputs.send_email }}
 
     - name: Render template
       id: template

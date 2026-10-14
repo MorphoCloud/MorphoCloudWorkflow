@@ -520,10 +520,10 @@ jobs:
           body: |
             #### ⚠️ What to do next
 
-            Instance creation did not complete. This is sometimes caused by a transient cloud error. ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL != '' && format('To retry from a clean state, delete the instance from the portal and create it again: {0}', vars.MORPHOCLOUD_DATA_PORTAL_URL) || 'To retry from a clean state, comment the following on this issue, one at a time:' }}
+            Instance creation did not complete. This is sometimes caused by a transient cloud error. ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL != '' && format('To retry from a clean state, on the portal ({0}):', vars.MORPHOCLOUD_DATA_PORTAL_URL) || 'To retry from a clean state, comment the following on this issue, one at a time:' }}
 
-            ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL == '' && '1. `/delete_all` — removes the partially-created instance, volume, and floating IP' || '' }}
-            ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL == '' && '2. `/create` — provisions again from scratch' || '' }}
+            1. ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL != '' && 'Delete the instance' || '`/delete_all` — removes the partially-created instance, volume, and floating IP' }}
+            2. ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL != '' && 'Create it again' || '`/create` — provisions again from scratch' }}
 
             If it fails again after retrying, please tag `@MorphoCloud/morphocloud-admins` for help.
 
