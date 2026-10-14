@@ -88,7 +88,7 @@ jobs:
             }}
           command: "/delete_all"
 
-  delete_instance_and_volume:
+  delete_instance:
     runs-on: self-hosted
     needs: authorize
     if: ${{ needs.authorize.outputs.continue == 'true' }}
