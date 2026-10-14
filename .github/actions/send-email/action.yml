@@ -48,9 +48,10 @@ inputs:
   template_ref:
     description:
       "MorphoCloudPortalContent branch the email template is fetched from
-      (MORPHOCLOUD_TEMPLATE_REF). main is production's copy; the prototype reads
-      its own branch so its copy can change without touching the email
-      production sends."
+      (MORPHOCLOUD_TEMPLATE_REF): a plain branch or tag name, set only by a
+      repository admin, placed in the fetch URL as is. main is production's
+      copy; the prototype reads its own branch so its copy can change without
+      touching the email production sends."
     required: false
     default: "main"
   portal_url:

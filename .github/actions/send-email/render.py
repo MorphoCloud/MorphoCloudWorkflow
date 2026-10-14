@@ -32,10 +32,11 @@ subs = {
 
 
 def render(text: str) -> str:
-    if not subs["{{upload_url}}"]:
-        text = "\n".join(
-            line for line in text.split("\n") if "{{upload_url}}" not in line
-        )
+    # A line built around a missing value is dropped whole, never left as a
+    # fragment ("Sign in at:" with nothing after it).
+    for key in ("{{upload_url}}", "{{portal_url}}"):
+        if not subs[key]:
+            text = "\n".join(line for line in text.split("\n") if key not in line)
     for key, value in subs.items():
         text = text.replace(key, value)
     return text

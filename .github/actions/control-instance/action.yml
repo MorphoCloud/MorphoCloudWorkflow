@@ -1220,7 +1220,9 @@ runs:
 
     - name: Send email (course)
       id: send_email_course
-      # See note on "Send email (individual)" above.
+      # See note on "Send email (individual)" above. Course repositories have
+      # no portal and read the template from main: template_ref and
+      # portal_url are not passed on purpose.
       continue-on-error: true
       if:
         ${{ steps.check_instance.outputs.exists == 'true' && success() &&
