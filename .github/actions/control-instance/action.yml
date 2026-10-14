@@ -1400,9 +1400,16 @@ runs:
         '' }}
       shell: bash
       run: |
-        labels=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '[.labels[].name] | join(",")')
-        if [[ ",$labels," != *",request-creator:user,"* ]]; then
+        issue=$(gh issue view "$ISSUE_NUMBER" --json labels,state --jq '{labels: ([.labels[].name] | join(",")), state: .state}')
+        if [[ ",$(jq -r .labels <<<"$issue")," != *",request-creator:user,"* ]]; then
           echo "Not a user's own request; left open."
+          exit 0
+        fi
+        if [[ "$(jq -r .state <<<"$issue")" == "CLOSED" ]]; then
+          # Closed by its owner before the delete (guard-issue-close, which
+          # already told them where their files are): nothing to close, and
+          # the success comment above has said the instance is gone.
+          echo "Request #$ISSUE_NUMBER was already closed."
           exit 0
         fi
         gh issue close "$ISSUE_NUMBER" --reason completed \
