@@ -156,7 +156,11 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           REPO: ${{ github.repository }}
           REPO_NAME: ${{ github.event.repository.name }}
-          TEMPLATE_URL: https://raw.githubusercontent.com/MorphoCloud/MorphoCloudPortalContent/main/templates/renewal.json
+          # MORPHOCLOUD_TEMPLATE_REF: the PortalContent branch; unset reads
+          # main (production). See the send-email action.
+          TEMPLATE_URL:
+            https://raw.githubusercontent.com/MorphoCloud/MorphoCloudPortalContent/${{
+            vars.MORPHOCLOUD_TEMPLATE_REF || 'main' }}/templates/renewal.json
         run: |
           set -euo pipefail
           tmpl=$(curl -fsSL --retry 3 --retry-delay 2 "$TEMPLATE_URL")

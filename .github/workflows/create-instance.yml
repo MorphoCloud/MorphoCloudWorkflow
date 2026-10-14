@@ -471,6 +471,8 @@ jobs:
           instance_name: ${{ steps.provision.outputs.instance_name }}
           instance_issue_number: ${{ github.event.issue.number }}
           expect_upload_page: "true"
+          template_ref: ${{ vars.MORPHOCLOUD_TEMPLATE_REF || 'main' }}
+          portal_url: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
 
       - name: comment (failed to send email)
         if: ${{ steps.send_email.outcome == 'failure' && failure() }}

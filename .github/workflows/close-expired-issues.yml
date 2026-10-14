@@ -138,10 +138,14 @@ jobs:
                 # intake. COURSE_TEAM_SLUG is set only in MC-* repos.
                 if [[ -n "$COURSE_TEAM_SLUG" ]]; then
                   echo "Skipping renewal warning for issue #${issue_number} (course instances are not renewable)"
-                # Workshop instances (expiration <= 7 days) are temporary and
-                # not meant to be renewed.
-                elif (( $(echo "$expiration_days <= 7" | bc -l) )); then
-                  echo "Skipping renewal warning for issue #${issue_number} (workshop instance, expires in ${expiration_days} days)"
+                # Workshop instances are temporary and not meant to be
+                # renewed. Recognized by their label (create-workshop.yml
+                # opens them as request-creator:workshop), not by a short
+                # lifetime: a short MORPHOCLOUD_EXPIRATION_LADDER (the
+                # prototype runs 7d,14d to exercise expiry) must still warn
+                # its users.
+                elif echo "$labels" | grep -qx "request-creator:workshop"; then
+                  echo "Skipping renewal warning for issue #${issue_number} (workshop instance)"
                 else
                   # At most two notices per cycle: one when the window opens,
                   # one the day before deletion. Labels make each fire once

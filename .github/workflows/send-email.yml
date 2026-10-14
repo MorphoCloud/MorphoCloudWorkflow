@@ -188,6 +188,8 @@ jobs:
           storage_mode:
             ${{ contains(github.event.issue.labels.*.name,
             'request-creator:user') && vars.MORPHOCLOUD_STORAGE_MODE || '' }}
+          template_ref: ${{ vars.MORPHOCLOUD_TEMPLATE_REF || 'main' }}
+          portal_url: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           token: ${{ secrets.GITHUB_TOKEN }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}

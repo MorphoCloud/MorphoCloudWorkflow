@@ -217,6 +217,8 @@ jobs:
         with:
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           storage_mode: ${{ vars.MORPHOCLOUD_STORAGE_MODE }}
+          template_ref: ${{ vars.MORPHOCLOUD_TEMPLATE_REF || 'main' }}
+          portal_url: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
           issue_number: ${{ github.event.issue.number }}
           command_name: ${{ needs.authorize.outputs.command_name }}
           instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
