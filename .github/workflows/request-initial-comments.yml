@@ -91,9 +91,32 @@ jobs:
         with:
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
           comment-author: "github-actions[bot]"
-          body-includes: "### Supported Issue Commands"
+          # Both the command table and the portal note carry this marker.
+          body-includes: "<!-- morphocloud-commands -->"
+
+      # Portal mode (MORPHOCLOUD_PORTAL_ONLY): members act from the portal, so
+      # the request gets a note with its address instead of the command table.
+      - name: Render the portal note
+        id: portal_note
+        # Course repositories pass their own table and never set PORTAL_ONLY.
+        if: ${{ vars.MORPHOCLOUD_PORTAL_ONLY == 'true' }}
+        uses: chuhlomin/render-template@a7c644e341797d050d1cb24332d83791b9a46dae # v1
+        with:
+          template: issue-commands-portal.md
+          vars: |
+            portal_url: "${{ vars.MORPHOCLOUD_DATA_PORTAL_URL || 'https://morphocloud.org' }}"
+
+      - name: comment (portal note)
+        if: ${{ steps.portal_note.outcome == 'success' }}
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          comment-id: ${{ steps.fc_commands.outputs.comment-id }}
+          issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
+          body: ${{ steps.portal_note.outputs.result }}
+          edit-mode: replace
 
       - name: comment (issue commands)
+        if: ${{ steps.portal_note.outcome != 'success' }}
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           comment-id: ${{ steps.fc_commands.outputs.comment-id }}

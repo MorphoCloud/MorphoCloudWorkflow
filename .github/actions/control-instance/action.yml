@@ -120,6 +120,21 @@ runs:
         prefix: ${{ inputs.instance_name_prefix }}
         issue_number: ${{ inputs.issue_number }}
 
+    # The self-serve recovery the unshelve failure comments offer. Portal
+    # mode: from the portal, files in the storage; otherwise typed commands
+    # and the data volume.
+    - name: Recovery advice
+      id: recovery
+      shell: bash
+      run: |
+        if [[ -n "$PORTAL_URL" ]]; then
+          echo "line=You can often recover this yourself: delete the instance from the portal and create it again ($PORTAL_URL). Your files in your storage are kept; extensions installed in Slicer are not." >> "$GITHUB_OUTPUT"
+        else
+          echo 'line=You can often recover this yourself: run **`/delete_instance`**, then **`/create`**. Your home directory and MyData live on a separate storage volume that is not deleted, so your files and Slicer extensions are preserved.' >> "$GITHUB_OUTPUT"
+        fi
+      env:
+        PORTAL_URL: ${{ inputs.portal_url }}
+
     - name: Check instance management approval
       id: check_approval
       uses: ./.github/actions/check-approval
@@ -924,7 +939,7 @@ runs:
               # recovery and usually faster than waiting for an admin: the
               # user's files live on the data volume, which `/delete_instance`
               # does not touch and `/create` re-attaches (Instances#139).
-              printf '%s\n\n' "You can often recover this yourself: run **\`/delete_instance\`**, then **\`/create\`**. Your home directory and MyData live on a separate storage volume that is not deleted, so your files and Slicer extensions are preserved."
+              printf '%s\n\n' "$RECOVERY_LINE"
               printf '%s\n\n' '<details><summary>Diagnostics for admins</summary>'
               printf '%s\n' 'Failed unshelve requests (openstack server event list):'
               printf '%s\n' '```'
@@ -947,6 +962,7 @@ runs:
         EXPECTED_STATUS: ${{ steps.expected_status.outputs.value }}
         COMMAND_NAME: ${{ inputs.command_name }}
         RECENT_FAILURES: ${{ steps.unshelve_history.outputs.recent_failures }}
+        RECOVERY_LINE: ${{ steps.recovery.outputs.line }}
         BASELINE_ERROR_REQS:
           ${{ steps.unshelve_history.outputs.baseline_error_reqs }}
         GH_TOKEN: ${{ inputs.token }}
@@ -991,7 +1007,7 @@ runs:
 
           The `unshelve` command for **${{ steps.define.outputs.instance_name }}** did not complete within the expected time — it may be stuck on Jetstream2's side. @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed.
 
-          **If your instance has not come up after ~10 minutes,** you can often recover it yourself: run **`/delete_instance`**, then **`/create`**. Your home directory and MyData live on a separate storage volume that is not deleted, so your files and Slicer extensions are preserved.
+          **If your instance has not come up after ~10 minutes:** ${{ steps.recovery.outputs.line }}
 
           <details><summary>Diagnostics for admins</summary>
 

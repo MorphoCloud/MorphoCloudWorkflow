@@ -183,6 +183,7 @@ runs:
     - name: comment (progress)
       uses: ./.github/actions/comment-progress
       with:
+        storage_mode: ${{ inputs.storage_mode }}
         comment-id: ${{ inputs.progress_comment_id }}
         create_ip: ✅
         create_volume: ✅
@@ -907,6 +908,7 @@ runs:
     - name: comment (progress)
       uses: ./.github/actions/comment-progress
       with:
+        storage_mode: ${{ inputs.storage_mode }}
         comment-id: ${{ inputs.progress_comment_id }}
         create_ip: ✅
         create_volume: ✅
