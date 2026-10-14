@@ -26,6 +26,12 @@ inputs:
     description: "The issue to add a comment to."
   comment-id:
     description: "The id of the comment to update."
+  storage_mode:
+    description:
+      "'share' when the instance mounts the owner's data share: the table has no
+      volume columns and the volume inputs are ignored. Empty: the volume table."
+    required: false
+    default: ""
 outputs:
   comment-id:
     description: "The id of the comment to update."
@@ -37,13 +43,17 @@ runs:
       id: status
       shell: bash
       run: |
+        # Share mode has no volume steps: they count as done.
+        volume_steps_done=true
+        if [[ "{{ inputs.storage_mode }}" != "share" ]]; then
+          [[ "{{ inputs.create_volume }}" == "✅" && "{{ inputs.attach_volume }}" == "✅" ]] || volume_steps_done=false
+        fi
         if [[ \
           "{{ inputs.create_ip }}" == "✅" && \
-          "{{ inputs.create_volume }}" == "✅" && \
+          "$volume_steps_done" == "true" && \
           "{{ inputs.create_instance }}" == "✅" && \
           "{{ inputs.associate_ip }}" == "✅" && \
           "{{ inputs.setup_instance }}" == "✅" && \
-          "{{ inputs.attach_volume }}" == "✅" && \
           "{{ inputs.send_email }}" == "✅" \
           ]]; then
           value="✅"
@@ -56,7 +66,10 @@ runs:
       id: template
       uses: chuhlomin/render-template@a7c644e341797d050d1cb24332d83791b9a46dae # v1
       with:
-        template: .github/instance-creation-progress-template.md
+        template:
+          ${{ inputs.storage_mode == 'share' &&
+          '.github/instance-creation-progress-template-share.md' ||
+          '.github/instance-creation-progress-template.md' }}
         vars: |
           details_url: "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           create_ip: ${{ inputs.create_ip }}

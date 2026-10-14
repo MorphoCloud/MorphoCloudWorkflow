@@ -157,12 +157,19 @@ runs:
       if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
       shell: bash
       run: |
+        # Portal mode: members act from the portal, never by typed commands.
         case "$STATUS" in
           SHELVED | SHELVED_OFFLOADED)
-            line='Comment `/unshelve` to start it — the connection email follows automatically.'
+            if [[ -n "$PORTAL_URL" ]]; then
+              line="Unshelve it from the portal: $PORTAL_URL"
+            else
+              line='Comment `/unshelve` to start it — the connection email follows automatically.'
+            fi
             ;;
           ACTIVE)
-            if [[ "$SETUP_COMPLETE" == "true" ]]; then
+            if [[ "$SETUP_COMPLETE" == "true" && -n "$PORTAL_URL" ]]; then
+              line="The access details are on the portal: $PORTAL_URL"
+            elif [[ "$SETUP_COMPLETE" == "true" ]]; then
               line='Comment `/email` to resend the connection details.'
             else
               line='⚠️ It is powered on, but its setup never finished, so it is **not usable as it stands** — do not use `/email`. Rebuild it as described below, and tag @MorphoCloud/morphocloud-admins if the rebuild fails the same way.'
@@ -176,6 +183,7 @@ runs:
       env:
         STATUS: ${{ steps.check_instance.outputs.status }}
         SETUP_COMPLETE: ${{ steps.check_instance.outputs.setup_complete }}
+        PORTAL_URL: ${{ inputs.portal_url }}
 
     - name: comment (instance already exists)
       if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
@@ -189,7 +197,7 @@ runs:
 
           ${{ steps.exists_advice.outputs.line || 'Tag @MorphoCloud/morphocloud-admins if you are unsure what to do next.' }}
 
-          To rebuild it from scratch, comment `/delete_instance` and then `/create`. Your data volume is kept.
+          ${{ inputs.portal_url != '' && 'To rebuild it from scratch, delete it from the portal and create it again. Your files in your storage are kept.' || 'To rebuild it from scratch, comment `/delete_instance` and then `/create`. Your data volume is kept.' }}
 
     - name: instance already exists (failure)
       if: ${{ fromJSON(steps.check_instance.outputs.exists) }}
@@ -222,6 +230,7 @@ runs:
       id: couc_progress
       uses: ./.github/actions/comment-progress
       with:
+        storage_mode: ${{ inputs.storage_mode }}
         issue-number: ${{ inputs.issue_number }}
         create_ip: ⏳
         create_volume: ""
@@ -268,6 +277,7 @@ runs:
     - name: comment (progress)
       uses: ./.github/actions/comment-progress
       with:
+        storage_mode: ${{ inputs.storage_mode }}
         comment-id: ${{ steps.couc_progress.outputs.comment-id }}
         create_ip: ✅
         create_volume: ⏳
@@ -334,6 +344,7 @@ runs:
     - name: comment (progress)
       uses: ./.github/actions/comment-progress
       with:
+        storage_mode: ${{ inputs.storage_mode }}
         comment-id: ${{ steps.couc_progress.outputs.comment-id }}
         create_ip: ✅
         create_volume: ✅
@@ -592,6 +603,7 @@ runs:
       if: ${{ steps.check_capacity_error.outputs.capacity_error != 'true' }}
       uses: ./.github/actions/comment-progress
       with:
+        storage_mode: ${{ inputs.storage_mode }}
         comment-id: ${{ steps.couc_progress.outputs.comment-id }}
         create_ip: ✅
         create_volume: ✅
@@ -669,6 +681,7 @@ runs:
     - name: comment (progress)
       uses: ./.github/actions/comment-progress
       with:
+        storage_mode: ${{ inputs.storage_mode }}
         comment-id: ${{ steps.couc_progress.outputs.comment-id }}
         create_ip: ✅
         create_volume: ✅

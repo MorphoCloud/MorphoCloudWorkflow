@@ -272,7 +272,7 @@ jobs:
 
           @${SUBJECT} is not a registered MorphoCloud user, so \`/create\` cannot proceed.
 
-          You have to onboard yourself with MorphoCloud as a regular user first. Please go to [join.morphocloud.org](https://join.morphocloud.org), submit your intake form, and accept the GitHub organization invitation. Then comment \`/create\` again."
+          You have to onboard yourself with MorphoCloud as a regular user first. Please go to [join.morphocloud.org](https://join.morphocloud.org), submit your intake form, and accept the GitHub organization invitation. $(if [[ -n "$PORTAL_URL" ]]; then echo "Then create the instance from the portal: $PORTAL_URL"; else echo 'Then comment `/create` again.'; fi)"
             echo "::error ::User $SUBJECT is not an active member of $USERS_TEAM_SLUG"
             exit 1
           fi
@@ -280,6 +280,7 @@ jobs:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           ORG: ${{ github.repository_owner }}
           USERS_TEAM_SLUG: ${{ vars.MORPHOCLOUD_USERS_TEAM_SLUG }}
+          PORTAL_URL: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
           ISSUE_CREATOR: ${{ github.event.issue.user.login }}
           IS_WORKSHOP:
             ${{ contains(github.event.issue.labels.*.name,
@@ -378,7 +379,7 @@ jobs:
 
           Only **${MAX_PER_USER}** instance requests per user may hold resources at a time, and @${ISSUE_CREATOR} already has **${USER_COUNT}** — see ${OCCUPIED_ISSUES}.
 
-          Comment \`/delete_all\` on one of those issues to release it, then open a new request.
+          $(if [[ -n "$PORTAL_URL" ]]; then echo "Delete one of those instances from the portal, then create again: $PORTAL_URL"; else echo 'Comment `/delete_all` on one of those issues to release it, then open a new request.'; fi)
 
           > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
             gh issue close "$ISSUE_NUMBER"
@@ -396,6 +397,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ADMINS: ${{ needs.authorize.outputs.admins }}
           MAX_PER_USER: ${{ vars.MORPHOCLOUD_MAX_INSTANCES_PER_USER }}
+          PORTAL_URL: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
           MAX_TOTAL: ${{ vars.MORPHOCLOUD_MAX_TOTAL_INSTANCES }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -490,6 +492,9 @@ jobs:
         if: ${{ steps.send_email.outcome == 'success' }}
         uses: ./.github/actions/comment-progress
         with:
+          storage_mode:
+            ${{ contains(github.event.issue.labels.*.name,
+            'request-creator:user') && vars.MORPHOCLOUD_STORAGE_MODE || '' }}
           comment-id: ${{ steps.provision.outputs.progress_comment_id }}
           create_ip: ✅
           create_volume: ✅
@@ -515,10 +520,10 @@ jobs:
           body: |
             #### ⚠️ What to do next
 
-            Instance creation did not complete. This is sometimes caused by a transient cloud error. To retry from a clean state, comment the following on this issue, one at a time:
+            Instance creation did not complete. This is sometimes caused by a transient cloud error. ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL != '' && format('To retry from a clean state, delete the instance from the portal and create it again: {0}', vars.MORPHOCLOUD_DATA_PORTAL_URL) || 'To retry from a clean state, comment the following on this issue, one at a time:' }}
 
-            1. `/delete_all` — removes the partially-created instance, volume, and floating IP
-            2. `/create` — provisions again from scratch
+            ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL == '' && '1. `/delete_all` — removes the partially-created instance, volume, and floating IP' || '' }}
+            ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL == '' && '2. `/create` — provisions again from scratch' || '' }}
 
             If it fails again after retrying, please tag `@MorphoCloud/morphocloud-admins` for help.
 
