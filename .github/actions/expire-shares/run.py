@@ -170,7 +170,7 @@ def handle(a: dict, template: dict) -> str:
                 render(template, "deleted_subject", subs),
                 render(template, "deleted_body", subs),
             )
-        except RuntimeError as e:
+        except (RuntimeError, smtplib.SMTPException, OSError) as e:
             note += f" (owner not told: {e})"
         if note:
             msg = f"deleted the storage of {login}{note}"
@@ -208,6 +208,7 @@ def main() -> int:
             KeyError,
             ValueError,
             subprocess.SubprocessError,
+            smtplib.SMTPException,  # not an OSError: a refused login or recipient
         ) as e:
             say(f"::error ::{a.get('name', a.get('github_id'))}: {e}")
             failures.append(str(e))
