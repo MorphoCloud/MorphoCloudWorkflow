@@ -664,6 +664,46 @@ runs:
       env:
         ISSUE_NUMBER: ${{ inputs.issue_number }}
 
+    # Share expiry (STORAGE_REDESIGN_PLAN.md): an unshelve records the holder
+    # and the time on the owner's share; a delete releases the holder, which
+    # starts the idle clock. Only a member's own request has a share
+    # (request-creator:user); workshop and course instances are skipped. Never
+    # fails the command: a missed stamp costs at most an early warning.
+    - name: Record activity on the data share
+      if:
+        ${{ inputs.storage_mode == 'share' && inputs.course_team_slug == '' &&
+        steps.execute_command.outcome == 'success' && (inputs.command_name ==
+        'unshelve' || inputs.command_name == 'delete') }}
+      shell: bash
+      run: |
+        # No -e: by design nothing here fails the command; every failure is a warning.
+        set -uo pipefail
+        issue=$(gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER" --jq '{id: .user.id, user: ([.labels[].name] | index("request-creator:user") != null)}') || {
+          echo "::warning ::Could not read the request's owner; the data share was not stamped."
+          exit 0
+        }
+        if [[ "$(jq -r .user <<<"$issue")" != "true" ]]; then
+          echo "Not a member's own request; no data share to stamp."
+          exit 0
+        fi
+        gid=$(jq -r .id <<<"$issue")
+        source ~/venv/bin/activate
+        if [[ "$COMMAND_NAME" == "delete" ]]; then
+          args=(--unmounted)
+        else
+          args=(--instance "$INSTANCE_NAME")
+        fi
+        if ! python3 "$HOME/mc-data/mc_share_runner.py" touch "$gid" "${args[@]}" > /dev/null; then
+          echo "::warning ::Could not record the $COMMAND_NAME on the data share for $gid"
+        fi
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+        COMMAND_NAME: ${{ inputs.command_name }}
+        OS_CLOUD: ${{ inputs.os_cloud }}
+
     - name: comment (deleted without a clean shutdown)
       if:
         ${{ steps.clean_stop.outputs.clean == 'false' &&

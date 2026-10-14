@@ -361,6 +361,13 @@ jobs:
                 echo "${n}:${exp_days}" >> "$remaining_file"
                 continue
               fi
+              # In share mode the delete itself closed the request
+              # (control-instance, "Close the request after delete"); a second
+              # close would post a comment that contradicts its message.
+              if [[ "$(gh issue view "$n" --json state --jq .state 2>/dev/null)" == "CLOSED" ]]; then
+                echo "Issue #${n} is already closed."
+                continue
+              fi
               echo "Closing issue #${n}: expired, resources confirmed absent."
               # Workshop sub-issues (expiration <= 7d) close bare, as the
               # retired sweep did; individual/course requests get the

@@ -1,0 +1,102 @@
+name: Expire storage
+
+# Share expiry (STORAGE_REDESIGN_PLAN.md, "Share expiry"). A member's storage
+# (their data share) is kept while an instance holds it and for
+# MORPHOCLOUD_SHARE_EXPIRY_DAYS idle days after; the owner is warned by email
+# MORPHOCLOUD_SHARE_WARNING_DAYS days before it is removed. The runner's
+# mc_share_runner.py judges and deletes (it alone holds the OpenStack
+# credentials and the only delete call); this workflow sends the emails and
+# records the warnings. Off unless the repository sets the idle period.
+#
+# Daily after the instance sweep (close-expired-issues.yml, 12:00 UTC), whose
+# deletions start the idle clock. Any failure emails the admins and leaves the
+# share for the next day's run.
+
+on:
+  schedule:
+    - cron: "40 12 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Decide and print only: change nothing, send nothing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: expire-shares
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    if: ${{ vars.MORPHOCLOUD_SHARE_EXPIRY_DAYS != '' }}
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Judge every share
+        id: plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          source ~/venv/bin/activate
+          python3 "$HOME/mc-data/mc_share_runner.py" sweep \
+            --expiry-days "$EXPIRY_DAYS" --warn "$WARN_DAYS" > /tmp/share-plan.json
+        env:
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          EXPIRY_DAYS: ${{ vars.MORPHOCLOUD_SHARE_EXPIRY_DAYS }}
+          WARN_DAYS: ${{ vars.MORPHOCLOUD_SHARE_WARNING_DAYS || '14,3' }}
+
+      # Email copy lives in MorphoCloudPortalContent (storage-expiry.json);
+      # MORPHOCLOUD_TEMPLATE_REF picks the branch, as the credentials email does.
+      - name: Fetch the email copy
+        shell: bash
+        run: |
+          curl -sfL --retry 3 --retry-delay 5 --retry-all-errors \
+            -o /tmp/storage-expiry.json "$TEMPLATE_URL"
+        env:
+          TEMPLATE_URL:
+            https://raw.githubusercontent.com/MorphoCloud/MorphoCloudPortalContent/${{
+            vars.MORPHOCLOUD_TEMPLATE_REF || 'main'
+            }}/templates/storage-expiry.json
+
+      - name: Warn, delete and record
+        id: act
+        shell: bash
+        run: |
+          set -euo pipefail
+          source ~/venv/bin/activate
+          python3 .github/actions/expire-shares/run.py
+        env:
+          PLAN_FILE: /tmp/share-plan.json
+          TEMPLATE_FILE: /tmp/storage-expiry.json
+          EXPIRY_DAYS: ${{ vars.MORPHOCLOUD_SHARE_EXPIRY_DAYS }}
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          LOOKUP_URL: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
+          LOOKUP_API_KEY: ${{ secrets.MORPHOCLOUD_LOOKUP_API_KEY }}
+          MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          PORTAL_URL: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+
+      - name: Alert the admins
+        if: ${{ failure() && vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS != '' }}
+        uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
+        with:
+          server_address: webhost.dynadot.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: MorphoCloudPortal <no-reply@morphocloud.org>
+          to: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          subject: "[${{ github.repository }}] Storage expiry sweep failed"
+          body: |
+            The storage expiry sweep did not finish cleanly. Nothing is retried within a run; the next daily run tries again.
+
+            ${{ steps.act.outputs.failures || 'The sweep itself failed before acting on any share; see the run log.' }}
+
+            Run log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
