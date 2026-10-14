@@ -61,14 +61,20 @@ jobs:
       # Portal-only mode (INSTANCE_DASHBOARD_PLAN.md decision 18): a request
       # opened directly on GitHub, not through the portal's GitHub App (a field
       # users cannot fake), is closed before anything else runs, unless an
-      # admin or a bot opened it. Off unless MORPHOCLOUD_PORTAL_ONLY is 'true'.
+      # admin, a bot, or an exempt account opened it. Off unless
+      # MORPHOCLOUD_PORTAL_ONLY is 'true'. MORPHOCLOUD_PORTAL_ONLY_EXEMPT lists
+      # logins (comma-separated, no spaces, exact case) that may still open
+      # requests by the API: the end-to-end test
+      # account, whose suites drive the repository the way members used to.
       - name: Check admin team membership (portal-only mode)
         id: portal_admin
         if:
           ${{ vars.MORPHOCLOUD_PORTAL_ONLY == 'true' &&
           github.event.issue.performed_via_github_app.slug !=
           vars.MORPHOCLOUD_PORTAL_APP_SLUG && github.event.issue.user.type !=
-          'Bot' }}
+          'Bot' && !contains(format(',{0},',
+          vars.MORPHOCLOUD_PORTAL_ONLY_EXEMPT), format(',{0},',
+          github.event.issue.user.login)) }}
         uses: ./.github/actions/check-team-membership
         with:
           token: ${{ steps.app-token.outputs.token }}
