@@ -102,7 +102,7 @@ jobs:
         if: ${{ vars.MORPHOCLOUD_PORTAL_ONLY == 'true' }}
         uses: chuhlomin/render-template@a7c644e341797d050d1cb24332d83791b9a46dae # v1
         with:
-          template: issue-commands-portal.md
+          template: .github/issue-commands-portal.md
           vars: |
             portal_url: "${{ vars.MORPHOCLOUD_DATA_PORTAL_URL || 'https://morphocloud.org' }}"
 
