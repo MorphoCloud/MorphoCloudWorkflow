@@ -63,7 +63,8 @@ jobs:
       # users cannot fake), is closed before anything else runs, unless an
       # admin, a bot, or an exempt account opened it. Off unless
       # MORPHOCLOUD_PORTAL_ONLY is 'true'. MORPHOCLOUD_PORTAL_ONLY_EXEMPT lists
-      # logins that may still open requests by the API: the end-to-end test
+      # logins (comma-separated, no spaces, exact case) that may still open
+      # requests by the API: the end-to-end test
       # account, whose suites drive the repository the way members used to.
       - name: Check admin team membership (portal-only mode)
         id: portal_admin
