@@ -7,7 +7,7 @@ Every share is handled on its own; a failure on one is reported and the next
 one is still done. Exit 1 when anything failed, so the workflow alerts the
 admins; the next day's sweep tries again.
 
-Environment: PLAN_FILE, TEMPLATE_FILE, RUNNER_SCRIPT, EXPIRY_DAYS, LOOKUP_URL,
+Environment: PLAN_FILE, TEMPLATE_FILE, RUNNER_SCRIPT, EXPIRY_DAYS, WARN_DAYS, LOOKUP_URL,
 LOOKUP_API_KEY, MAIL_USERNAME, MAIL_PASSWORD, PORTAL_URL, GH_TOKEN (gh api),
 DRY_RUN ("true": decide and print, change and send nothing).
 """
