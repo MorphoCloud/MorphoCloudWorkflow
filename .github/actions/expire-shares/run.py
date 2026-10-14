@@ -41,19 +41,27 @@ def env(name: str) -> str:
     return v
 
 
-def login_for(gid: int) -> str:
-    """The owner's current login from the GitHub id (logins change)."""
+def login_for(gid: int, recorded: str | None) -> str:
+    """The owner's current login from the GitHub id: GET /user/{account_id}
+    ("Get a user using their ID"). Logins change, so the login recorded on the
+    share at creation is only the fallback when GitHub cannot be asked."""
     r = subprocess.run(
-        ["gh", "api", f"user/{gid}", "--jq", ".login"],
+        ["gh", "api", f"user/{gid}", "--jq", "[.id, .login] | @tsv"],
         check=False,
         capture_output=True,
         text=True,
         timeout=60,
     )
-    if r.returncode != 0 or not r.stdout.strip():
-        msg = f"gh api user/{gid}: {r.stderr.strip()[-200:]}"
-        raise RuntimeError(msg)
-    return r.stdout.strip()
+    got_id, _, got_login = (
+        r.stdout.strip().partition("\t") if r.returncode == 0 else ("", "", "")
+    )
+    if got_id == str(gid) and got_login:
+        return got_login
+    if recorded:
+        say(f"  (GitHub did not answer for {gid}; using the recorded login {recorded})")
+        return recorded
+    msg = f"gh api user/{gid}: {r.stderr.strip()[-200:] or 'unexpected answer'}"
+    raise RuntimeError(msg)
 
 
 def email_for(login: str) -> str:
@@ -123,7 +131,7 @@ def runner(*args: str) -> dict:
 
 def day(iso: str) -> str:
     t = time.strptime(iso, "%Y-%m-%dT%H:%M:%SZ")
-    return time.strftime("%-d %b %Y", t)
+    return f"{t.tm_mday} {time.strftime('%b %Y', t)}"
 
 
 def handle(a: dict, template: dict) -> str:
@@ -131,7 +139,7 @@ def handle(a: dict, template: dict) -> str:
     if verdict == "error":
         msg = f"{a['name']}: {a.get('error')}"
         raise RuntimeError(msg)
-    login = login_for(gid)
+    login = login_for(gid, a.get("login"))
     subs = {
         "days_left": max(a["days_left"], 0),
         "kept_until": day(a["expires_at"]),
@@ -173,6 +181,12 @@ def handle(a: dict, template: dict) -> str:
 
 
 def main() -> int:
+    # Everything an email needs, checked once up front: a missing setting is
+    # one clear failure, not one per share.
+    for name in ("EXPIRY_DAYS", "PORTAL_URL", "LOOKUP_URL", "LOOKUP_API_KEY") + (
+        () if DRY else ("MAIL_USERNAME", "MAIL_PASSWORD")
+    ):
+        env(name)
     plan = json.loads(Path(env("PLAN_FILE")).read_text())
     template = json.loads(Path(env("TEMPLATE_FILE")).read_text())
     kept = [a for a in plan if a["verdict"] == "keep"]

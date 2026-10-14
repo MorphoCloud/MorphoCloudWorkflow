@@ -44,7 +44,6 @@ jobs:
           source ~/venv/bin/activate
           python3 "$HOME/mc-data/mc_share_runner.py" sweep \
             --expiry-days "$EXPIRY_DAYS" --warn "$WARN_DAYS" > /tmp/share-plan.json
-          echo "to_act=$(jq '[.[] | select(.verdict != "keep")] | length' /tmp/share-plan.json)" >> "$GITHUB_OUTPUT"
         env:
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           EXPIRY_DAYS: ${{ vars.MORPHOCLOUD_SHARE_EXPIRY_DAYS }}
@@ -67,6 +66,7 @@ jobs:
         id: act
         shell: bash
         run: |
+          set -euo pipefail
           source ~/venv/bin/activate
           python3 .github/actions/expire-shares/run.py
         env:

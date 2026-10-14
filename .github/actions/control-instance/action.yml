@@ -676,6 +676,7 @@ runs:
         'unshelve' || inputs.command_name == 'delete') }}
       shell: bash
       run: |
+        # No -e: by design nothing here fails the command; every failure is a warning.
         set -uo pipefail
         issue=$(gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER" --jq '{id: .user.id, user: ([.labels[].name] | index("request-creator:user") != null)}') || {
           echo "::warning ::Could not read the request's owner; the data share was not stamped."
