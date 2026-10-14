@@ -1,4 +1,7 @@
-name: Delete Instance and Volume
+# /delete_all: delete the instance and release its floating IP. The file keeps
+# its historical name; the per-instance data volume it also deleted is gone
+# with the share redesign (STORAGE_REDESIGN_PLAN.md, decision 15).
+name: Delete Instance
 
 on:
   issue_comment:
@@ -85,7 +88,7 @@ jobs:
             }}
           command: "/delete_all"
 
-  delete_instance_and_volume:
+  delete_instance:
     runs-on: self-hosted
     needs: authorize
     if: ${{ needs.authorize.outputs.continue == 'true' }}
@@ -96,16 +99,6 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v6
-
-      - name: Delete volume
-        id: delete_volume
-        uses: ./.github/actions/delete-volume
-        with:
-          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-          issue_number: ${{ github.event.issue.number }}
-          instance_name_prefix: ${{ vars.INSTANCE_NAME_PREFIX }}
-          volume_name_suffix: ${{ vars.VOLUME_NAME_SUFFIX }}
 
       - name: Delete instance
         id: delete_instance

@@ -338,11 +338,12 @@ Known bake pitfalls, from the first test image (2026-08-08):
   the volume, and the `.Renviron` step. The VNC password and `.ssh` stay on the
   root disk and are generated fresh on every create, as on any stock instance.
 - **Workflow files with volume logic:**
-  - Removed: `delete-volume.yml`, `delete-volume-from-workflow.yml`,
-    `automatic-volume-deleting.yml`. The last one is live today: the runner
-    crontab (`scripts/instances-runner.crontab`, documented in
-    `runner-cron-dispatcher.md`) dispatches it daily, so its crontab entry and
-    that documentation are removed with it.
+  - Removed (done 2026-10-14): `delete-volume.yml`,
+    `delete-volume-from-workflow.yml`, `automatic-volume-deleting.yml` and the
+    `delete-volume` action; `/delete_volume` is no longer a command and
+    `/delete_all` deletes the instance only. The crontab entry
+    (`scripts/instances-runner.crontab`, `runner-cron-dispatcher.md`) went with
+    them; the production runner's live crontab changes at the migration.
   - Rewritten: `delete-instance-and-volume.yml` (becomes instance-only),
     `close-expired-issues.yml` (volume steps and labels), `labels.yml` (volume
     labels).

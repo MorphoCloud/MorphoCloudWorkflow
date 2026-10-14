@@ -13,7 +13,6 @@ per comment._
 | `/email`           | Send email to _Issue creator_ with connection URL.                                                        | Issue creator, Admin |
 | `/renew`           | Extend the instance lifespan, while a renewal is left.                                                    | Issue creator, Admin |
 | `/extend`          | Restart the session timer, so the running instance is not shelved automatically for another full session. | Issue creator, Admin |
-| `/create`          | Create the instance and its data volume.                                                                  | Issue creator, Admin |
+| `/create`          | Create the instance.                                                                                      | Issue creator, Admin |
 | `/delete_instance` | Delete the instance.                                                                                      | Issue creator, Admin |
-| `/delete_volume`   | Delete the data volume.                                                                                   | Issue creator, Admin |
-| `/delete_all`      | Delete the instance and its data volume.                                                                  | Issue creator, Admin |
+| `/delete_all`      | Delete the instance and release its address.                                                              | Issue creator, Admin |
