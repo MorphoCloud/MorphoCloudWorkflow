@@ -12,8 +12,10 @@ permissions:
 # When a user closes one while resources still exist, closing means "I'm
 # done for now": an active instance is shelved (allocation burn stops, data
 # and volume preserved, fully reversible), and a comment explains how to
-# resume or release. Bot closes are skipped — automation closes issues only
-# after deletion, so nothing fires for those.
+# resume or release. In share mode a member's own request is instead
+# deleted: the request covers one instance's lifetime and the files are in
+# the storage (see the step). Bot closes are skipped — automation closes
+# issues only after deletion, so nothing fires for those.
 jobs:
   guard:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
@@ -46,6 +48,32 @@ jobs:
           if [[ -z "$SERVER_STATUS" && "$HAS_VOLUME" == "false" ]]; then
             echo "No resources for #${ISSUE_NUMBER} — close is fine."
             exit 0
+          fi
+
+          # Share mode, a member's own request: the request covers one
+          # instance's lifetime (STORAGE_REDESIGN_PLAN.md, decision 15), and a
+          # closed request would leave an instance the portal no longer shows
+          # while its owner can create a second one onto the same storage
+          # (decision 17). So the close deletes the instance, the same clean
+          # shutdown as every delete; the files are in the storage.
+          if [[ "$STORAGE_MODE" == "share" && "$IS_USER_REQUEST" == "true" && -n "$SERVER_STATUS" ]]; then
+            echo "Deleting $INSTANCE_NAME (status: $SERVER_STATUS) after the request was closed..."
+            if GH_TOKEN="$APP_TOKEN" gh workflow run control-instance-from-workflow.yml \
+              -f issue_number="$ISSUE_NUMBER" \
+              -f command_name=delete \
+              -f unapprove_after_delete=true; then
+              gh issue comment "$ISSUE_NUMBER" --body "### Request closed
+
+          You closed this request, so its instance **${INSTANCE_NAME}** is being deleted (it is shut down cleanly first). Files in your storage are not affected.
+
+          To get a new instance, create one from the portal${PORTAL_URL:+: $PORTAL_URL}."
+              exit 0
+            fi
+            echo "::error ::Failed to dispatch the delete workflow for ${INSTANCE_NAME}"
+            gh issue comment "$ISSUE_NUMBER" --body "### Request closed
+
+          You closed this request, but its instance **${INSTANCE_NAME}** could not be deleted automatically and still exists (@MorphoCloud/morphocloud-admins — the delete dispatch failed, please delete it). Files in your storage are not affected."
+            exit 1
           fi
 
           dispatch_failed=false
@@ -88,6 +116,11 @@ jobs:
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           INSTANCE_NAME_PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          STORAGE_MODE: ${{ vars.MORPHOCLOUD_STORAGE_MODE }}
+          PORTAL_URL: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
+          IS_USER_REQUEST:
+            ${{ contains(github.event.issue.labels.*.name,
+            'request-creator:user') }}
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}

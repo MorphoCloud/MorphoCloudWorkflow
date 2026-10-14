@@ -484,6 +484,12 @@ workflow **closes the request issue**: a request covers one instance's lifetime
 on 2026-09-26: a file saved about 10 seconds before `/delete_instance` came back
 empty; a hard reset confirmed that unflushed writes are lost.
 
+A request its owner closes by hand (GitHub still allows it) is deleted the same
+way by `guard-issue-close.yml` (2026-10-14): shelving it, as volume mode does,
+would leave an instance the portal no longer shows while the owner can create a
+second one onto the same storage, against decision 17. The comment says the
+files are in the storage and where to create the next instance.
+
 **Instance lifetime on Test-Instances:** 90 days, and `/renew` adds 90 (180 in
 total), set by the repository variable `MORPHOCLOUD_EXPIRATION_LADDER`
 (`90d,180d`). Unset keeps today's 60 + 60. Since 2026-10-14 the prototype runs
