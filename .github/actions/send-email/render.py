@@ -24,6 +24,9 @@ subs = {
     # or the page did not respond): every template line using it is dropped.
     "{{upload_url}}": os.environ.get("UPLOAD_URL", ""),
     "{{passphrase}}": os.environ["PASSPHRASE"],
+    # The data portal, where the prototype's email sends the user to connect.
+    # Empty where there is no portal (production).
+    "{{portal_url}}": os.environ.get("PORTAL_URL", ""),
     "{{contact_email}}": t["contact_email"],
 }
 

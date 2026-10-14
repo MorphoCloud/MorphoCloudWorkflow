@@ -66,6 +66,17 @@ inputs:
       cleanly so everything is flushed to the share"
     required: false
     default: ""
+  template_ref:
+    description:
+      "MorphoCloudPortalContent branch for the email after an unshelve
+      (MORPHOCLOUD_TEMPLATE_REF); see the send-email action"
+    required: false
+    default: "main"
+  portal_url:
+    description:
+      "The data portal (MORPHOCLOUD_DATA_PORTAL_URL); see the send-email action"
+    required: false
+    default: ""
 runs:
   using: "composite"
   steps:
@@ -1195,6 +1206,8 @@ runs:
       uses: ./.github/actions/send-email
       with:
         storage_mode: ${{ inputs.storage_mode }}
+        template_ref: ${{ inputs.template_ref }}
+        portal_url: ${{ inputs.portal_url }}
         os_cloud: ${{ inputs.os_cloud }}
         token: ${{ inputs.token }}
         email_lookup_url: ${{ inputs.email_lookup_url }}
