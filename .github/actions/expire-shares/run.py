@@ -158,7 +158,15 @@ def handle(a: dict, template: dict) -> str:
         runner("touch", str(gid), "--warned", kind)
         return f"warned ({kind}) {login}: {a['days_left']} days left"
     if verdict == "expire":
-        out = runner("expire", str(gid), "--expiry-days", env("EXPIRY_DAYS"))
+        # The same days the sweep judged with: expire judges again with them.
+        out = runner(
+            "expire",
+            str(gid),
+            "--expiry-days",
+            env("EXPIRY_DAYS"),
+            "--warn",
+            env("WARN_DAYS"),
+        )
         note = (
             ""
             if DRY or out.get("portal_recorded")
@@ -183,9 +191,13 @@ def handle(a: dict, template: dict) -> str:
 def main() -> int:
     # Everything an email needs, checked once up front: a missing setting is
     # one clear failure, not one per share.
-    for name in ("EXPIRY_DAYS", "PORTAL_URL", "LOOKUP_URL", "LOOKUP_API_KEY") + (
-        () if DRY else ("MAIL_USERNAME", "MAIL_PASSWORD")
-    ):
+    for name in (
+        "EXPIRY_DAYS",
+        "WARN_DAYS",
+        "PORTAL_URL",
+        "LOOKUP_URL",
+        "LOOKUP_API_KEY",
+    ) + (() if DRY else ("MAIL_USERNAME", "MAIL_PASSWORD")):
         env(name)
     plan = json.loads(Path(env("PLAN_FILE")).read_text())
     template = json.loads(Path(env("TEMPLATE_FILE")).read_text())
