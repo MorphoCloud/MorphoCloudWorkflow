@@ -7,7 +7,7 @@ Every share is handled on its own; a failure on one is reported and the next
 one is still done. Exit 1 when anything failed, so the workflow alerts the
 admins; the next day's sweep tries again.
 
-Environment: PLAN_FILE, TEMPLATE_FILE, RUNNER_SCRIPT, EXPIRY_DAYS, LOOKUP_URL,
+Environment: PLAN_FILE, TEMPLATE_FILE, RUNNER_SCRIPT, EXPIRY_DAYS, WARN_DAYS, LOOKUP_URL,
 LOOKUP_API_KEY, MAIL_USERNAME, MAIL_PASSWORD, PORTAL_URL, GH_TOKEN (gh api),
 DRY_RUN ("true": decide and print, change and send nothing).
 """
@@ -158,7 +158,15 @@ def handle(a: dict, template: dict) -> str:
         runner("touch", str(gid), "--warned", kind)
         return f"warned ({kind}) {login}: {a['days_left']} days left"
     if verdict == "expire":
-        out = runner("expire", str(gid), "--expiry-days", env("EXPIRY_DAYS"))
+        # The same days the sweep judged with: expire judges again with them.
+        out = runner(
+            "expire",
+            str(gid),
+            "--expiry-days",
+            env("EXPIRY_DAYS"),
+            "--warn",
+            env("WARN_DAYS"),
+        )
         note = (
             ""
             if DRY or out.get("portal_recorded")
@@ -183,9 +191,13 @@ def handle(a: dict, template: dict) -> str:
 def main() -> int:
     # Everything an email needs, checked once up front: a missing setting is
     # one clear failure, not one per share.
-    for name in ("EXPIRY_DAYS", "PORTAL_URL", "LOOKUP_URL", "LOOKUP_API_KEY") + (
-        () if DRY else ("MAIL_USERNAME", "MAIL_PASSWORD")
-    ):
+    for name in (
+        "EXPIRY_DAYS",
+        "WARN_DAYS",
+        "PORTAL_URL",
+        "LOOKUP_URL",
+        "LOOKUP_API_KEY",
+    ) + (() if DRY else ("MAIL_USERNAME", "MAIL_PASSWORD")):
         env(name)
     plan = json.loads(Path(env("PLAN_FILE")).read_text())
     template = json.loads(Path(env("TEMPLATE_FILE")).read_text())

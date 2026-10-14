@@ -73,6 +73,7 @@ jobs:
           PLAN_FILE: /tmp/share-plan.json
           TEMPLATE_FILE: /tmp/storage-expiry.json
           EXPIRY_DAYS: ${{ vars.MORPHOCLOUD_SHARE_EXPIRY_DAYS }}
+          WARN_DAYS: ${{ vars.MORPHOCLOUD_SHARE_WARNING_DAYS || '14,3' }}
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           LOOKUP_URL: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
           LOOKUP_API_KEY: ${{ secrets.MORPHOCLOUD_LOOKUP_API_KEY }}
