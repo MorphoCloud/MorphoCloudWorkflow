@@ -114,7 +114,21 @@ jobs:
           existing_expiration=$(gh issue view "$NUMBER" --json labels --jq '[.labels[].name | select(test("^expiration:"))] | length')
 
           if [[ "$existing_expiration" -eq 0 ]]; then
-            echo "No expiration labels found, adding default expiration labels"
+            # Lifetime ladder from MORPHOCLOUD_EXPIRATION_LADDER (e.g. "90d,180d":
+            # 90 days, and /renew moves it to 180); unset keeps 60 + 60.
+            LADDER="${LADDER:-60d,120d}"
+            if ! [[ "$LADDER" =~ ^[0-9]+d(,[0-9]+d)*$ ]]; then
+              echo "::error ::MORPHOCLOUD_EXPIRATION_LADDER must look like 90d,180d (got '$LADDER')"
+              exit 1
+            fi
+            LABELS=""
+            for rung in ${LADDER//,/ }; do
+              gh label create "expiration:$rung" --color "892368" \
+                --description "Instance expires in ${rung%d} days unless extended" \
+                >/dev/null 2>&1 || true
+              LABELS="${LABELS:+$LABELS,}expiration:$rung"
+            done
+            echo "No expiration labels found, adding $LABELS"
             gh issue edit "$NUMBER" --add-label "$LABELS"
           else
             echo "Issue already has expiration label(s), skipping default expiration labels"
@@ -123,4 +137,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           NUMBER: ${{ steps.collect_inputs.outputs.issue_number }}
-          LABELS: "expiration:60d,expiration:120d"
+          LADDER: ${{ vars.MORPHOCLOUD_EXPIRATION_LADDER }}

@@ -188,6 +188,17 @@ jobs:
                 continue
               fi
 
+              # Data portal (share mode): report the session age so its
+              # countdown also reflects extends made on the desktop. Only a
+              # runner set up for the portal has ~/mc-data/portal_target; a
+              # failure here never affects shelving.
+              if [[ -s "$HOME/mc-data/portal_target" ]]; then
+                printf '{"issue": %d, "elapsed_hours": %s}' "$issue_number" "$uptime_hours" \
+                  | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
+                      "$(cat "$HOME/mc-data/portal_target")" session "$issue_number" >/dev/null 2>&1 \
+                  || echo "::warning ::Could not report the session age of #$issue_number to the data portal"
+              fi
+
               # Derive timeout_hrs from labels like "timeout:24hrs", reusing the
               # labels fetched once above (no second gh issue view).
               timeout_hrs="$(jq -r '[.labels[].name

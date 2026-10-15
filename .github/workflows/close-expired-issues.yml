@@ -138,10 +138,14 @@ jobs:
                 # intake. COURSE_TEAM_SLUG is set only in MC-* repos.
                 if [[ -n "$COURSE_TEAM_SLUG" ]]; then
                   echo "Skipping renewal warning for issue #${issue_number} (course instances are not renewable)"
-                # Workshop instances (expiration <= 7 days) are temporary and
-                # not meant to be renewed.
-                elif (( $(echo "$expiration_days <= 7" | bc -l) )); then
-                  echo "Skipping renewal warning for issue #${issue_number} (workshop instance, expires in ${expiration_days} days)"
+                # Workshop instances are temporary and not meant to be
+                # renewed. Recognized by their label (create-workshop.yml
+                # opens them as request-creator:workshop), not by a short
+                # lifetime: a short MORPHOCLOUD_EXPIRATION_LADDER (the
+                # prototype runs 7d,14d to exercise expiry) must still warn
+                # its users.
+                elif echo "$labels" | grep -qx "request-creator:workshop"; then
+                  echo "Skipping renewal warning for issue #${issue_number} (workshop instance)"
                 else
                   # At most two notices per cycle: one when the window opens,
                   # one the day before deletion. Labels make each fire once
@@ -159,13 +163,24 @@ jobs:
                     # Only suggest /renew when a higher rung of the ladder
                     # actually remains.
                     expiration_count=$(echo "$lifespan_list" | grep -c . || true)
+                    # Portal mode: members renew from the portal, never by a
+                    # typed command. Share mode: no volume goes with the instance.
                     if [[ "$expiration_count" -gt $((renewed_count + 1)) ]]; then
-                      renew_hint='Comment `/renew` to extend.'
+                      if [[ -n "$PORTAL_URL" ]]; then
+                        renew_hint="Renew it from the portal: $PORTAL_URL"
+                      else
+                        renew_hint='Comment `/renew` to extend.'
+                      fi
                     else
                       renew_hint='No renewals remain.'
                     fi
+                    if [[ "$STORAGE_MODE" == "share" ]]; then
+                      what='Instance'
+                    else
+                      what='Instance and volume'
+                    fi
                     gh issue comment "$issue_number" \
-                      --body '⚠️ Instance and volume will be deleted in '"$days_until_expiration"' days. '"$renew_hint" || true
+                      --body "⚠️ $what will be deleted in $days_until_expiration days. $renew_hint" || true
                     set +e
                     gh workflow run send-renewal-email.yml \
                       -f issue_number=$issue_number \
@@ -217,7 +232,11 @@ jobs:
             if [[ "$server_exists" == "true" ]]; then
               # The user reads why before the mechanical deletion comments.
               gh issue comment "$issue_number" \
-                --body "Instance **${instance_name}** has expired. The instance and its associated volume are being deleted." || true
+                --body "$(if [[ "$STORAGE_MODE" == "share" ]]; then
+                  echo "Instance **${instance_name}** has expired and is being deleted. Files in your storage are not affected."
+                else
+                  echo "Instance **${instance_name}** has expired. The instance and its associated volume are being deleted."
+                fi)" || true
             else
               volume_name_list=$(echo "$matching_volumes" | jq -r '[.[].Name] | join(", ")')
               gh issue comment "$issue_number" \
@@ -298,6 +317,9 @@ jobs:
           EXPIRATION_WARNING_DAYS: 7
           FINAL_WARNING_DAYS: 1
           COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
+          # Portal and share mode change only the wording of the comments.
+          PORTAL_URL: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
+          STORAGE_MODE: ${{ vars.MORPHOCLOUD_STORAGE_MODE }}
           RUN_URL:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{
             github.run_id }}
@@ -357,6 +379,13 @@ jobs:
                 echo "${n}:${exp_days}" >> "$remaining_file"
                 continue
               fi
+              # In share mode the delete itself closed the request
+              # (control-instance, "Close the request after delete"); a second
+              # close would post a comment that contradicts its message.
+              if [[ "$(gh issue view "$n" --json state --jq .state 2>/dev/null)" == "CLOSED" ]]; then
+                echo "Issue #${n} is already closed."
+                continue
+              fi
               echo "Closing issue #${n}: expired, resources confirmed absent."
               # Workshop sub-issues (expiration <= 7d) close bare, as the
               # retired sweep did; individual/course requests get the
@@ -366,7 +395,12 @@ jobs:
               if (( $(echo "$exp_days <= 7" | bc -l) )); then
                 gh issue close "$n" || true
               else
-                gh issue close "$n" --comment "This instance request has reached the end of its lifespan and its resources have been released. To start a new instance, [open a new request](https://github.com/${GH_REPO}/issues/new/choose)." || true
+                if [[ -n "$PORTAL_URL" ]]; then
+                  next_step="To start a new instance, use the portal: $PORTAL_URL"
+                else
+                  next_step="To start a new instance, [open a new request](https://github.com/${GH_REPO}/issues/new/choose)."
+                fi
+                gh issue close "$n" --comment "This instance request has reached the end of its lifespan and its resources have been released. $next_step" || true
               fi
             done < "$candidates_file"
 
@@ -385,6 +419,7 @@ jobs:
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          PORTAL_URL: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
           CANDIDATES: ${{ needs.sweep.outputs.candidates }}
 
