@@ -90,7 +90,29 @@ session (decision 19) and the share's state are the same mechanism and will join
 it through the same snapshot later, which is why it is a JSON object rather than
 fixed columns. Production is untouched: the portal and its runner exist only on
 Test. Built and live on Test 2026-10-07 (data portal PRs #5 and #6, the latter
-the assistant's use of it, CHATBOT_PLAN.md decision 19). |
+the assistant's use of it, CHATBOT_PLAN.md decision 19). **Amended 2026-10-15 by
+the maintainer: a report never overrides what a workflow did after the report
+was read.** Seen on Test-Instances #478: the unshelve's server went ACTIVE at
+16:58:15, the workflow pushed the access details at 16:58:26 and reacted 👍 at
+16:58:38, but the latest report had been read from Jetstream2 before 16:58:15.
+The card's "Unshelving…" ended with the 👍, the stale report said Shelved, the
+card stopped refreshing (it only refreshes while something is in progress), and
+it still showed Shelved without the access details seven minutes later. Before
+this decision the labels were the state and the workflow sets them just before
+the 👍, so the card flipped to Active with the details at once. That is the
+behavior to keep. So: (1) the report is stamped with the time it was **read**,
+not the time it arrived: the runner sends how many seconds passed between its
+read of Jetstream2 and the send (a duration, so its clock is still not trusted)
+and the portal subtracts that from its own clock; a report read slowly is that
+much older. (2) The portal records when it learned that a command finished (the
+👍); while the instance's report was read before that, the **labels decide** for
+that card, the command gates and the assistant, which is the old behavior. The
+first report read afterwards decides again, so the reconciliation still repairs
+what the labels get wrong. A 👎 changes nothing: a failed workflow may not have
+set its label. (3) The portal never clears access details pushed after the
+report was read. (4) A card that is active but still waiting for its access
+details keeps refreshing, since the runner's restore can deliver them minutes
+after the workflow finished. |
 
 ## Sign-in (decision 8)
 
