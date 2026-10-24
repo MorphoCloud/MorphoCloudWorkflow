@@ -1,0 +1,88 @@
+name: "Collect instance diagnostics"
+description:
+  "Snapshot Nova's record of a failed instance (fault, recent actions and the
+  per-step result and compute host of each) into a collapsed markdown block, so
+  it survives the instance being deleted"
+inputs:
+  os_cloud:
+    description:
+      "Name of the OpenStack cloud allocation to select openstack auth settings
+      defined in '.config/openstack/clouds.yaml'"
+    required: true
+  instance_name:
+    description: "Name of the instance"
+    required: true
+  output_file:
+    description: "Path the markdown block is written to"
+    required: false
+    default: "/tmp/instance_diagnostics.md"
+  max_actions:
+    description: "How many of the most recent instance actions to expand"
+    required: false
+    default: "8"
+outputs:
+  file:
+    description:
+      "Path of the written markdown block; empty only when the file could not be
+      written. A server that is already gone still yields a block saying so."
+    value: ${{ steps.collect.outputs.file }}
+runs:
+  using: "composite"
+  steps:
+    - name: Collect instance diagnostics
+      id: collect
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        # Why this exists: Nova's per-instance action log is the only record of
+        # WHY a build or unshelve failed (fault message, which step errored, on
+        # which compute host), and it disappears with the instance — project
+        # credentials get a 404 on os-instance-actions for a deleted server,
+        # whatever the compute microversion. Both of our failure paths end in a
+        # delete (create's no-capacity cleanup, or the user's own
+        # delete + create recovery), so on Test-Instances#484-486 nothing was
+        # left to tell a sick host from a bad shelved snapshot, or a genuine
+        # "No valid host" from builds failing on every host tried.
+        #
+        # Best-effort throughout: this runs on a failure path and must never be
+        # the reason the caller's own failure comment does not post.
+        set +e +o pipefail
+
+        server=$(openstack server show "$INSTANCE_NAME" -f json 2>/dev/null)
+        captured=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+        # host_id is Nova's per-project hash of the compute host (stable per
+        # host within one project); the first 8 characters are enough to
+        # group failures by host across instances. 'host' and tracebacks are
+        # admin-only and come back null for these credentials.
+        {
+          printf '%s\n\n' "<details><summary>Jetstream2 diagnostics for admins (captured ${captured})</summary>"
+          printf '%s\n' '```'
+          if [[ -z "$server" ]]; then
+            echo "openstack server show returned nothing - the server may already be gone."
+          else
+            echo "$server" | jq -r '"server      \(.name)  \(.id)", "status      \(.status)  vm_state \(."OS-EXT-STS:vm_state" // "-")  task_state \(."OS-EXT-STS:task_state" // "-")", "flavor      \(.flavor | if type == "object" then (.original_name // .name // tostring) else tostring end)", "host_id     \(if (.hostId // "") == "" then "(none)" else .hostId[0:8] end)", "created     \(.created)  updated \(.updated)", (if .fault then "fault       \(.fault.code // "-") \(.fault.message // "-") (at \(.fault.created // "-"))" else "fault       (none recorded)" end), (if (.fault.details // "") != "" then "fault.details  \(.fault.details | split("\n") | .[0:5] | join(" | "))" else empty end)'
+            echo ""
+            echo "Recent actions, newest first (step  result  host_id; only compute_* steps run on the compute host):"
+            reqs=$(openstack server event list "$INSTANCE_NAME" -f json 2>/dev/null | \
+              jq -r --argjson n "$MAX_ACTIONS" '.[0:$n][] | ."Request ID"')
+            if [[ -z "$reqs" ]]; then
+              echo "(no actions returned - the event list call failed or the server has none)"
+            fi
+            for req in $reqs; do
+              openstack server event show "$INSTANCE_NAME" "$req" -f json 2>/dev/null | \
+                jq -r '"\(.start_time[0:19])  \(.action)  \(.message // "-")  \(.request_id)", (.events[]? | "    \(.event)  \(.result // "-")  \((.host_id // "")[0:8] | if . == "" then "-" else . end)\(if (.details // "") != "" then "  details: " + (.details | split("\n")[0]) else "" end)")'
+            done
+          fi
+          printf '%s\n' '```'
+          printf '%s\n' '</details>'
+        } > "$OUTPUT_FILE"
+
+        cat "$OUTPUT_FILE"
+        [[ -s "$OUTPUT_FILE" ]] && echo "file=$OUTPUT_FILE" >> "$GITHUB_OUTPUT" || true
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
+        OUTPUT_FILE: ${{ inputs.output_file }}
+        MAX_ACTIONS: ${{ inputs.max_actions }}
