@@ -528,7 +528,7 @@ runs:
     - name: Collect Jetstream2 diagnostics (failed create)
       id: create_diagnostics
       if:
-        ${{ steps.wait_instance_state.outcome == 'success' &&
+        ${{ !cancelled() && steps.wait_instance_state.outcome == 'success' &&
         steps.wait_instance_state.outputs.final_status != 'ACTIVE' }}
       continue-on-error: true
       uses: ./.github/actions/collect-instance-diagnostics

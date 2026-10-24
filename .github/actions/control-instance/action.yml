@@ -1123,6 +1123,10 @@ runs:
       env:
         FLAVOR: ${{ steps.extract_flavor.outputs.flavor }}
 
+    # Runs after the exit above (!cancelled). Always follows a user-facing
+    # failure comment, so it is deliberately absent from the safety-net list
+    # below; host_error is excluded because the append step already put the
+    # block into that comment.
     - name: comment (Jetstream2 diagnostics)
       if:
         ${{ !cancelled() && steps.command_diagnostics.outputs.file != '' &&

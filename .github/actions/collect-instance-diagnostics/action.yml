@@ -23,7 +23,8 @@ inputs:
 outputs:
   file:
     description:
-      "Path of the written markdown block; empty when nothing could be collected"
+      "Path of the written markdown block; empty only when the file could not be
+      written. A server that is already gone still yields a block saying so."
     value: ${{ steps.collect.outputs.file }}
 runs:
   using: "composite"
@@ -66,6 +67,9 @@ runs:
             echo "Recent actions, newest first (step  result  host_id; only compute_* steps run on the compute host):"
             reqs=$(openstack server event list "$INSTANCE_NAME" -f json 2>/dev/null | \
               jq -r --argjson n "$MAX_ACTIONS" '.[0:$n][] | ."Request ID"')
+            if [[ -z "$reqs" ]]; then
+              echo "(no actions returned - the event list call failed or the server has none)"
+            fi
             for req in $reqs; do
               openstack server event show "$INSTANCE_NAME" "$req" -f json 2>/dev/null | \
                 jq -r '"\(.start_time[0:19])  \(.action)  \(.message // "-")  \(.request_id)", (.events[]? | "    \(.event)  \(.result // "-")  \((.host_id // "")[0:8] | if . == "" then "-" else . end)\(if (.details // "") != "" then "  details: " + (.details | split("\n")[0]) else "" end)")'
@@ -76,7 +80,7 @@ runs:
         } > "$OUTPUT_FILE"
 
         cat "$OUTPUT_FILE"
-        echo "file=$OUTPUT_FILE" >> $GITHUB_OUTPUT
+        [[ -s "$OUTPUT_FILE" ]] && echo "file=$OUTPUT_FILE" >> "$GITHUB_OUTPUT" || true
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ inputs.instance_name }}
