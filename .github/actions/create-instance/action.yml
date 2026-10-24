@@ -522,6 +522,20 @@ runs:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
+    # Both branches below delete the server, and Nova's record of why the build
+    # failed goes with it — snapshot it first. Posted further down, after the
+    # user-facing failure comment.
+    - name: Collect Jetstream2 diagnostics (failed create)
+      id: create_diagnostics
+      if:
+        ${{ steps.wait_instance_state.outcome == 'success' &&
+        steps.wait_instance_state.outputs.final_status != 'ACTIVE' }}
+      continue-on-error: true
+      uses: ./.github/actions/collect-instance-diagnostics
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        instance_name: ${{ steps.define.outputs.instance_name }}
+
     - name: comment (no capacity available)
       if: ${{ steps.check_capacity_error.outputs.capacity_error == 'true' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
@@ -598,6 +612,14 @@ runs:
           Failed to create instance **${{ steps.define.outputs.instance_name }}**.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: comment (Jetstream2 diagnostics)
+      if: ${{ !cancelled() && steps.create_diagnostics.outputs.file != '' }}
+      continue-on-error: true
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body-path: ${{ steps.create_diagnostics.outputs.file }}
 
     - name: comment (progress)
       if: ${{ steps.check_capacity_error.outputs.capacity_error != 'true' }}

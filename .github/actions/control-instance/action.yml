@@ -970,6 +970,35 @@ runs:
         ISSUE_NUMBER: ${{ inputs.issue_number }}
         RUN_ID: ${{ github.run_id }}
 
+    # Snapshot Nova's record of the failure before anything can delete the
+    # server: the capacity branch below deletes it in this run, and after a
+    # host_error the user's self-serve recovery is delete + create. The
+    # capacity branch exits the poll step green, hence the second clause.
+    - name: Collect Jetstream2 diagnostics (failed command)
+      id: command_diagnostics
+      if:
+        ${{ !cancelled() && (steps.instance_poll.outcome == 'failure' ||
+        steps.instance_poll.outputs.capacity_error == 'true') }}
+      continue-on-error: true
+      uses: ./.github/actions/collect-instance-diagnostics
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        instance_name: ${{ steps.define.outputs.instance_name }}
+
+    # host_error already has an admin-diagnostics comment — extend it rather
+    # than post a second one. Other failure modes get their own comment below.
+    - name: Attach diagnostics to unshelve failure report
+      if:
+        ${{ !cancelled() && steps.command_diagnostics.outputs.file != '' &&
+        steps.instance_poll.outputs.failure_mode == 'host_error' }}
+      continue-on-error: true
+      shell: bash
+      run: |
+        printf '\n' >> /tmp/unshelve_failure_body.md
+        cat "$DIAG_FILE" >> /tmp/unshelve_failure_body.md
+      env:
+        DIAG_FILE: ${{ steps.command_diagnostics.outputs.file }}
+
     - name: comment (unshelve failed on Jetstream2 host)
       id: comment_unshelve_host_failure
       if:
@@ -1093,6 +1122,16 @@ runs:
         exit 1
       env:
         FLAVOR: ${{ steps.extract_flavor.outputs.flavor }}
+
+    - name: comment (Jetstream2 diagnostics)
+      if:
+        ${{ !cancelled() && steps.command_diagnostics.outputs.file != '' &&
+        steps.instance_poll.outputs.failure_mode != 'host_error' }}
+      continue-on-error: true
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body-path: ${{ steps.command_diagnostics.outputs.file }}
 
     - name: Disassociate floating IP from shelved instance
       if:
