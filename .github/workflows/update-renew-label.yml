@@ -43,7 +43,11 @@ jobs:
           permissions: "read,triage,write,maintain,admin"
           allowlist:
             "${{ steps.admins.outputs.members }},${{
-            github.event.issue.user.login }}"
+            (vars.MORPHOCLOUD_PORTAL_ONLY != 'true' ||
+            !contains(github.event.issue.labels.*.name, 'request-type:instance')
+            || github.event.comment.performed_via_github_app.slug ==
+            vars.MORPHOCLOUD_PORTAL_APP_SLUG) && github.event.issue.user.login
+            || '' }}"
 
       - uses: actions/checkout@v6
 

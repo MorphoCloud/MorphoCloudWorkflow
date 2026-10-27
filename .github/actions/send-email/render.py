@@ -24,15 +24,19 @@ subs = {
     # or the page did not respond): every template line using it is dropped.
     "{{upload_url}}": os.environ.get("UPLOAD_URL", ""),
     "{{passphrase}}": os.environ["PASSPHRASE"],
+    # The data portal, where the prototype's email sends the user to connect.
+    # Empty where there is no portal (production).
+    "{{portal_url}}": os.environ.get("PORTAL_URL", ""),
     "{{contact_email}}": t["contact_email"],
 }
 
 
 def render(text: str) -> str:
-    if not subs["{{upload_url}}"]:
-        text = "\n".join(
-            line for line in text.split("\n") if "{{upload_url}}" not in line
-        )
+    # A line built around a missing value is dropped whole, never left as a
+    # fragment ("Sign in at:" with nothing after it).
+    for key in ("{{upload_url}}", "{{portal_url}}"):
+        if not subs[key]:
+            text = "\n".join(line for line in text.split("\n") if key not in line)
     for key, value in subs.items():
         text = text.replace(key, value)
     return text

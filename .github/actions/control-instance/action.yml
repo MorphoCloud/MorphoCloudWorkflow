@@ -59,6 +59,24 @@ inputs:
       (MORPHOCLOUD_GITHUB_ADMIN_EMAILS). Leave blank to disable the alert."
     required: false
     default: ""
+  storage_mode:
+    description:
+      "'share' when instances keep user files on a data share (phase 2
+      prototype, Test-Instances only): a delete first shuts the instance down
+      cleanly so everything is flushed to the share"
+    required: false
+    default: ""
+  template_ref:
+    description:
+      "MorphoCloudPortalContent branch for the email after an unshelve
+      (MORPHOCLOUD_TEMPLATE_REF); see the send-email action"
+    required: false
+    default: "main"
+  portal_url:
+    description:
+      "The data portal (MORPHOCLOUD_DATA_PORTAL_URL); see the send-email action"
+    required: false
+    default: ""
 runs:
   using: "composite"
   steps:
@@ -101,6 +119,21 @@ runs:
       with:
         prefix: ${{ inputs.instance_name_prefix }}
         issue_number: ${{ inputs.issue_number }}
+
+    # The self-serve recovery the unshelve failure comments offer. Portal
+    # mode: from the portal, files in the storage; otherwise typed commands
+    # and the data volume.
+    - name: Recovery advice
+      id: recovery
+      shell: bash
+      run: |
+        if [[ -n "$PORTAL_URL" ]]; then
+          echo "line=You can often recover this yourself: delete the instance from the portal and create it again ($PORTAL_URL). Your files in your storage are kept; extensions installed in Slicer are not." >> "$GITHUB_OUTPUT"
+        else
+          echo 'line=You can often recover this yourself: run **`/delete_instance`**, then **`/create`**. Your home directory and MyData live on a separate storage volume that is not deleted, so your files and Slicer extensions are preserved.' >> "$GITHUB_OUTPUT"
+        fi
+      env:
+        PORTAL_URL: ${{ inputs.portal_url }}
 
     - name: Check instance management approval
       id: check_approval
@@ -201,6 +234,16 @@ runs:
           if [[ "$task_state" == "null" ]]; then
             break
           fi
+          # A delete that finds a delete already in flight has nothing to wait
+          # for: Nova accepts the repeat and ignores it ("already in deleting
+          # state"), so carry on and close the request. Waiting here waited on
+          # itself: Test-Instances#494 sat on a build stuck on its host, whose
+          # cleanup delete never finished, and the user's delete spent the full
+          # 10 min here, holding the runner, before failing as "appears stuck".
+          if [[ "$COMMAND_NAME" == "delete" && "$task_state" == "deleting" ]]; then
+            echo "already_deleting=true" >> $GITHUB_OUTPUT
+            break
+          fi
           if [ $waited -ge $max_wait ]; then
             echo "task_state=$task_state" >> $GITHUB_OUTPUT
             echo "::error ::Server action still in progress after ${max_wait}s (task_state '$task_state')."
@@ -213,6 +256,7 @@ runs:
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+        COMMAND_NAME: ${{ inputs.command_name }}
 
     - name: comment (server action already in progress)
       id: comment_task_state
@@ -226,6 +270,26 @@ runs:
           Another operation on **${{ steps.define.outputs.instance_name }}** has been running on Jetstream2's side for over 10 minutes and appears stuck (task state `${{ steps.check_task_state.outputs.task_state }}`), so the `${{ inputs.command_name }}` command could not run. **There is nothing you need to do.** @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed. Your instance and data remain safely stored.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    # The user's request completes (the issue closes), but the stalled delete
+    # is an admin problem: Nova's record of it goes on the issue, and the
+    # admins are emailed below, since a successful run alerts no one.
+    - name: Collect Jetstream2 diagnostics (delete already in flight)
+      id: deleting_diagnostics
+      if: ${{ steps.check_task_state.outputs.already_deleting == 'true' }}
+      continue-on-error: true
+      uses: ./.github/actions/collect-instance-diagnostics
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        instance_name: ${{ steps.define.outputs.instance_name }}
+
+    - name: comment (Jetstream2 diagnostics, delete already in flight)
+      if: ${{ steps.deleting_diagnostics.outputs.file != '' }}
+      continue-on-error: true
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body-path: ${{ steps.deleting_diagnostics.outputs.file }}
 
     - name: Check if instance is already in the requested state
       id: check_noop
@@ -557,6 +621,59 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+    # Share mode: a hard delete loses writes the instance has not flushed to
+    # the share yet (STORAGE_REDESIGN_PLAN.md, test 4). The mode is per
+    # repository, so on Test-Instances every delete (workshop instances too)
+    # shuts down first; that costs up to a minute and loses nothing. A clean shutdown
+    # flushes them. A hung instance must not block deletion, so after 3
+    # minutes it is deleted anyway and the issue says so.
+    - name: Shut down cleanly before delete
+      id: clean_stop
+      if:
+        ${{ inputs.storage_mode == 'share' && inputs.command_name == 'delete' &&
+        steps.check_instance.outputs.exists == 'true' &&
+        steps.check_task_state.outputs.already_deleting != 'true' }}
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+        status=$(openstack server show "$INSTANCE_NAME" -f value -c status || echo UNKNOWN)
+        echo "Status before delete: $status"
+        # BUILD never booted, so it has written nothing to lose; warning the
+        # user about unsaved changes there is noise (Test-Instances#494).
+        case "$status" in
+          SHUTOFF|SHELVED|SHELVED_OFFLOADED|BUILD)
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+            exit 0 ;;
+          ACTIVE) ;;
+          *)
+            echo "::warning ::$INSTANCE_NAME is $status; it cannot be shut down cleanly before delete."
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+            exit 0 ;;
+        esac
+        if ! openstack server stop "$INSTANCE_NAME"; then
+          echo "::warning ::Could not ask $INSTANCE_NAME to shut down."
+          echo "clean=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        for i in $(seq 1 18); do
+          sleep 10
+          status=$(openstack server show "$INSTANCE_NAME" -f value -c status || echo UNKNOWN)
+          if [[ "$status" == "SHUTOFF" ]]; then
+            echo "Shut down cleanly after $((i * 10))s."
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Anything but still-running means it will not reach SHUTOFF.
+          if [[ "$status" != "ACTIVE" && "$status" != "UNKNOWN" ]]; then
+            break
+          fi
+        done
+        echo "::warning ::$INSTANCE_NAME did not shut down within 3 minutes (status $status); deleting anyway."
+        echo "clean=false" >> "$GITHUB_OUTPUT"
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
     - name: Execute command
       id: execute_command
       # noop is only set for shelve/unshelve; for delete it is empty and the
@@ -568,11 +685,25 @@ runs:
       run: |
         source ~/venv/bin/activate
 
-        openstack server $COMMAND_NAME "$INSTANCE_NAME"
+        # The delete already in flight (check_task_state) can finish between
+        # that check and this call, and then this delete fails as not found.
+        # The instance is gone, which is what the user asked for, so confirm
+        # it has left the listing and report success rather than a failure.
+        # A failed listing proves nothing, so it keeps the failure.
+        if ! openstack server $COMMAND_NAME "$INSTANCE_NAME"; then
+          if [[ "$ALREADY_DELETING" == "true" ]] && \
+             listed=$(openstack server list --name "^${INSTANCE_NAME}$" -f value -c Name) && \
+             ! grep -qx "$INSTANCE_NAME" <<<"$listed"; then
+            echo "The delete already in flight finished first; $INSTANCE_NAME is gone."
+            exit 0
+          fi
+          exit 1
+        fi
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         COMMAND_NAME: ${{ inputs.command_name }}
+        ALREADY_DELETING: ${{ steps.check_task_state.outputs.already_deleting }}
 
     # The data portal's instance dashboard shows the access details sent with
     # the credentials email (send-email). They stop being valid once the
@@ -595,6 +726,56 @@ runs:
         fi
       env:
         ISSUE_NUMBER: ${{ inputs.issue_number }}
+
+    # Share expiry (STORAGE_REDESIGN_PLAN.md): an unshelve records the holder
+    # and the time on the owner's share; a delete releases the holder, which
+    # starts the idle clock. Only a member's own request has a share
+    # (request-creator:user); workshop and course instances are skipped. Never
+    # fails the command: a missed stamp costs at most an early warning.
+    - name: Record activity on the data share
+      if:
+        ${{ inputs.storage_mode == 'share' && inputs.course_team_slug == '' &&
+        steps.execute_command.outcome == 'success' && (inputs.command_name ==
+        'unshelve' || inputs.command_name == 'delete') }}
+      shell: bash
+      run: |
+        # No -e: by design nothing here fails the command; every failure is a warning.
+        set -uo pipefail
+        issue=$(gh api "repos/$GH_REPO/issues/$ISSUE_NUMBER" --jq '{id: .user.id, user: ([.labels[].name] | index("request-creator:user") != null)}') || {
+          echo "::warning ::Could not read the request's owner; the data share was not stamped."
+          exit 0
+        }
+        if [[ "$(jq -r .user <<<"$issue")" != "true" ]]; then
+          echo "Not a member's own request; no data share to stamp."
+          exit 0
+        fi
+        gid=$(jq -r .id <<<"$issue")
+        source ~/venv/bin/activate
+        if [[ "$COMMAND_NAME" == "delete" ]]; then
+          args=(--unmounted)
+        else
+          args=(--instance "$INSTANCE_NAME")
+        fi
+        if ! python3 "$HOME/mc-data/mc_share_runner.py" touch "$gid" "${args[@]}" > /dev/null; then
+          echo "::warning ::Could not record the $COMMAND_NAME on the data share for $gid"
+        fi
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+        COMMAND_NAME: ${{ inputs.command_name }}
+        OS_CLOUD: ${{ inputs.os_cloud }}
+
+    - name: comment (deleted without a clean shutdown)
+      if:
+        ${{ steps.clean_stop.outputs.clean == 'false' &&
+        steps.execute_command.outcome == 'success' }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          **${{ steps.define.outputs.instance_name }}** could not be shut down cleanly before it was deleted. Changes saved in the last few seconds before the delete may be missing from your storage.
 
     - name: command results comment (failure)
       id: comment_execute_failed
@@ -631,12 +812,15 @@ runs:
     # run (with the alarming comment that follows) would be a worse failure
     # than the narrow race this closes. The warning is the admin-visible signal
     # that a delete is taking abnormally long.
+    # Skipped when the delete was already in flight before this command: that
+    # delete has stalled on its host, and three more minutes will not reap it.
     - name: Wait for the deleted server to leave Nova's listing
       id: delete_reaped
       if:
         ${{ inputs.command_name == 'delete' &&
         steps.check_instance.outputs.exists == 'true' &&
-        steps.check_noop.outputs.noop != 'true' }}
+        steps.check_noop.outputs.noop != 'true' &&
+        steps.check_task_state.outputs.already_deleting != 'true' }}
       shell: bash
       run: |
         source ~/venv/bin/activate
@@ -806,7 +990,7 @@ runs:
               # recovery and usually faster than waiting for an admin: the
               # user's files live on the data volume, which `/delete_instance`
               # does not touch and `/create` re-attaches (Instances#139).
-              printf '%s\n\n' "You can often recover this yourself: run **\`/delete_instance\`**, then **\`/create\`**. Your home directory and MyData live on a separate storage volume that is not deleted, so your files and Slicer extensions are preserved."
+              printf '%s\n\n' "$RECOVERY_LINE"
               printf '%s\n\n' '<details><summary>Diagnostics for admins</summary>'
               printf '%s\n' 'Failed unshelve requests (openstack server event list):'
               printf '%s\n' '```'
@@ -829,12 +1013,42 @@ runs:
         EXPECTED_STATUS: ${{ steps.expected_status.outputs.value }}
         COMMAND_NAME: ${{ inputs.command_name }}
         RECENT_FAILURES: ${{ steps.unshelve_history.outputs.recent_failures }}
+        RECOVERY_LINE: ${{ steps.recovery.outputs.line }}
         BASELINE_ERROR_REQS:
           ${{ steps.unshelve_history.outputs.baseline_error_reqs }}
         GH_TOKEN: ${{ inputs.token }}
         GH_REPO: ${{ github.repository }}
         ISSUE_NUMBER: ${{ inputs.issue_number }}
         RUN_ID: ${{ github.run_id }}
+
+    # Snapshot Nova's record of the failure before anything can delete the
+    # server: the capacity branch below deletes it in this run, and after a
+    # host_error the user's self-serve recovery is delete + create. The
+    # capacity branch exits the poll step green, hence the second clause.
+    - name: Collect Jetstream2 diagnostics (failed command)
+      id: command_diagnostics
+      if:
+        ${{ !cancelled() && (steps.instance_poll.outcome == 'failure' ||
+        steps.instance_poll.outputs.capacity_error == 'true') }}
+      continue-on-error: true
+      uses: ./.github/actions/collect-instance-diagnostics
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        instance_name: ${{ steps.define.outputs.instance_name }}
+
+    # host_error already has an admin-diagnostics comment — extend it rather
+    # than post a second one. Other failure modes get their own comment below.
+    - name: Attach diagnostics to unshelve failure report
+      if:
+        ${{ !cancelled() && steps.command_diagnostics.outputs.file != '' &&
+        steps.instance_poll.outputs.failure_mode == 'host_error' }}
+      continue-on-error: true
+      shell: bash
+      run: |
+        printf '\n' >> /tmp/unshelve_failure_body.md
+        cat "$DIAG_FILE" >> /tmp/unshelve_failure_body.md
+      env:
+        DIAG_FILE: ${{ steps.command_diagnostics.outputs.file }}
 
     - name: comment (unshelve failed on Jetstream2 host)
       id: comment_unshelve_host_failure
@@ -873,7 +1087,7 @@ runs:
 
           The `unshelve` command for **${{ steps.define.outputs.instance_name }}** did not complete within the expected time — it may be stuck on Jetstream2's side. @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed.
 
-          **If your instance has not come up after ~10 minutes,** you can often recover it yourself: run **`/delete_instance`**, then **`/create`**. Your home directory and MyData live on a separate storage volume that is not deleted, so your files and Slicer extensions are preserved.
+          **If your instance has not come up after ~10 minutes:** ${{ steps.recovery.outputs.line }}
 
           <details><summary>Diagnostics for admins</summary>
 
@@ -959,6 +1173,20 @@ runs:
         exit 1
       env:
         FLAVOR: ${{ steps.extract_flavor.outputs.flavor }}
+
+    # Runs after the exit above (!cancelled). Always follows a user-facing
+    # failure comment, so it is deliberately absent from the safety-net list
+    # below; host_error is excluded because the append step already put the
+    # block into that comment.
+    - name: comment (Jetstream2 diagnostics)
+      if:
+        ${{ !cancelled() && steps.command_diagnostics.outputs.file != '' &&
+        steps.instance_poll.outputs.failure_mode != 'host_error' }}
+      continue-on-error: true
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body-path: ${{ steps.command_diagnostics.outputs.file }}
 
     - name: Disassociate floating IP from shelved instance
       if:
@@ -1127,6 +1355,9 @@ runs:
         inputs.command_name == 'unshelve' && inputs.course_team_slug == '' }}
       uses: ./.github/actions/send-email
       with:
+        storage_mode: ${{ inputs.storage_mode }}
+        template_ref: ${{ inputs.template_ref }}
+        portal_url: ${{ inputs.portal_url }}
         os_cloud: ${{ inputs.os_cloud }}
         token: ${{ inputs.token }}
         email_lookup_url: ${{ inputs.email_lookup_url }}
@@ -1139,7 +1370,9 @@ runs:
 
     - name: Send email (course)
       id: send_email_course
-      # See note on "Send email (individual)" above.
+      # See note on "Send email (individual)" above. Course repositories have
+      # no portal and read the template from main: template_ref and
+      # portal_url are not passed on purpose.
       continue-on-error: true
       if:
         ${{ steps.check_instance.outputs.exists == 'true' && success() &&
@@ -1249,6 +1482,37 @@ runs:
         instance_status:
           ${{ inputs.command_name == 'delete' && 'DELETED' || '' }}
 
+    # Share mode: a request covers one instance's lifetime
+    # (STORAGE_REDESIGN_PLAN.md, decision 15), so after a successful delete of
+    # a user's own request the issue is closed and the next instance starts
+    # from a new request. Closed with the workflow token, so
+    # guard-issue-close (which skips bot closes) does nothing.
+    - name: Close the request after delete
+      if:
+        ${{ inputs.storage_mode == 'share' && inputs.command_name == 'delete' &&
+        steps.execute_command.outcome == 'success' && inputs.course_team_slug ==
+        '' }}
+      shell: bash
+      run: |
+        issue=$(gh issue view "$ISSUE_NUMBER" --json labels,state --jq '{labels: ([.labels[].name] | join(",")), state: .state}')
+        if [[ ",$(jq -r .labels <<<"$issue")," != *",request-creator:user,"* ]]; then
+          echo "Not a user's own request; left open."
+          exit 0
+        fi
+        if [[ "$(jq -r .state <<<"$issue")" == "CLOSED" ]]; then
+          # Closed by its owner before the delete (guard-issue-close, which
+          # already told them where their files are): nothing to close, and
+          # the success comment above has said the instance is gone.
+          echo "Request #$ISSUE_NUMBER was already closed."
+          exit 0
+        fi
+        gh issue close "$ISSUE_NUMBER" --reason completed \
+          --comment "The instance was deleted, so this request is closed. Your files stay in your storage."
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+
     # Safety net: every failure MUST surface on the issue. Steps without a
     # dedicated failure comment (e.g. release_stuck_ip hanging on a wedged
     # nova-api backend, Instances#168 2026-07-20) previously failed the job in
@@ -1331,4 +1595,29 @@ runs:
 
           Instance: ${{ steps.define.outputs.instance_name || 'unknown' }}
           Issue:    https://github.com/${{ github.repository }}/issues/${{ inputs.issue_number }}
+          Run log:  https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Notify admins by email (delete stalled on Jetstream2)
+      continue-on-error: true
+      if:
+        ${{ success() && inputs.admin_emails != '' &&
+        steps.check_task_state.outputs.already_deleting == 'true' }}
+      uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
+      with:
+        server_address: webhost.dynadot.com
+        server_port: 587
+        secure: false
+        username: ${{ inputs.mail_server_username }}
+        password: ${{ inputs.mail_server_password }}
+        from: MorphoCloudPortal <no-reply@morphocloud.org>
+        to: ${{ inputs.admin_emails }}
+        subject:
+          "[${{ github.repository }}] delete stalled on Jetstream2 for ${{
+          steps.define.outputs.instance_name }} (issue #${{ inputs.issue_number
+          }})"
+        body: |
+          A delete was requested while an earlier delete of this server was still in progress on Jetstream2 (task_state "deleting"). The request was closed for the user; the server itself may still be listed and need a Jetstream2 admin to remove it from its host.
+
+          Instance: ${{ steps.define.outputs.instance_name }}
+          Issue:    https://github.com/${{ github.repository }}/issues/${{ inputs.issue_number }} (Jetstream2 diagnostics comment on the issue)
           Run log:  https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}

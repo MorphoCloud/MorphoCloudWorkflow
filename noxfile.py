@@ -239,6 +239,12 @@ def vendorize(session: nox.Session) -> None:
             # Retired — replaced by the close-expired-issues.yml end-of-life
             # sweep; excluded so _prune_orphans removes downstream copies.
             ".github/workflows/automatic-instance-deleting.yml",
+            # Retired with the per-instance data volume (STORAGE_REDESIGN_PLAN.md,
+            # "Workflow files with volume logic"); excluded so the copies go too.
+            ".github/workflows/delete-volume.yml",
+            ".github/workflows/delete-volume-from-workflow.yml",
+            ".github/workflows/automatic-volume-deleting.yml",
+            ".github/actions/delete-volume/action.yml",
             # Claude PR reviewer — MWF-only (needs the CLAUDE_CODE_OAUTH_TOKEN
             # secret, which only exists here; downstream repos take direct
             # pushes, not PRs)
@@ -277,6 +283,10 @@ def vendorize_course(session: nox.Session) -> None:
             # Retired — replaced by the close-expired-issues.yml end-of-life
             # sweep; excluded so _prune_orphans removes downstream copies.
             ".github/workflows/automatic-instance-deleting.yml",
+            # The volume workflows retired from the individual flow (delete-volume*,
+            # automatic-volume-deleting, the delete-volume action) are NOT excluded
+            # here on purpose: course repositories stay in volume mode and keep
+            # their frozen copies. Do not add them for symmetry.
             # Claude PR reviewer — MWF-only (see vendorize session note)
             ".github/workflows/claude.yml",
             ".github/workflows/claude-code-review.yml",
