@@ -537,6 +537,8 @@ runs:
         steps.wait_instance_state.outputs.final_status != 'ACTIVE' }}
       shell: bash
       run: |
+        # check_capacity_error only runs on ERROR, so CAPACITY_ERROR is empty
+        # on the timeout path and the FINAL_STATUS clause carries it.
         if [[ "$CAPACITY_ERROR" == "true" || "$FINAL_STATUS" != "ERROR" ]]; then
           echo "value=true" >> "$GITHUB_OUTPUT"
         else
@@ -574,7 +576,8 @@ runs:
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-    - name: Clean up failed instance (no capacity)
+    # The timeout half of "unavailable" is cleaned up by the ACTIVE check below.
+    - name: Clean up failed instance (capacity ERROR)
       if: ${{ steps.check_capacity_error.outputs.capacity_error == 'true' }}
       shell: bash
       run: |
@@ -593,7 +596,7 @@ runs:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
-    - name: Exit on capacity error
+    - name: Exit on capacity ERROR
       if: ${{ steps.check_capacity_error.outputs.capacity_error == 'true' }}
       shell: bash
       run: |
