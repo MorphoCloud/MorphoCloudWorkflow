@@ -234,6 +234,16 @@ runs:
           if [[ "$task_state" == "null" ]]; then
             break
           fi
+          # A delete that finds a delete already in flight has nothing to wait
+          # for: Nova accepts the repeat and ignores it ("already in deleting
+          # state"), so carry on and close the request. Waiting here waited on
+          # itself: Test-Instances#494 sat on a build stuck on its host, whose
+          # cleanup delete never finished, and the user's delete spent the full
+          # 10 min here, holding the runner, before failing as "appears stuck".
+          if [[ "$COMMAND_NAME" == "delete" && "$task_state" == "deleting" ]]; then
+            echo "already_deleting=true" >> $GITHUB_OUTPUT
+            break
+          fi
           if [ $waited -ge $max_wait ]; then
             echo "task_state=$task_state" >> $GITHUB_OUTPUT
             echo "::error ::Server action still in progress after ${max_wait}s (task_state '$task_state')."
@@ -246,6 +256,7 @@ runs:
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+        COMMAND_NAME: ${{ inputs.command_name }}
 
     - name: comment (server action already in progress)
       id: comment_task_state
@@ -259,6 +270,26 @@ runs:
           Another operation on **${{ steps.define.outputs.instance_name }}** has been running on Jetstream2's side for over 10 minutes and appears stuck (task state `${{ steps.check_task_state.outputs.task_state }}`), so the `${{ inputs.command_name }}` command could not run. **There is nothing you need to do.** @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed. Your instance and data remain safely stored.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    # The user's request completes (the issue closes), but the stalled delete
+    # is an admin problem: Nova's record of it goes on the issue, and the
+    # admins are emailed below, since a successful run alerts no one.
+    - name: Collect Jetstream2 diagnostics (delete already in flight)
+      id: deleting_diagnostics
+      if: ${{ steps.check_task_state.outputs.already_deleting == 'true' }}
+      continue-on-error: true
+      uses: ./.github/actions/collect-instance-diagnostics
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        instance_name: ${{ steps.define.outputs.instance_name }}
+
+    - name: comment (Jetstream2 diagnostics, delete already in flight)
+      if: ${{ steps.deleting_diagnostics.outputs.file != '' }}
+      continue-on-error: true
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body-path: ${{ steps.deleting_diagnostics.outputs.file }}
 
     - name: Check if instance is already in the requested state
       id: check_noop
@@ -600,14 +631,17 @@ runs:
       id: clean_stop
       if:
         ${{ inputs.storage_mode == 'share' && inputs.command_name == 'delete' &&
-        steps.check_instance.outputs.exists == 'true' }}
+        steps.check_instance.outputs.exists == 'true' &&
+        steps.check_task_state.outputs.already_deleting != 'true' }}
       shell: bash
       run: |
         source ~/venv/bin/activate
         status=$(openstack server show "$INSTANCE_NAME" -f value -c status || echo UNKNOWN)
         echo "Status before delete: $status"
+        # BUILD never booted, so it has written nothing to lose; warning the
+        # user about unsaved changes there is noise (Test-Instances#494).
         case "$status" in
-          SHUTOFF|SHELVED|SHELVED_OFFLOADED)
+          SHUTOFF|SHELVED|SHELVED_OFFLOADED|BUILD)
             echo "clean=true" >> "$GITHUB_OUTPUT"
             exit 0 ;;
           ACTIVE) ;;
@@ -764,12 +798,15 @@ runs:
     # run (with the alarming comment that follows) would be a worse failure
     # than the narrow race this closes. The warning is the admin-visible signal
     # that a delete is taking abnormally long.
+    # Skipped when the delete was already in flight before this command: that
+    # delete has stalled on its host, and three more minutes will not reap it.
     - name: Wait for the deleted server to leave Nova's listing
       id: delete_reaped
       if:
         ${{ inputs.command_name == 'delete' &&
         steps.check_instance.outputs.exists == 'true' &&
-        steps.check_noop.outputs.noop != 'true' }}
+        steps.check_noop.outputs.noop != 'true' &&
+        steps.check_task_state.outputs.already_deleting != 'true' }}
       shell: bash
       run: |
         source ~/venv/bin/activate
@@ -1544,4 +1581,29 @@ runs:
 
           Instance: ${{ steps.define.outputs.instance_name || 'unknown' }}
           Issue:    https://github.com/${{ github.repository }}/issues/${{ inputs.issue_number }}
+          Run log:  https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Notify admins by email (delete stalled on Jetstream2)
+      continue-on-error: true
+      if:
+        ${{ !cancelled() && inputs.admin_emails != '' &&
+        steps.check_task_state.outputs.already_deleting == 'true' }}
+      uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
+      with:
+        server_address: webhost.dynadot.com
+        server_port: 587
+        secure: false
+        username: ${{ inputs.mail_server_username }}
+        password: ${{ inputs.mail_server_password }}
+        from: MorphoCloudPortal <no-reply@morphocloud.org>
+        to: ${{ inputs.admin_emails }}
+        subject:
+          "[${{ github.repository }}] delete stalled on Jetstream2 for ${{
+          steps.define.outputs.instance_name }} (issue #${{ inputs.issue_number
+          }})"
+        body: |
+          A delete was requested while an earlier delete of this server was still in progress on Jetstream2 (task_state "deleting"). The request was closed for the user; the server itself may still be listed and need a Jetstream2 admin to remove it from its host.
+
+          Instance: ${{ steps.define.outputs.instance_name }}
+          Issue:    https://github.com/${{ github.repository }}/issues/${{ inputs.issue_number }} (Jetstream2 diagnostics comment on the issue)
           Run log:  https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
