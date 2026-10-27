@@ -509,11 +509,29 @@ jobs:
       # provisioning, and /delete_all would take the user's data volume with it
       # (Instances#168). The action sets CREATE_ALREADY_EXISTS in that case and
       # posts its own targeted guidance instead.
+      # Two shapes. When the create action already removed the server (a build
+      # Jetstream2 could not start), "delete it first" is wrong: the user's
+      # delete then fails with "does not exist" (Test-Instances#492).
+      - name: comment (retry guidance after the instance was removed)
+        if:
+          ${{ failure() && steps.provision.outcome == 'failure' &&
+          env.CREATE_INSTANCE_REMOVED == 'true' && env.CREATE_ALREADY_EXISTS !=
+          'true' && env.CREATE_NO_STORAGE != 'true' }}
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            #### ⚠️ What to do next
+
+            The incomplete instance has already been removed, so there is nothing to delete. ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL != '' && format('To try again, create it again on the portal ({0}).', vars.MORPHOCLOUD_DATA_PORTAL_URL) || 'To try again, comment `/create`.' }}
+
+            If it fails again after retrying, please tag `@MorphoCloud/morphocloud-admins` for help.
+
       - name: comment (retry guidance on provisioning failure)
         if:
           ${{ failure() && steps.provision.outcome == 'failure' &&
-          env.CREATE_ALREADY_EXISTS != 'true' && env.CREATE_NO_STORAGE != 'true'
-          }}
+          env.CREATE_INSTANCE_REMOVED != 'true' && env.CREATE_ALREADY_EXISTS !=
+          'true' && env.CREATE_NO_STORAGE != 'true' }}
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}

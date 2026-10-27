@@ -522,6 +522,30 @@ runs:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
+    # To the user, "no host at all" (the capacity check above) and "still not
+    # running when the wait ran out" are the same answer: Jetstream2 could not
+    # start this flavor right now. The second shape is what a nearly-full GPU
+    # pool produces: the scheduler still places the build, the host rejects it,
+    # and it is rescheduled host to host until the wait expires — a g3.xl that
+    # normally comes up in under 2 min sat in BUILD for 7+ (Test-Instances#492)
+    # and got the generic "Failed to create instance". An ERROR on an assigned
+    # host is a real build failure and keeps the generic message.
+    - name: Classify a build that never started
+      id: unavailable
+      if:
+        ${{ steps.wait_instance_state.outcome == 'success' &&
+        steps.wait_instance_state.outputs.final_status != 'ACTIVE' }}
+      shell: bash
+      run: |
+        if [[ "$CAPACITY_ERROR" == "true" || "$FINAL_STATUS" != "ERROR" ]]; then
+          echo "value=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "value=false" >> "$GITHUB_OUTPUT"
+        fi
+      env:
+        CAPACITY_ERROR: ${{ steps.check_capacity_error.outputs.capacity_error }}
+        FINAL_STATUS: ${{ steps.wait_instance_state.outputs.final_status }}
+
     # Both branches below delete the server, and Nova's record of why the build
     # failed goes with it — snapshot it first. Posted further down, after the
     # user-facing failure comment.
@@ -537,7 +561,7 @@ runs:
         instance_name: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (no capacity available)
-      if: ${{ steps.check_capacity_error.outputs.capacity_error == 'true' }}
+      if: ${{ steps.unavailable.outputs.value == 'true' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
@@ -557,7 +581,14 @@ runs:
         source ~/venv/bin/activate
 
         echo "Deleting failed instance due to capacity error"
-        openstack server delete "$INSTANCE_NAME" || echo "Failed to delete instance, it may not exist"
+        # CREATE_INSTANCE_REMOVED tells the caller's retry guidance there is
+        # nothing left to delete (Test-Instances#492: the user was told to
+        # delete an instance this step had already removed).
+        if openstack server delete "$INSTANCE_NAME"; then
+          echo "CREATE_INSTANCE_REMOVED=true" >> "$GITHUB_ENV"
+        else
+          echo "Failed to delete instance, it may not exist"
+        fi
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
@@ -584,7 +615,11 @@ runs:
         # which would mislead the status-label cron (status:active) and make the
         # workshop backfill treat the slot as filled, never recreating it.
         echo "Instance did not reach ACTIVE in time (status: $CURRENT_STATUS); deleting the partial instance."
-        openstack server delete "$INSTANCE_NAME" --wait || echo "Delete failed or instance not found."
+        if openstack server delete "$INSTANCE_NAME" --wait; then
+          echo "CREATE_INSTANCE_REMOVED=true" >> "$GITHUB_ENV"
+        else
+          echo "Delete failed or instance not found."
+        fi
         echo "::error ::Instance failed to reach ACTIVE state. Current status: $CURRENT_STATUS"
         exit 1
       env:
@@ -601,8 +636,9 @@ runs:
         steps.wait_instance_state.outcome == 'failure' ||
         steps.check_capacity_error.outputs.capacity_error != 'true') &&
         failure() && steps.check_capacity_error.outputs.capacity_error != 'true'
-        && env.CREATE_ALREADY_EXISTS != 'true' && env.CREATE_NO_STORAGE !=
-        'true' }}
+        && steps.unavailable.outputs.value != 'true' &&
+        env.CREATE_ALREADY_EXISTS != 'true' && env.CREATE_NO_STORAGE != 'true'
+        }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
