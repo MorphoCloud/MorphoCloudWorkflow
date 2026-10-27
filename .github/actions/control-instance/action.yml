@@ -685,11 +685,25 @@ runs:
       run: |
         source ~/venv/bin/activate
 
-        openstack server $COMMAND_NAME "$INSTANCE_NAME"
+        # The delete already in flight (check_task_state) can finish between
+        # that check and this call, and then this delete fails as not found.
+        # The instance is gone, which is what the user asked for, so confirm
+        # it has left the listing and report success rather than a failure.
+        # A failed listing proves nothing, so it keeps the failure.
+        if ! openstack server $COMMAND_NAME "$INSTANCE_NAME"; then
+          if [[ "$ALREADY_DELETING" == "true" ]] && \
+             listed=$(openstack server list --name "^${INSTANCE_NAME}$" -f value -c Name) && \
+             ! grep -qx "$INSTANCE_NAME" <<<"$listed"; then
+            echo "The delete already in flight finished first; $INSTANCE_NAME is gone."
+            exit 0
+          fi
+          exit 1
+        fi
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         COMMAND_NAME: ${{ inputs.command_name }}
+        ALREADY_DELETING: ${{ steps.check_task_state.outputs.already_deleting }}
 
     # The data portal's instance dashboard shows the access details sent with
     # the credentials email (send-email). They stop being valid once the
@@ -1586,7 +1600,7 @@ runs:
     - name: Notify admins by email (delete stalled on Jetstream2)
       continue-on-error: true
       if:
-        ${{ !cancelled() && inputs.admin_emails != '' &&
+        ${{ success() && inputs.admin_emails != '' &&
         steps.check_task_state.outputs.already_deleting == 'true' }}
       uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
       with:
