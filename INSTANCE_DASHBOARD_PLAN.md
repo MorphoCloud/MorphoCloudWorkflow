@@ -388,6 +388,17 @@ courses; workshops stay out of scope.
 Decided by the maintainer 2026-11-02 (replaces the open points of 2026-09-26):
 
 - **One central portal** serves every context. No portal VM per course.
+- **Students never apply.** The instructor enrolls them (the course roster →
+  `enroll-students` → the course team), and MorphoCloud keeps no student
+  personal data: the portal stores only the GitHub ID and login, and the email
+  is read from the roster when a message is sent. So the portal's member check
+  accepts **any** context team, not only MorphoCloudUsers. A member of a course
+  team alone signs in straight to that course's cards: no personal context, and
+  never the "not a member" page or a join link. Today's portal checks one team
+  (`GITHUB_TEAM_SLUG`) and would send such a student to the application form;
+  that check changes. Waiting on an invitation, the page says that a student
+  enrolled by an instructor only accepts it and does not apply. A student who
+  also wants a personal instance applies through join like anyone else.
 - **Selector:** a menu next to the user name in the header, shown only to
   members of two or more contexts. The member chooses personal or a course; the
   choice is kept in the session.
