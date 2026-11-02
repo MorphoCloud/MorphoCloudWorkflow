@@ -304,8 +304,9 @@ The portal reads the `### Validation Results` comment posted by
 These strings are a contract: changing them in `validate-request.yml` requires
 changing the portal.
 
-The per-user limit counts open individual **and** course-instance requests by
-the same author, as it does today.
+The per-user limit counts the requests in the request's own repository, as it
+does today: one personal instance in Instances, and one course instance in each
+course repository (see "Later: members of more than one team").
 
 Both paths (decisions 8 and 9) open the first issue with the user's token. The
 backup path changes only how commands run later.
@@ -376,7 +377,7 @@ the prototype is adopted and the quota increase lands), not before.
 - **Applicant state** comes from data that already exists: the application sheet
   and the org membership.
 
-## Later: members of more than one team (agreed direction, 2026-09-26)
+## Later: members of more than one team (agreed direction, 2026-09-26; decided 2026-11-02)
 
 A member can belong to MorphoCloudUsers and to a course team at the same time.
 Each of these is a **context**: a team and the repository its requests go to
@@ -384,34 +385,80 @@ Each of these is a **context**: a team and the repository its requests go to
 after shares reach production for individual members. It reopens decision 11 for
 courses; workshops stay out of scope.
 
+Decided by the maintainer 2026-11-02 (replaces the open points of 2026-09-26):
+
+- **One central portal** serves every context. No portal VM per course.
 - **Selector:** a menu next to the user name in the header, shown only to
-  members of two or more contexts. The choice is kept in the session.
+  members of two or more contexts. The member chooses personal or a course; the
+  choice is kept in the session.
 - **Everything follows the context:** the storage card, the instance card, the
   instance types, the limits and the request repository.
 - **Storage per context:** one personal storage and one per course, never shared
   between them.
 - **One instance per context** (decision 14 applies within each context), so no
-  share is mounted by two instances.
+  share is mounted by two instances. A member of a course can therefore hold two
+  instances, one personal and one for the course: being in a course never blocks
+  the personal instance. The workflows already count the limit per repository.
 - **Course members manage their own instance** exactly like individual members:
   Create, Shelve, Unshelve, Extend session, Renew and Delete. Only workshop
   organizers provision instances in bulk.
-- **Courses are short** (a few months at most).
-- **Course storage lives on the course's own Jetstream2 allocation.** That needs
-  share quota there and the portal's and runner's access to that project.
-- **Course storage after the course ends** is not planned now: it is on the
-  course's own allocation, and what happens to it is up to the instructor.
-- **Images:** a course chooses its instance types when it is created, and its
-  instances use the base image for that type (vGPU or regular). To do: let
-  instructors customize their course's image.
+- **Course storage lives on the course's own Jetstream2 allocation.** Course
+  allocations are the same kind as MorphoCloud's, so share quota there is not a
+  concern.
+- **Course storage is kept for the duration of the course** (until the course's
+  `COURSE_END_DATE`), not on the personal inactivity clock. After the course
+  ends it is deleted the same way as personal storage: warnings first, never
+  before the last one.
+- **Course email comes from the course roster**, never from GitHub: students
+  must get mail at the address they registered for the course with, not the one
+  on their GitHub account. Personal email stays with the join sheet.
+- **Instructors get nothing new on the portal.** They already have full
+  visibility and operational access on the course repository. An admin portal is
+  out of scope for now.
+- **Course images:** a course uses MorphoCloud's golden image for its instance
+  type (vGPU or regular). An instructor who needs more software builds the
+  course's own image from it, through the course repository:
+  1. `/build-image` on a dedicated issue boots a build instance from the golden
+     image on the course's allocation, with the course's flavor and **no
+     storage**, and sends the instructor its access details.
+  2. The instructor installs the software: in `/opt`, in `/usr` (system
+     packages) or in the home folder. Desktop, Documents and Downloads are links
+     into storage and are not in the image.
+  3. `/save-image` runs the clean-up of `scripts/bake-image.sh` (passphrase, SSH
+     host and authorized keys, machine-id, cloud-init state), snapshots the
+     instance, sets the image on the course repository and deletes the build
+     instance.
+  4. New instances boot from the course image; existing ones keep theirs until
+     recreated.
+
+  Never a plain snapshot from Exosphere: it would copy the build instance's
+  passphrase and keys into every student's instance, and setup would never run.
+  The build instance has no storage, so no share key can end up in the image. A
+  course image does not receive MorphoCloud's later golden-image updates; a
+  long-running course rebuilds it each term or when a new golden image is
+  released. It is built for one GPU type, so changing the course's flavor means
+  rebuilding it. MorphoCloud's Ansible still runs at first boot and resets the
+  files it manages (such as the Slicer launcher). This replaces the
+  `course/<slug>` exosphere branches and `MORPHOCLOUD_EXOSPHERE_REF`.
+
 - **The availability line stays** for every context: it shows Jetstream2-wide
   vacancy, not an allocation's.
-- The portal needs the list of contexts instead of one request repository, the
-  GitHub App installed on each course repository, and permission to read the
-  member's teams.
-- **Possibly one management VM per course** instead: courses have their own
-  allocation and resources, so each could run its own copy of the portal from a
-  template, which also isolates courses from each other. Decided after the
-  prototype for individual members is complete.
+- **What the build needs:**
+  - The portal: the list of contexts instead of one request repository, the
+    GitHub App installed on each course repository, and permission to read the
+    member's teams.
+  - **One runner per course reports to the central portal**, each with its own
+    key. The portal's gate limits each runner to its own context, so a course's
+    runner can never read or change personal storage or another course.
+  - Course storage on the portal VM: a mount path per context (for example
+    `/mnt/shares/<context>/<gid>`), with the key handed over by that course's
+    runner.
+  - The course workflows (`create-course-instance.yml` and the course command
+    paths) gain share mode and the portal-only gate (decision 18). Today both
+    exist only for individual requests.
+  - `/course-provision` gains the steps: install the portal's GitHub App on the
+    course repository and the runner's `pickup` cron.
+  - The support assistant knows which context the member is in.
 
 ## Later: support chatbot (idea, not planned)
 
