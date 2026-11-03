@@ -41,8 +41,8 @@ if [[ -n "$AN_TOKEN" ]]; then
   done
 fi
 # The crontab must be current with the workflows' '# dispatch:' markers.
-python3 "$MWF/scripts/check-workflow-clock.py" check 2>/dev/null \
-  || { echo "ERROR: scripts/check-workflow-clock.py check failed (stale crontab or unmarked workflow)."; exit 1; }
+python3 "$MWF/scripts/check-workflow-clock.py" check \
+  || { echo "ERROR: scripts/check-workflow-clock.py check failed (see above: stale crontab or unmarked workflow)."; exit 1; }
 
 echo ">> Copying scripts, tokens, and crontab (values not printed) ..."
 ssh "$RUNNER" 'mkdir -p ~/.config/morphocloud && chmod 700 ~/.config/morphocloud'

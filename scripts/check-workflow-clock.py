@@ -12,7 +12,8 @@ after it was installed (``reconcile-instances`` among them) silently ran a few
 times a day while its cron line promised every half hour. This hook closes that
 gap by making the crontab a *rendered* file:
 
-1. A time-driven workflow carries a marker comment ``# dispatch: <cron>``. Its
+1. A time-driven workflow carries a marker comment ``# dispatch: <cron>`` in
+   its ``on:`` block (markers elsewhere in the file are ignored). Its
    ``on: schedule`` stays as the backstop (and as the only clock in MC-* course
    repos, which have no dispatcher by the maintainer's decision), and must equal
    the marker.
@@ -43,6 +44,10 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 MARKER = re.compile(r"^\s*#\s*dispatch:\s*(.+?)\s*$", re.MULTILINE)
+# The marker lives in the ``on:`` block: from the ``on:`` line to the next
+# top-level key. A "dispatch:" mentioned in a run: script or a comment elsewhere
+# is not a marker.
+ON_BLOCK = re.compile(r"^on:[^\n]*\n(?:(?:[ \t#][^\n]*)?\n)*", re.MULTILINE)
 CRON = re.compile(r"^(\S+\s+){4}\S+$")
 DISPATCHER = "/home/exouser/morphocloud-dispatch.sh"
 
@@ -85,7 +90,8 @@ def scan() -> tuple[dict[str, str], list[str]]:
             errors.append(f"{path}: could not parse ({exc.__class__.__name__})")
             continue
         triggers = _triggers(doc if isinstance(doc, dict) else {})
-        markers = MARKER.findall(text)
+        on_block = ON_BLOCK.search(text)
+        markers = MARKER.findall(on_block.group(0) if on_block else "")
         if len(markers) > 1:
             errors.append(f"{path}: more than one '# dispatch:' marker")
             continue
@@ -152,12 +158,11 @@ def crontab_errors(clock: dict[str, str], write: bool) -> list[str]:
     for rel, (repo, extra_rel) in TARGETS.items():
         path = ROOT / rel
         extra = ROOT / extra_rel if extra_rel else None
-        if write:
-            path.write_text(render(clock, repo, extra), encoding="utf-8")
-            continue
         if not path.exists():  # a vendorized copy: no crontabs to keep current
             continue
-        if path.read_text(encoding="utf-8") != render(clock, repo, extra):
+        if write:
+            path.write_text(render(clock, repo, extra), encoding="utf-8")
+        elif path.read_text(encoding="utf-8") != render(clock, repo, extra):
             errors.append(
                 f"{path}: stale. Run 'python scripts/check-workflow-clock.py render'."
             )
