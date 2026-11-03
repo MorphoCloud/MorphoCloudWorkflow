@@ -1,7 +1,9 @@
 name: Update Request Status Label
 on:
+  # dispatch: */5 * * * *
+  # The runner's crontab is the clock (scripts/runner-cron-dispatcher.md). The
+  # schedule below is only a backstop: GitHub fires it a few times a day.
   schedule:
-    # Run every 5 mins
     - cron: "*/5 * * * *"
   workflow_dispatch:
 

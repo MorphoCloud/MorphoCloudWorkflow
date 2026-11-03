@@ -7,11 +7,12 @@
 # time-sensitive workflows on time via `workflow_dispatch` (honored immediately).
 # The workflows keep their `on: schedule` as a loose backstop.
 #
-# Scope: MorphoCloud/Instances only (Test-Instances and MC-* course repos stay on
-# GitHub's schedule by design).
+# Scope: MorphoCloud/Instances and Test-Instances (MC-* course repos stay on
+# GitHub's schedule by design). The crontab lines are rendered from the
+# workflows' '# dispatch:' markers by scripts/check-workflow-clock.py.
 #
 # Setup + crontab: see scripts/runner-cron-dispatcher.md
-# Usage: morphocloud-dispatch.sh <workflow1.yml> [<workflow2.yml> ...]
+# Usage: MORPHOCLOUD_DISPATCH_REPO=<owner/repo> morphocloud-dispatch.sh <workflow1.yml> [<workflow2.yml> ...]
 set -u
 # REPO defaults to Instances (the lifecycle crons); override via env for other repos
 # (e.g. MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/MorphoCloudAnalytics for the usage report,

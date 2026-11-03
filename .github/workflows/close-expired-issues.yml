@@ -21,11 +21,13 @@ name: Instance End of Life
 # (Instances#129/#130) — was never visited again: no warnings, orphaned
 # volumes kept forever, and the issue never closed.
 #
-# The noon UTC schedule is a backstop; the runner-1 crontab dispatches the
-# authoritative midnight UTC run (same dispatch mechanism as the retired
-# deletion sweep).
+# Runs daily at noon UTC, dispatched by the runner crontab (the marker below);
+# expire-shares.yml follows 40 minutes later.
 
 on:
+  # dispatch: 0 12 * * *
+  # The runner's crontab is the clock (scripts/runner-cron-dispatcher.md). The
+  # schedule below is only a backstop: GitHub fires it a few times a day.
   schedule:
     - cron: "0 12 * * *"
   workflow_dispatch:

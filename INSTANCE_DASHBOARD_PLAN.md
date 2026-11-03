@@ -115,7 +115,27 @@ never clears access details pushed after the report was read: this takes
 precedence over the clearing described above, since those details are newer than
 what the report says. (4) A card that is active but still waiting for its access
 details keeps refreshing, since the runner's restore can deliver them minutes
-after the workflow finished. |
+after the workflow finished. | | 21 | **The runner is the clock; GitHub's
+schedule is not.** (maintainer, 2026-11-03) GitHub's `on: schedule` fires a few
+times a day whatever the cron line says: measured 2026-10-27 → 11-03 on both
+Instances and Test-Instances, `7,37 * * * *` and `*/5 * * * *` workflows alike
+ran 3–5 times a day. Production already fired its lifecycle workflows from a
+crontab on the acquire runner, but that crontab was a hand-kept list:
+`reconcile-instances` was never added to it and ran four times a day on both
+repositories, and the Test runner had no clock at all, so on Test "every 5
+minutes" auto-shelving ran five times a day. Found when Test-Instances #503 went
+to ERROR under Jetstream2's 2026-11-03 maintenance and nothing noticed for
+hours. So: every time-driven workflow carries a `# dispatch: <cron>` marker; the
+runner crontabs under `scripts/` are rendered from the markers by
+`scripts/check-workflow-clock.py`, and a pre-commit hook fails when a schedule
+has no marker, a marker and schedule differ, a `workflow_dispatch`-only workflow
+has no marker, or a committed crontab is stale. `on: schedule` stays only as a
+backstop — and as the sole clock in MC-\* course repositories, by the earlier
+decision that they get no dispatcher. The Test runner gets the same dispatcher
+as production. Nothing this plan adds later (reachability, unreachable→shelve,
+floating-IP reserve refill, ERROR detection) may take its timing from
+`on: schedule`: it runs in the portal runner's one-minute `pickup` or is
+dispatched from the crontab. |
 
 ## Sign-in (decision 8)
 

@@ -1,6 +1,8 @@
 name: Send Renewal Email
 
 on:
+  # dispatch: manual
+  # (close-expired-issues.yml dispatches it per issue)
   workflow_dispatch:
     inputs:
       issue_number:

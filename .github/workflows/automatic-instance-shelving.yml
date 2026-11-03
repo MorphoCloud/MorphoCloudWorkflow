@@ -1,5 +1,8 @@
 name: Automatic Instance Shelving
 on:
+  # dispatch: */5 * * * *
+  # The runner's crontab is the clock (scripts/runner-cron-dispatcher.md). The
+  # schedule below is only a backstop: GitHub fires it a few times a day.
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:

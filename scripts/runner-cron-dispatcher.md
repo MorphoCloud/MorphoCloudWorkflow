@@ -1,72 +1,76 @@
-# Runner-VM cron dispatcher
+# Runner-VM cron dispatcher — the clock
 
-GitHub's `on: schedule` triggers are best-effort and heavily throttled — a `*/5`
-workflow here was observed firing only every ~4–5 hours, so idle instances
-shelved hours late (wasting credits). For reliable, predictable timing, the
-time-sensitive scheduled workflows are triggered by a real **`crontab` on the
-`MorphoCloud/Instances` self-hosted runner VM** (BIO180006, `149.165.152.104`),
-which calls `gh workflow run` — a `workflow_dispatch`, which GitHub honors
-immediately. The workflows keep their `on: schedule` only as a loose backstop.
+GitHub's `on: schedule` is best-effort. Measured 2026-10-27 → 11-03 on both
+`Instances` and `Test-Instances`: a `7,37 * * * *` workflow fired 3–5 times a
+day, a `*/5` one about the same. Whatever the cron line says, a scheduled
+workflow runs a few times a day. So the time-sensitive workflows are fired by a
+real **`crontab` on the acquire runner VM**, which calls `gh workflow run` — a
+`workflow_dispatch`, which GitHub honors immediately. The workflows keep their
+`on: schedule` only as a backstop.
 
-**Scope: `MorphoCloud/Instances` only.** Test-Instances and `MC-*` course repos
-are intentionally **not** covered (they stay on GitHub's schedule — late
-shelving there burns the instructor's per-course allocation, not the main one).
+**The crontab is rendered, not hand-edited.** The first dispatcher was a list
+kept by hand on the VM; every scheduled workflow written after it
+(`reconcile-instances` among them) silently ran a few times a day while its cron
+line promised every half hour. Now:
+
+- A time-driven workflow carries a marker comment under `on:`:
+  `# dispatch: <cron>`, equal to its `schedule` cron. A workflow that only a
+  person or another workflow dispatches says `# dispatch: manual`.
+- `scripts/check-workflow-clock.py render` writes the crontabs from the markers:
+  `scripts/instances-runner.crontab` (production, plus the `.extra` lines for
+  MorphoCloudAnalytics and the token check) and
+  `scripts/test-instances-runner.crontab`.
+- The pre-commit hook `check-workflow-clock` fails when a schedule has no
+  marker, a marker and schedule differ, a `workflow_dispatch`-only workflow has
+  no marker, or a committed crontab is stale.
+
+**Scope: `Instances` and `Test-Instances`.** `MC-*` course repos stay on
+GitHub's schedule by the maintainer's decision (late shelving there burns the
+instructor's per-course allocation, not the main one); the `on: schedule`
+backstop is their only clock, which is why it stays in the workflows.
 
 ## Files
 
 - [`morphocloud-dispatch.sh`](morphocloud-dispatch.sh) — reads a token and runs
   `gh workflow run <wf> --ref main` for each workflow passed. The `--ref main`
   avoids a default-branch lookup, so the token needs no `Contents` permission.
+  The repo comes from `MORPHOCLOUD_DISPATCH_REPO`, set on every rendered line.
+- [`check-workflow-clock.py`](check-workflow-clock.py) — the marker check and
+  the crontab renderer (docstring has the rules).
+- [`instances-runner.crontab`](instances-runner.crontab),
+  [`test-instances-runner.crontab`](test-instances-runner.crontab) — rendered;
+  edit the markers, not these.
+- [`restore-instances-dispatcher.sh`](restore-instances-dispatcher.sh) —
+  installs scripts, token(s) and crontab on a runner; refuses a stale crontab.
 
-## One-time setup on the runner VM
+## Install on a runner (ACQUIRE runner only — never the control runner)
 
-1. **Deploy the script:**
+Production (`exouser@149.165.152.104`, defaults):
 
-   ```bash
-   scp scripts/morphocloud-dispatch.sh exouser@149.165.152.104:~/morphocloud-dispatch.sh
-   ssh exouser@149.165.152.104 'chmod +x ~/morphocloud-dispatch.sh && mkdir -p ~/.config/morphocloud && chmod 700 ~/.config/morphocloud'
-   ```
+```bash
+scripts/restore-instances-dispatcher.sh
+```
 
-2. **Place the token** — a dedicated fine-grained PAT with
-   **`Actions: Read and write` on `Instances` only** (Metadata:read is
-   automatic). Save it to `~/.config/morphocloud/dispatch.pat` (chmod 600). It
-   is **not** stored in git. The current token expires **2027-06-03** — rotate
-   before then or dispatch silently stops. See the
-   `GH_MorphoCloud-workflow-dispatcher` row in
-   `MorphoCloudAppsScripts/SYSTEM-OVERVIEW.md`.
+Test-Instances (`exouser@149.165.154.162`, no analytics lines):
 
-   ```bash
-   scp ~/.ssh/GH_MorphoCloud-workflow-dispatcher exouser@149.165.152.104:/home/exouser/.config/morphocloud/dispatch.pat
-   ssh exouser@149.165.152.104 'chmod 600 ~/.config/morphocloud/dispatch.pat'
-   ```
+```bash
+MWF_CRONTAB=scripts/test-instances-runner.crontab \
+MWF_WF_TOKEN=~/.ssh/GH_MorphoCloud-test-workflow-dispatcher \
+MWF_ANALYTICS_TOKEN= \
+scripts/restore-instances-dispatcher.sh exouser@149.165.154.162
+```
 
-3. **Install the crontab** (`crontab -e` on the VM):
+The token is a dedicated fine-grained PAT with **`Actions: Read and write`** on
+that one repository (Metadata:read is automatic), saved to
+`~/.config/morphocloud/dispatch.pat` on the runner (chmod 600) and backed up in
+`~/.ssh/` on the maintainer's machine. It is **not** stored in git. Expiries and
+names are logged in `MorphoCloudAppsScripts/SYSTEM-OVERVIEW.md` (Credential
+Inventory); `check-dispatch-tokens.sh` (production only) emails the admins four
+weeks before one expires. A missing or expired token means dispatch silently
+stops and the workflows fall back to GitHub's few-times-a-day schedule.
 
-   ```cron
-   # MorphoCloud workflow dispatcher — GitHub on:schedule is throttled; trigger reliably here.
-   */5 * * * * /home/exouser/morphocloud-dispatch.sh automatic-instance-shelving.yml update-request-status-label.yml
-   */10 * * * * /home/exouser/morphocloud-dispatch.sh workshop-backfill.yml
-   */15 * * * * /home/exouser/morphocloud-dispatch.sh collect-instance-uptime.yml
-   0 * * * * /home/exouser/morphocloud-dispatch.sh update-workshop.yml
-   0 0 * * * /home/exouser/morphocloud-dispatch.sh close-expired-issues.yml
-   # Monthly usage report -> MorphoCloudAnalytics (separate repo + dedicated token)
-   0 0 1 * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/MorphoCloudAnalytics MORPHOCLOUD_DISPATCH_TOKEN_FILE=/home/exouser/.config/morphocloud/analytics-dispatch.pat /home/exouser/morphocloud-dispatch.sh monthly-usage.yml
-   # Weekly: email GH_ADMIN_EMAILS if a runner dispatch token is within 4 weeks of expiry
-   0 8 * * 1 /home/exouser/check-dispatch-tokens.sh >> /home/exouser/token-expiry.log 2>&1
-   ```
-
-   `check-dispatch-tokens.sh` reads each dispatch token's live expiry from the
-   GitHub auth header (no stored dates) and, if within `WARN_DAYS` (default 28),
-   dispatches `MorphoCloudAnalytics/token-expiry-alert.yml` (via the
-   analytics-dispatcher token) to email the admins — the runner can't send mail
-   itself. The reader token is checked separately by MorphoCloudAnalytics's own
-   `token-expiry-check.yml`.
-
-   The monthly-usage line targets **MorphoCloudAnalytics** (not Instances) via
-   the `MORPHOCLOUD_DISPATCH_REPO` + `MORPHOCLOUD_DISPATCH_TOKEN_FILE`
-   overrides, using the dedicated `GH_MorphoCloud-analytics-dispatcher` token at
-   `~/.config/morphocloud/analytics-dispatch.pat` (Actions:rw on
-   MorphoCloudAnalytics only).
+After changing a marker or adding a time-driven workflow: `render`, commit the
+crontab, merge, then re-run the install for each runner.
 
 ## Verify / monitor
 
@@ -74,4 +78,6 @@ shelving there burns the instructor's per-course allocation, not the main one).
   `~/morphocloud-dispatch.sh automatic-instance-shelving.yml`, then check
   `~/morphocloud-dispatch.log` for `dispatched` (not `FAILED`), and confirm a
   `workflow_dispatch` run appears in the repo's Actions tab.
+- `crontab -l | grep -c morphocloud-dispatch` equals the number of dispatch
+  lines in the committed crontab.
 - Log: `~/morphocloud-dispatch.log` on the runner VM.

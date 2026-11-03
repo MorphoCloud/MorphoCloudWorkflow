@@ -1,0 +1,12 @@
+# MorphoCloud/Test-Instances dispatcher crontab — ACQUIRE runner ONLY (a copy on the control
+# runner double-fires every line). RENDERED by scripts/check-workflow-clock.py
+# from the '# dispatch:' markers in .github/workflows; edit those, not this.
+# Installed by scripts/restore-instances-dispatcher.sh; see runner-cron-dispatcher.md.
+*/5 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/morphocloud-dispatch.sh automatic-instance-shelving.yml update-request-status-label.yml
+0 12 * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/morphocloud-dispatch.sh close-expired-issues.yml
+*/15 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/morphocloud-dispatch.sh collect-instance-uptime.yml
+23 13 * * 1 MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/morphocloud-dispatch.sh detect-dormant-workflows.yml
+40 12 * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/morphocloud-dispatch.sh expire-shares.yml
+7,37 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/morphocloud-dispatch.sh reconcile-instances.yml
+0 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/morphocloud-dispatch.sh update-workshop.yml
+*/10 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/morphocloud-dispatch.sh workshop-backfill.yml
