@@ -42,6 +42,10 @@ backstop is their only clock, which is why it stays in the workflows.
   edit the markers, not these.
 - [`restore-instances-dispatcher.sh`](restore-instances-dispatcher.sh) —
   installs scripts, token(s) and crontab on a runner; refuses a stale crontab.
+  The rendered crontab is a **managed block** (`# BEGIN morphocloud-dispatcher`
+  … `# END morphocloud-dispatcher`): the installer replaces that block and keeps
+  every other line of the runner's crontab — the Test runner's portal `pickup`
+  line lives there.
 
 ## Install on a runner (ACQUIRE runner only — never the control runner)
 

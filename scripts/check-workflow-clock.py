@@ -50,6 +50,13 @@ MARKER = re.compile(r"^\s*#\s*dispatch:\s*(.+?)\s*$", re.MULTILINE)
 ON_BLOCK = re.compile(r"^on:[^\n]*\n(?:(?:[ \t#][^\n]*)?\n)*", re.MULTILINE)
 CRON = re.compile(r"^(\S+\s+){4}\S+$")
 DISPATCHER = "/home/exouser/morphocloud-dispatch.sh"
+# The rendered crontab is a managed block: the installer replaces what sits
+# between these two lines and keeps every other line of the runner's crontab
+# (the Test runner also carries the portal's one-minute pickup there).
+BLOCK_BEGIN = (
+    "# BEGIN morphocloud-dispatcher (managed block: rendered, replaced on install)"
+)
+BLOCK_END = "# END morphocloud-dispatcher"
 
 # Rendered crontabs: committed path -> (repository the lines dispatch to, lines
 # appended verbatim after the rendered ones, or None).
@@ -138,6 +145,7 @@ def render(clock: dict[str, str], repo: str, extra: Path | None) -> str:
     for name, cron in sorted(clock.items()):
         by_cron.setdefault(cron, []).append(name)
     lines = [
+        BLOCK_BEGIN,
         f"# {repo} dispatcher crontab — ACQUIRE runner ONLY (a copy on the control",
         "# runner double-fires every line). RENDERED by scripts/check-workflow-clock.py",
         "# from the '# dispatch:' markers in .github/workflows; edit those, not this.",
@@ -150,6 +158,7 @@ def render(clock: dict[str, str], repo: str, extra: Path | None) -> str:
     if extra is not None:
         lines.append("# --- appended verbatim from " + extra.name + " ---")
         lines.extend(extra.read_text(encoding="utf-8").rstrip("\n").splitlines())
+    lines.append(BLOCK_END)
     return "\n".join(lines) + "\n"
 
 

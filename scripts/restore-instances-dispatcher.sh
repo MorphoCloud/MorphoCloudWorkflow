@@ -62,14 +62,23 @@ if [[ -n "$AN_TOKEN" ]]; then
   scp "$AN_TOKEN" "$RUNNER:.config/morphocloud/analytics-dispatch.pat"
 fi
 
-echo ">> Setting permissions and installing crontab ..."
+echo ">> Setting permissions and installing the crontab's managed block ..."
+# Only the block between the BEGIN/END markers is ours. Everything else in the
+# runner's crontab is kept (the Test runner's portal pickup line lives there — an
+# earlier version of this script replaced the whole crontab and silenced it).
+# Dispatcher lines outside the block (pre-marker installs) are dropped too.
 ssh "$RUNNER" '
   set -e
   chmod +x ~/morphocloud-dispatch.sh
   [[ -f ~/check-dispatch-tokens.sh ]] && chmod +x ~/check-dispatch-tokens.sh
   chmod 600 ~/.config/morphocloud/*.pat
-  crontab ~/instances-runner.crontab
-  echo "crontab lines: $(crontab -l | grep -cE "morphocloud-dispatch|check-dispatch")"
+  kept=$(crontab -l 2>/dev/null \
+    | sed "/^# BEGIN morphocloud-dispatcher/,/^# END morphocloud-dispatcher/d" \
+    | grep -vE "morphocloud-dispatch\.sh|check-dispatch-tokens\.sh" || true)
+  { [[ -n "$kept" ]] && printf "%s\n" "$kept"; cat ~/instances-runner.crontab; } | crontab -
+  echo "kept outside the block: $(printf "%s\n" "$kept" | grep -cvE "^\s*(#|$)") line(s)"
+  printf "%s\n" "$kept" | grep -vE "^\s*(#|$)" | cut -c1-100 | sed "s/^/    /"
+  echo "dispatcher lines: $(crontab -l | grep -cE "morphocloud-dispatch|check-dispatch")"
 '
 
 echo ">> Verifying tokens authenticate (expiry header) ..."
