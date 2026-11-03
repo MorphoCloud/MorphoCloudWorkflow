@@ -1,3 +1,4 @@
+# BEGIN morphocloud-dispatcher (managed block: rendered, replaced on install)
 # MorphoCloud/Test-Instances dispatcher crontab — ACQUIRE runner ONLY (a copy on the control
 # runner double-fires every line). RENDERED by scripts/check-workflow-clock.py
 # from the '# dispatch:' markers in .github/workflows; edit those, not this.
@@ -10,3 +11,4 @@
 7,37 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/morphocloud-dispatch.sh reconcile-instances.yml
 0 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/morphocloud-dispatch.sh update-workshop.yml
 */10 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/morphocloud-dispatch.sh workshop-backfill.yml
+# END morphocloud-dispatcher
