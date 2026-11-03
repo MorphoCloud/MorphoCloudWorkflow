@@ -40,9 +40,17 @@ if [[ -n "$AN_TOKEN" ]]; then
     [[ -s "$f" ]] || { echo "ERROR: required file missing: $f"; exit 1; }
   done
 fi
-# The crontab must be current with the workflows' '# dispatch:' markers.
-python3 "$MWF/scripts/check-workflow-clock.py" check \
-  || { echo "ERROR: scripts/check-workflow-clock.py check failed (see above: stale crontab or unmarked workflow)."; exit 1; }
+# The crontab must be current with the workflows' '# dispatch:' markers. The
+# checker needs PyYAML; pre-commit's own environment has it, a bare python3
+# on the maintainer's machine usually does not.
+check_failed() { echo "ERROR: scripts/check-workflow-clock.py check failed (see above: stale crontab or unmarked workflow)."; exit 1; }
+if command -v pre-commit >/dev/null; then
+  (cd "$MWF" && pre-commit run check-workflow-clock --all-files) || check_failed
+else
+  python3 -c 'import yaml' 2>/dev/null \
+    || { echo "ERROR: neither pre-commit nor a python3 with PyYAML is available; install pre-commit (pipx install pre-commit) and retry."; exit 1; }
+  python3 "$MWF/scripts/check-workflow-clock.py" check || check_failed
+fi
 
 echo ">> Copying scripts, tokens, and crontab (values not printed) ..."
 ssh "$RUNNER" 'mkdir -p ~/.config/morphocloud && chmod 700 ~/.config/morphocloud'
