@@ -115,27 +115,53 @@ never clears access details pushed after the report was read: this takes
 precedence over the clearing described above, since those details are newer than
 what the report says. (4) A card that is active but still waiting for its access
 details keeps refreshing, since the runner's restore can deliver them minutes
-after the workflow finished. | | 21 | **The runner is the clock; GitHub's
-schedule is not.** (maintainer, 2026-11-03) GitHub's `on: schedule` fires a few
-times a day whatever the cron line says: measured 2026-10-27 → 11-03 on both
-Instances and Test-Instances, `7,37 * * * *` and `*/5 * * * *` workflows alike
-ran 3–5 times a day. Production already fired its lifecycle workflows from a
-crontab on the acquire runner, but that crontab was a hand-kept list:
-`reconcile-instances` was never added to it and ran four times a day on both
-repositories, and the Test runner had no clock at all, so on Test "every 5
-minutes" auto-shelving ran five times a day. Found when Test-Instances #503 went
-to ERROR under Jetstream2's 2026-11-03 maintenance and nothing noticed for
-hours. So: every time-driven workflow carries a `# dispatch: <cron>` marker; the
-runner crontabs under `scripts/` are rendered from the markers by
-`scripts/check-workflow-clock.py`, and a pre-commit hook fails when a schedule
-has no marker, a marker and schedule differ, a `workflow_dispatch`-only workflow
-has no marker, or a committed crontab is stale. `on: schedule` stays only as a
-backstop — and as the sole clock in MC-\* course repositories, by the earlier
-decision that they get no dispatcher. The Test runner gets the same dispatcher
-as production. Nothing this plan adds later (reachability, unreachable→shelve,
-floating-IP reserve refill, ERROR detection) may take its timing from
-`on: schedule`: it runs in the portal runner's one-minute `pickup` or is
-dispatched from the crontab. |
+after the workflow finished. |
+
+| 21 | **The runner is the clock; GitHub's schedule is not.** (maintainer,
+2026-11-03) GitHub's `on: schedule` fires a few times a day whatever the cron
+line says: measured 2026-10-27 → 11-03 on both Instances and Test-Instances,
+`7,37 * * * *` and `*/5 * * * *` workflows alike ran 3–5 times a day. Production
+already fired its lifecycle workflows from a crontab on the acquire runner, but
+that crontab was a hand-kept list: `reconcile-instances` was never added to it
+and ran four times a day on both repositories, and the Test runner had no clock
+at all, so on Test "every 5 minutes" auto-shelving ran five times a day. Found
+when Test-Instances #503 went to ERROR under Jetstream2's 2026-11-03 maintenance
+and nothing noticed for hours. So: every time-driven workflow carries a
+`# dispatch: <cron>` marker; the runner crontabs under `scripts/` are rendered
+from the markers by `scripts/check-workflow-clock.py`, and a pre-commit hook
+fails when a schedule has no marker, a marker and schedule differ, a
+`workflow_dispatch`-only workflow has no marker, or a committed crontab is
+stale. `on: schedule` stays only as a backstop — and as the sole clock in MC-\*
+course repositories, by the earlier decision that they get no dispatcher. The
+Test runner gets the same dispatcher as production. Nothing this plan adds later
+(reachability, unreachable→shelve, floating-IP reserve refill, ERROR detection)
+may take its timing from `on: schedule`: it runs in the portal runner's
+one-minute `pickup` or is dispatched from the crontab. |
+
+| 22 | **Reachability is part of the instance's state.** (maintainer,
+2026-11-03; step 1 of the reliability work) An ACTIVE server that nothing can
+reach is not Active. Test-Instances #503 sat four days from 2026-10-30 as
+"Active" with its access details on the card while no packet reached it (a
+network orphan after unshelve, the class seen on Instances #178 and #185 in
+August), because the runner's report reads Nova only. So the runner's one-minute
+snapshot probes TCP port 22 on every ACTIVE server's floating IP (five-second
+timeout, from the runner, which sits behind the same router as the member) and
+reports `reachable`: true, false, or null when there is nothing to probe. The
+portal keeps, next to the state row, when it first saw the server unreachable
+(`unreachable_since`, carried across reports while the misses continue, cleared
+by the first answer). The card reads **Unreachable** once the misses have lasted
+`MC_UNREACHABLE_AFTER_SECONDS` (default 180: a server fresh from unshelve needs
+a minute for sshd, and one missed probe is not a verdict), with a line saying
+since when and what to do: Shelve, then Unshelve for a fresh placement.
+Unreachable offers Shelve, Renew and Delete, never Extend; the access details
+are hidden while it lasts, since they lead nowhere, and come back by themselves
+when the server answers (nothing is cleared). The assistant's verdict for a
+failed command on an unreachable server is "unreachable", never "fine". Nothing
+in this step acts on the state or writes to GitHub: shelving an unreachable
+instance on its own, and telling the admins once with the diagnosis, is step 2,
+and it reads this same state. The probe is the cheapest honest check: it says
+whether the member's SSH, TurboVNC and web desktop can connect at all, not
+whether the desktop works. |
 
 ## Sign-in (decision 8)
 
@@ -473,3 +499,9 @@ and storage cards: a support assistant that helps users diagnose problems.
    Test-Instances#443).
 10. A failed create (for example a type the allocation lacks) leaves the Create
     form available; creating replaces the empty request.
+11. Unreachable (decision 22): on an orphaned instance (Test-Instances #503 as
+    left on 2026-11-03, or an instance whose security group is closed for the
+    test), the card turns Unreachable within four minutes with the access
+    details hidden and the line saying since when; Shelve works from the card;
+    after Unshelve the card is Active again with the details. A fresh unshelve
+    never shows Unreachable during its first minutes.
