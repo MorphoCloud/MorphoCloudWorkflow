@@ -21,6 +21,10 @@ name: Reconcile Instances
 # instance is healthy again, re-arming the alert.
 
 on:
+  # dispatch: 7,37 * * * *
+  # The runner's crontab is the clock (scripts/runner-cron-dispatcher.md). The
+  # schedule below is only a backstop: GitHub fires it a few times a day — which
+  # is all this workflow ever got until it was registered with the clock.
   schedule:
     - cron: "7,37 * * * *"
   workflow_dispatch:

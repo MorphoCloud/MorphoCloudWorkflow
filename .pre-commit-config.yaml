@@ -62,3 +62,14 @@ repos:
         language: python
         additional_dependencies: [pyyaml]
         files: ^\.github/actions/.*/action\.ya?ml$
+      # GitHub's on:schedule fires a few times a day whatever the cron says; the
+      # runner's crontab is the clock, rendered from '# dispatch:' markers in the
+      # workflows. Every time-driven workflow must carry one, and the committed
+      # crontabs must match — see the script's docstring.
+      - id: check-workflow-clock
+        name: Time-driven workflows are registered with the runner clock
+        entry: python scripts/check-workflow-clock.py check
+        language: python
+        additional_dependencies: [pyyaml]
+        pass_filenames: false
+        files: ^(\.github/workflows/.*\.ya?ml|scripts/.*\.crontab(\.extra)?|scripts/check-workflow-clock\.py)$
