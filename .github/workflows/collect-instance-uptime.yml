@@ -16,7 +16,7 @@ jobs:
   collect-instance-uptime:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Define metadata
         id: define-metadata
@@ -45,7 +45,7 @@ jobs:
           BRANCH: ${{ steps.define-metadata.outputs.branch }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: instance-uptime-data
           path: ${{ steps.define-metadata.outputs.directory }}
