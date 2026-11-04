@@ -336,6 +336,29 @@ original flag is not kept). Not covered: capacity shortages (the member retries,
 decision 27), corrupt shelved state, address failures (decision 25 shelves again
 and tells the member). |
 
+| 30 | **An unshelve that fails at scheduling is reported as what it is: no host
+free for the flavor.** (maintainer, 2026-11-04; Instances#214, the same
+afternoon: after the member shelved, two unshelves failed within seconds with
+`schedule_instances` Error while Jetstream2 showed 0 g3.xl free, and the
+workflow told them "failing on Jetstream2's side, 2 attempts" — the host-error
+wording, with delete + create as the way out; the maintainer asked why it did
+not say "no capacity", as it once could) The old capacity check keys on the
+server going to ERROR with no host, which a build does and an unshelve from
+SHELVED_OFFLOADED never does: Nova puts the server back as shelved and records
+no fault. The signal is in the action record instead:
+`openstack server event show` lists the failed step — `schedule_instances` Error
+is capacity, `compute_unshelve_instance` Error is the chosen host. The poll
+reads it the moment it sees a new failed unshelve: scheduling failure →
+`no_capacity`, no automatic second attempt (the cloud is full now), the member's
+comment says "Jetstream2 has no **g3.xl** host free right now (Jetstream2
+reports 0 available). Your instance is safely shelved and nothing was changed.
+Try `/unshelve` again later", with the Grafana vacancy link; no admin email
+(decision 27), no follow-through marker (decision 28), and never the create
+path's capacity branch, which deletes the server. A compute failure keeps the
+host-error path (one automatic retry, then the report). Not yet: queuing the
+unshelve until capacity returns — a candidate for the follow-through sweep, not
+decided. |
+
 ## Sign-in (decision 8)
 
 The current OAuth App only reads team membership (`read:org`). Posting a command
