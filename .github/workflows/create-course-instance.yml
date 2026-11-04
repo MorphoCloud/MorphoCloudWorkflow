@@ -39,9 +39,10 @@ jobs:
   authorize:
     runs-on: ubuntu-latest
     if:
-      ${{ !github.event.issue.pull_request &&
-      contains(github.event.issue.labels.*.name, 'request-type:course-instance')
-      && ( contains(github.event.comment.body, '/create') ) }}
+      ${{ !github.event.issue.pull_request && vars.MORPHOCLOUD_MAINTENANCE == ''
+      && contains(github.event.issue.labels.*.name,
+      'request-type:course-instance') && ( contains(github.event.comment.body,
+      '/create') ) }}
     outputs:
       continue: ${{ steps.create_command.outputs.continue }}
       admins: ${{ steps.admins.outputs.members }}

@@ -29,9 +29,9 @@ jobs:
   check-course-team-membership:
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name,
-      'request-type:course-instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' &&
+      contains(github.event.issue.labels.*.name, 'request-type:course-instance')
+      && contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - name: Set course expiration and flavor labels
         shell: bash
@@ -92,9 +92,9 @@ jobs:
     needs: [check-course-team-membership]
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name,
-      'request-type:course-instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' &&
+      contains(github.event.issue.labels.*.name, 'request-type:course-instance')
+      && contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -186,9 +186,9 @@ jobs:
   call-validate-request-course:
     needs: [check-course-team-membership, check-course-instance-quota]
     if:
-      ${{ contains(github.event.issue.labels.*.name,
-      'request-type:course-instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' &&
+      contains(github.event.issue.labels.*.name, 'request-type:course-instance')
+      && contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/validate-request-course.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
@@ -197,9 +197,9 @@ jobs:
   call-request-initial-comments-course:
     needs: [check-course-team-membership, check-course-instance-quota]
     if:
-      ${{ contains(github.event.issue.labels.*.name,
-      'request-type:course-instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' &&
+      contains(github.event.issue.labels.*.name, 'request-type:course-instance')
+      && contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/request-initial-comments.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
@@ -210,9 +210,9 @@ jobs:
     needs: [check-course-team-membership, check-course-instance-quota]
     runs-on: ubuntu-latest
     if:
-      ${{ contains(github.event.issue.labels.*.name,
-      'request-type:course-instance') &&
-      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' &&
+      contains(github.event.issue.labels.*.name, 'request-type:course-instance')
+      && contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - name: Extract course slug and rename issue
         run: |
@@ -224,3 +224,22 @@ jobs:
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
+
+  # Decision 31: while MORPHOCLOUD_MAINTENANCE holds the reopening date, the
+  # member gets one sentence and nothing runs (every job above is gated on
+  # the same variable). Posted with GITHUB_TOKEN: it triggers nothing.
+  maintenance-notice:
+    runs-on: ubuntu-latest
+    if:
+      ${{ vars.MORPHOCLOUD_MAINTENANCE != '' && github.event.action == 'opened'
+      && contains(github.event.issue.labels.*.name, 'request-creator:user') &&
+      contains(github.event.issue.labels.*.name, 'request-type:course-instance')
+      }}
+    steps:
+      - uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### MorphoCloud is closed for the storage migration until ${{ vars.MORPHOCLOUD_MAINTENANCE }}
+
+            Your request is kept and will be handled after reopening.

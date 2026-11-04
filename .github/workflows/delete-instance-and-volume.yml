@@ -19,8 +19,8 @@ jobs:
   authorize:
     runs-on: ubuntu-latest
     if:
-      ${{ !github.event.issue.pull_request &&
-      contains(github.event.issue.labels.*.name, 'instance-request') && (
+      ${{ !github.event.issue.pull_request && vars.MORPHOCLOUD_MAINTENANCE == ''
+      && contains(github.event.issue.labels.*.name, 'instance-request') && (
       contains(github.event.comment.body, '/delete_all') ) }}
     outputs:
       continue: ${{ steps.delete_instance_and_volume_command.outputs.continue }}
