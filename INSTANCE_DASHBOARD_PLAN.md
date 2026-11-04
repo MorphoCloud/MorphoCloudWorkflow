@@ -163,6 +163,30 @@ and it reads this same state. The probe is the cheapest honest check: it says
 whether the member's SSH, TurboVNC and web desktop can connect at all, not
 whether the desktop works. |
 
+| 23 | **An instance unreachable for half an hour is shelved on its own, with
+one word to the member and one to the admins.** (maintainer, 2026-11-04; step 2
+of the reliability work; supersedes the last sentence of decision 22) The portal
+decides, in the same report that carries the state: an instance ACTIVE with no
+task, set up, and unreachable for `MC_UNREACHABLE_SHELVE_AFTER_SECONDS`
+(default 1800) is to be shelved — once per episode, never while the member's own
+command is running. The runner's report having reached the portal over the
+public network is the proof that the runner's own network is not the blind one.
+The runner, which holds the dispatcher token that is also the clock (decision
+21), fires `control-instance-from-workflow.yml` with `command_name=shelve`: the
+same workflow a member's Shelve runs, so the floating IP is released, the labels
+are set and the issue gets the shelved comment, which GitHub mails to the
+member. The runner answers the portal with whether the dispatch went out. The
+member's card says "Being shelved automatically: it has not answered on the
+network since …", then "Shelved automatically …; Unshelve places it afresh",
+until the member unshelves, creates or deletes. The admins get one email per
+episode, with the diagnosis (name, address, how long, the network-orphan
+signature, what was done): "shelved automatically" (nothing to do) or "could NOT
+be shelved" (no token, the dispatch failed, or no answer from the runner within
+ten minutes: shelve it by hand). Never a reboot: Test-Instances #503 showed on
+2026-11-03 that a reboot leaves an orphan dead and a fresh placement revives it.
+Production gets this with the migration, together with the runner's dispatcher
+token. |
+
 ## Sign-in (decision 8)
 
 The current OAuth App only reads team membership (`read:org`). Posting a command
@@ -505,3 +529,8 @@ and storage cards: a support assistant that helps users diagnose problems.
     details hidden and the line saying since when; Shelve works from the card;
     after Unshelve the card is Active again with the details. A fresh unshelve
     never shows Unreachable during its first minutes.
+12. Auto-shelve (decision 23): with `MC_UNREACHABLE_SHELVE_AFTER_SECONDS=300` on
+    the Test portal and an instance whose security group is closed, the card
+    goes Unreachable at about 3 minutes and "Being shelved automatically" at
+    about 5; the shelve workflow runs; the card reads Shelved with the note; one
+    admin email arrives with the diagnosis; Unshelve clears the note.
