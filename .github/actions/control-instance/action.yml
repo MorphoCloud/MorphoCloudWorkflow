@@ -828,7 +828,7 @@ runs:
               printf '%s\n\n' '### Command Results ❌'
               printf '%s' "Jetstream2 has no **${flavor:-the requested flavor}** host free right now, so **${INSTANCE_NAME}** could not be placed"
               if [[ -n "$vacancy" ]]; then printf ' (Jetstream2 reports %s available)' "$vacancy"; fi
-              printf '%s\n\n' '. **Your instance is safely shelved and nothing was changed.** Try `/unshelve` again later — capacity usually frees up within hours. Live availability: https://grafana.jetstream-cloud.org/public-dashboards/b39f9f91452949389a4d333c3f451eac'
+              printf '%s\n\n' '. **Your instance is safely shelved and nothing was changed.** Try `/unshelve` again later — check the capacity on the top bar of [the portal](https://morphocloud.org) (delayed a few minutes).'
               printf '%s\n\n' '<details><summary>Diagnostics for admins</summary>'
               printf '%s\n\n' "Unshelve request ${failed_req} failed at scheduling (schedule_instances Error); no admin action needed."
               printf '%s\n' "Run: https://github.com/${GH_REPO}/actions/runs/${RUN_ID}"
