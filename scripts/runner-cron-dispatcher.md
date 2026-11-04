@@ -36,7 +36,10 @@ backstop is their only clock, which is why it stays in the workflows.
   avoids a default-branch lookup, so the token needs no `Contents` permission.
   The repo comes from `MORPHOCLOUD_DISPATCH_REPO`, set on every rendered line.
 - [`check-workflow-clock.py`](check-workflow-clock.py) — the marker check and
-  the crontab renderer (docstring has the rules).
+  the crontab renderer (docstring has the rules). It also renders the
+  runner-side scripts that share the clock (`RUNNER_SCRIPTS`): today
+  [`police-floating-ips.py`](police-floating-ips.py), the floating-IP policy of
+  INSTANCE_DASHBOARD_PLAN.md decision 24, every five minutes.
 - [`instances-runner.crontab`](instances-runner.crontab),
   [`test-instances-runner.crontab`](test-instances-runner.crontab) — rendered;
   edit the markers, not these.

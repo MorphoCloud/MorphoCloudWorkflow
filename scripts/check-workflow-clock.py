@@ -58,15 +58,30 @@ BLOCK_BEGIN = (
 )
 BLOCK_END = "# END morphocloud-dispatcher"
 
-# Rendered crontabs: committed path -> (repository the lines dispatch to, lines
-# appended verbatim after the rendered ones, or None).
+# Rendered crontabs: committed path -> (repository the lines dispatch to, the
+# OpenStack cloud name on that runner, lines appended verbatim after the
+# rendered ones, or None).
 TARGETS = {
     "scripts/instances-runner.crontab": (
         "MorphoCloud/Instances",
+        "BIO180006_IU",
         "scripts/instances-runner.crontab.extra",
     ),
-    "scripts/test-instances-runner.crontab": ("MorphoCloud/Test-Instances", None),
+    "scripts/test-instances-runner.crontab": (
+        "MorphoCloud/Test-Instances",
+        "BIO240357_IU",
+        None,
+    ),
 }
+# Runner-side scripts on the same clock (not workflows): (cron, command).
+# Decision 24: the floating-IP policing every five minutes.
+RUNNER_SCRIPTS = [
+    (
+        "*/5 * * * *",
+        "OS_CLOUD={cloud} MORPHOCLOUD_FIP_HOLD=5 MORPHOCLOUD_DISPATCH_REPO={repo} "
+        "/home/exouser/venv/bin/python /home/exouser/police-floating-ips.py >> /home/exouser/fip-police.log 2>&1",
+    ),
+]
 
 
 def _triggers(doc: dict) -> dict:
@@ -140,7 +155,7 @@ def scan() -> tuple[dict[str, str], list[str]]:
     return clock, errors
 
 
-def render(clock: dict[str, str], repo: str, extra: Path | None) -> str:
+def render(clock: dict[str, str], repo: str, cloud: str, extra: Path | None) -> str:
     by_cron: dict[str, list[str]] = {}
     for name, cron in sorted(clock.items()):
         by_cron.setdefault(cron, []).append(name)
@@ -155,6 +170,9 @@ def render(clock: dict[str, str], repo: str, extra: Path | None) -> str:
         lines.append(
             f"{cron} MORPHOCLOUD_DISPATCH_REPO={repo} {DISPATCHER} {' '.join(names)}"
         )
+    lines.append("# --- runner-side scripts on the same clock ---")
+    for cron, command in RUNNER_SCRIPTS:
+        lines.append(f"{cron} {command.format(cloud=cloud, repo=repo)}")
     if extra is not None:
         lines.append("# --- appended verbatim from " + extra.name + " ---")
         lines.extend(extra.read_text(encoding="utf-8").rstrip("\n").splitlines())
@@ -164,14 +182,14 @@ def render(clock: dict[str, str], repo: str, extra: Path | None) -> str:
 
 def crontab_errors(clock: dict[str, str], write: bool) -> list[str]:
     errors: list[str] = []
-    for rel, (repo, extra_rel) in TARGETS.items():
+    for rel, (repo, cloud, extra_rel) in TARGETS.items():
         path = ROOT / rel
         extra = ROOT / extra_rel if extra_rel else None
         if not path.exists():  # a vendorized copy: no crontabs to keep current
             continue
         if write:
-            path.write_text(render(clock, repo, extra), encoding="utf-8")
-        elif path.read_text(encoding="utf-8") != render(clock, repo, extra):
+            path.write_text(render(clock, repo, cloud, extra), encoding="utf-8")
+        elif path.read_text(encoding="utf-8") != render(clock, repo, cloud, extra):
             errors.append(
                 f"{path}: stale. Run 'python scripts/check-workflow-clock.py render'."
             )

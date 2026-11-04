@@ -55,6 +55,7 @@ fi
 echo ">> Copying scripts, tokens, and crontab (values not printed) ..."
 ssh "$RUNNER" 'mkdir -p ~/.config/morphocloud && chmod 700 ~/.config/morphocloud'
 scp "$MWF/scripts/morphocloud-dispatch.sh" "$RUNNER:morphocloud-dispatch.sh"
+scp "$MWF/scripts/police-floating-ips.py" "$RUNNER:police-floating-ips.py"
 scp "$CRONTAB" "$RUNNER:instances-runner.crontab"
 scp "$WF_TOKEN" "$RUNNER:.config/morphocloud/dispatch.pat"
 if [[ -n "$AN_TOKEN" ]]; then
