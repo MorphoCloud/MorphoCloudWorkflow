@@ -134,8 +134,9 @@ def addresses(nets) -> list[str]:
 
 def inventory() -> tuple[list[dict], dict[str, dict]]:
     """Every floating IP of the project, and fixed address -> its server:
-    {"status", "instance" (a MorphoCloud instance, as opposed to a runner,
-    the portal or any other server of the project), "name"}."""
+    {"status", "task" (the action in flight, "" when none), "instance" (a
+    MorphoCloud instance, as opposed to a runner, the portal or any other
+    server of the project), "name"}."""
     fips = os_json("floating", "ip", "list")
     servers = os_json("server", "list", "--long")
     by_fixed: dict[str, dict] = {}
@@ -145,6 +146,8 @@ def inventory() -> tuple[list[dict], dict[str, dict]]:
         for a in addresses(s.get("Networks")):
             by_fixed[a] = {
                 "status": str(s.get("Status") or ""),
+                # `or ""` covers a JSON null; the client also renders a null
+                # task state as the strings "None" / "null" in -f json.
                 "task": "" if task in ("None", "null") else task,
                 "instance": INSTANCE_RE.search(name) is not None,
                 "name": name,
@@ -195,7 +198,9 @@ def classify(
         acts = [] if routable else [nonroutable_alert(ip, f, owner, status)]
         return ("unknown" if owner is None else "infra"), acts
     acts: list[tuple] = []
-    if attached and status in SHELVED and not (owner or {}).get("task") and settled(f):
+    # attached implies owner is an instance (the return above), so owner is
+    # a dict here; `settled` last, so an in-flight server costs no API call.
+    if attached and status in SHELVED and not owner.get("task") and settled(f):
         acts.append(("unset", fid, ip, status))
         attached = False
     if not routable:
