@@ -374,6 +374,22 @@ host-error path (one automatic retry, then the report). Not yet: queuing the
 unshelve until capacity returns — a candidate for the follow-through sweep, not
 decided. |
 
+| 31 | **A maintenance switch closes MorphoCloud to members with one sentence,
+and is the rollback lever.** (maintainer, 2026-11-04, for the migration of
+2026-11-23 to 26) A repository variable `MORPHOCLOUD_MAINTENANCE` holding the
+reopening date. While it is set, every member entry point — the command
+validators (`validate-command-*`) and the request validators
+(`validate-request*`) — answers once on the issue: "MorphoCloud is closed for
+the storage migration until <date>. Your instance and your files are kept;
+nothing is lost. This command was not run." and stops; the request handler does
+the same for a new request. Admin-dispatched runs
+(`control-instance-from-workflow`, `create-instance-from-workflow`) and the
+scheduled sweeps (shelving, reconcile, follow-through, policing) keep working,
+so the admins can shelve, delete and rebuild during the closure and nothing
+rots. The landing banner is the join app's `ONBOARDING_PAUSED` flag, already up
+since 2026-10-28. Rollback at any point is: vendorize from the
+`pre-migration-2026-11` tag, restore the old names, unset the variable. |
+
 ## Sign-in (decision 8)
 
 The current OAuth App only reads team membership (`read:org`). Posting a command
@@ -594,6 +610,63 @@ Rejected: encrypted in the portal database (token and key both on disk).
   portal through the gate's fixed commands, each about one issue; it starts,
   stops and changes nothing (decision 7 holds). The state row holds no secret;
   the passphrase travels only in the existing `connection` command.
+
+## Migration (2026-11-23 to 26; maintainer, 2026-11-04)
+
+MorphoCloud is closed to members for four days and reopens on 2026-11-27 with
+the share-based stack on production. Six steps, in this order; the build work is
+done before the 23rd so the four days hold only execution and testing.
+
+1. **Close.** `MORPHOCLOUD_MAINTENANCE` set (decision 31); the running
+   production instances shelved. Tags `pre-migration-2026-11` on
+   MorphoCloudWorkflow `main`, Instances `main`, the exosphere fork's base
+   branch and the portal repository; a copy of the Test portal database.
+   `share-prototype` merged into `main` as a merge commit (history kept; #311
+   closes as superseded); `main` vendorized into Instances with the diff shown
+   first; the production runner's crontab re-rendered and reinstalled.
+2. **Shares.** One share per existing member (the 32 approved requests;
+   two-instance owners get one share and a separate email, decided 2026-10-24).
+   Each `My-Data-N` volume is attached to a migration VM that mounts the
+   member's share, measured, copied (rsync, checksums), verified — file counts
+   and sizes posted on the member's issue — and detached. Then the old volumes
+   and servers are renamed (`legacy-…`) so no workflow can find them; they are
+   the rollback copy and are deleted 30 days after reopening, not before. The
+   same script, rehearsed first on the dozen Test-Instances members, creates
+   their shares. A member whose volume holds more than the share size is handled
+   by hand before the copy.
+3. **Instances.** The admins create each member's instance (decided 2026-10-24:
+   members do not create their own), of their previous type when Jetstream2 has
+   it and of an available type otherwise (2026-11-04), shelved right after setup
+   so nothing bills idle; the member's first click is an unshelve. The portal's
+   functions are then walked through on production with the `amm554` account
+   (the Test-Instances test plan, re-run).
+4. **MorphoSource cart.** A design document first. Members choose datasets on
+   MorphoSource and add them to the cart; on the portal they enter their
+   MorphoSource API key and the portal downloads and unzips the cart into their
+   storage, with or without an instance running. Built against the endpoints
+   MorphoSource exposes; if they are late or the integration gives trouble, it
+   is deferred and ships after reopening (maintainer, 2026-11-04) — the 25th
+   then becomes a buffer day.
+5. **Cards and chatbot.** The card layouts redesigned and the chatbot aligned
+   with them, built and reviewed on Test before the 23rd, deployed on the 25th.
+6. **Landing page and documentation.** The landing page reviewed, the
+   documentation links updated, the credentials email copy checked. A full
+   walk-through as a new member and as an existing one. The rollback decision
+   point is the evening of the 26th.
+
+Day by day: the 23rd is step 1 in the morning and step 2 started in the
+afternoon (copies in parallel, three at a time); the 24th finishes step 2 and
+does step 3; the 25th is steps 4 and 5; the 26th is step 6. The 27th: the switch
+off, reopen.
+
+Before the 23rd, on Test: the maintenance switch; the migration script and its
+report; the production portal VM provisioned and dark (GitHub App, team gate,
+dispatcher token, sudoers, pickup line); the two golden images on the production
+allocation; the cart design document and, if the endpoints exist, the
+integration; the card and chatbot work; the landing page draft; items 2, 3 and 5
+of the reliability work (decisions 28 to 30 are 1 and 4); a rehearsal of the
+`share-prototype` into `main` merge in a scratch branch (today it conflicts in
+two files, the hotfixes of 2026-11-04 that exist on both branches).
 
 ## Not decided
 
