@@ -417,6 +417,31 @@ the workflow, which also labels it `storage:migrated`. Resumable: a volume
 already attached to the runner from an interrupted run is picked up where it
 was. Rehearsed on Test with seeded volumes before the 23rd. |
 
+| 33 | **A slow setup is not a failure; only the instance's own error line is.**
+(maintainer, 2026-11-04; the last item of the June review backlog, #228: a
+create is expensive, and the maintainer would rather wait minutes than have a
+member delete and recreate, which takes ten) How a create decides today: the
+runner reads the instance's console, where the instance's setup script prints
+`{"status":"error", reason}` when it cannot finish and `{"status":"complete"}`
+when it has; after 20 minutes with neither, the create gave up with "timed out"
+and walked away — a build that finished at minute 25 never got its access email
+or labels, and a stalled one kept `status:building` until auto-shelve. Now three
+rules. (1) **Error line → `status:error`.** The setup action writes
+`exoSetup={"status":"error"}` on the server; the status sweep turns it into
+`status:error` (the portal's chatbot already reads a failed setup as "delete and
+create again"). (2) **Timeout → "still setting up".** The create's comment says
+so ("not a failure, nothing you need to do; checked every few minutes"), marks
+the issue `followup:setup`, and the follow-through sweep (decision 28) watches
+the console every tick: `complete` → `resume-setup.yml` runs the create's own
+setup job for the existing instance (share mount, reboot, verify, properties,
+access email); `error` → rule 1. (3) **Stall or ceiling → shelve and hand
+over.** No new console output for 15 minutes (tracked in the server property
+`mc_setup_watch`), or 60 minutes since the server was built: the instance is
+shelved (it stops billing; nothing is lost), the member is told they can delete
+and create again or wait, `needs-admin` and one admin email. A member's own
+/shelve or /delete drops the watch. Workshop sub-issues are outside this (the
+backfill owns them). |
+
 ## Sign-in (decision 8)
 
 The current OAuth App only reads team membership (`read:org`). Posting a command
@@ -902,3 +927,9 @@ and storage cards: a support assistant that helps users diagnose problems.
     `scsi-0QEMU_QEMU_HARDDISK_<volume id>`; the runner is admin-locked; the
     automount mounts every attached volume read-write; the first version put
     MyData under a stray `MyDrive/` folder.
+20. Slow setup (decision 33): on Test, with `followup:setup` put by hand on an
+    ACTIVE, finished instance, the next follow-through run reads `complete` on
+    the console, posts "Setup has finished on the instance", dispatches
+    `resume-setup`, and the resumed setup job ends with the access email and the
+    markers cleared. The error and stall branches are verified by reading, as a
+    console error or a 60-minute hang cannot be forced on Test.

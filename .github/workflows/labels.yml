@@ -79,6 +79,8 @@ jobs:
           {"name": "followup:unshelve", "color": "FBCA04", "description": "An unshelve was abandoned mid-flight; follow-through retries it once Jetstream2 settles"},
           {"name": "followup:shelve", "color": "FBCA04", "description": "A shelve was abandoned mid-flight; follow-through retries it once Jetstream2 settles"},
           {"name": "followup:delete", "color": "FBCA04", "description": "A delete was abandoned mid-flight; follow-through retries it once Jetstream2 settles"},
+          {"name": "followup:setup", "color": "FBCA04", "description": "Setup outran the create's wait; follow-through watches the instance and finishes or shelves it"},
+          {"name": "status:error", "color": "B60205", "description": "The instance is up but its own setup script failed; delete it and create again"},
           {"name": "followup-count:1", "color": "FBCA04", "description": "Follow-through has retried the command once this episode"},
           {"name": "followup-count:2", "color": "FBCA04", "description": "Follow-through has retried the command twice this episode (the last automatic try)"},
           {"name": "needs-admin", "color": "B60205", "description": "Automatic retries are spent; an admin has to look at the server on Jetstream2"}

@@ -56,7 +56,7 @@ jobs:
 
           clear_markers() {
             local n=$1 l i
-            for l in "followup:unshelve" "followup:shelve" "followup:delete"; do
+            for l in "followup:unshelve" "followup:shelve" "followup:delete" "followup:setup"; do
               gh issue edit "$n" --remove-label "$l" >/dev/null 2>&1 || true
             done
             for ((i = 1; i <= max_followups; i++)); do
@@ -85,6 +85,78 @@ jobs:
             printf -- '- %s (issue #%s): `%s` — %s\n' "$2" "$1" "$3" "$4" >> /tmp/followup-exhausted.txt
           }
 
+          # Decision 33: a setup that outran the create's wait. The console is
+          # the instance's own account: complete → resume-setup.yml finishes
+          # the job (share mount, reboot, access email); error → status:error
+          # for the member; no news for SETUP_STALL_MIN minutes, or
+          # SETUP_CEILING_MIN minutes since the server was built → shelved
+          # (it stops billing, nothing is lost) and handed to the admins.
+          SETUP_CEILING_MIN=60
+          SETUP_STALL_MIN=15
+          watch_setup() {  # issue, instance
+            local n=$1 inst=$2 j status log line sstatus created created_epoch now age_min lines prop prev_lines prev_epoch quiet_min
+            if ! j=$(openstack server show "$inst" -f json 2>/dev/null); then
+              exhaust "$n" "$inst" "setup" "the server no longer exists on Jetstream2"
+              return
+            fi
+            status=$(echo "$j" | jq -r '.status // ""')
+            if [[ "$status" == "ERROR" ]]; then
+              exhaust "$n" "$inst" "setup" "the server is in ERROR on Jetstream2"
+              return
+            fi
+            if [[ "$status" != "ACTIVE" ]]; then
+              echo "  $inst is $status; waiting"
+              return
+            fi
+            log=$(openstack console log show "$inst" 2>/dev/null || true)
+            line=$(printf '%s\n' "$log" | grep -E '^\{"status":"' | tail -n1 || true)
+            sstatus=$(printf '%s\n' "${line:-{\"status\":\"pending\"}}" | jq -r '.status // "pending"' 2>/dev/null || echo pending)
+            if [[ "$sstatus" == "complete" ]]; then
+              echo "$inst (issue #$n): setup finished on the instance; completing it"
+              clear_markers "$n"
+              gh issue comment "$n" --body "Setup has finished on the instance; the remaining steps and your access email follow in a few minutes." \
+                || echo "::warning ::Could not post on issue #$n"
+              if ! gh workflow run resume-setup.yml -f issue_number="$n"; then
+                echo "::error ::Could not dispatch resume-setup for $inst (issue #$n); the marker is put back for the next tick"
+                gh issue edit "$n" --add-label "followup:setup" || true
+              fi
+              return
+            fi
+            if [[ "$sstatus" == "error" ]]; then
+              openstack server set --property 'exoSetup={"status":"error","epoch":'"$(date +%s)"'000}' "$inst" \
+                || echo "::warning ::could not mark exoSetup=error on $inst"
+              exhaust "$n" "$inst" "setup" "the instance's own setup script reported an error ($(printf '%s' "$line" | jq -r '.reason // "see the console log"' 2>/dev/null)); delete it and create again"
+              return
+            fi
+            created=$(echo "$j" | jq -r '.created // ""')
+            created_epoch=$(date -u -d "$created" +%s 2>/dev/null || echo 0)
+            now=$(date -u +%s)
+            age_min=$(( (now - created_epoch) / 60 ))
+            lines=$(printf '%s\n' "$log" | wc -l | tr -d ' ')
+            # "lines:epoch" of the last time the console grew.
+            prop=$(echo "$j" | jq -r '(.properties | if type == "object" then (.mc_setup_watch // "") else tostring end)' 2>/dev/null | grep -oE '[0-9]+:[0-9]+' | head -1 || true)
+            prev_lines=${prop%%:*}
+            prev_epoch=${prop##*:}
+            if [[ -z "$prop" || "$prev_lines" != "$lines" ]]; then
+              openstack server set --property "mc_setup_watch=${lines}:${now}" "$inst" || true
+              prev_epoch=$now
+            fi
+            quiet_min=$(( (now - prev_epoch) / 60 ))
+            echo "  $inst (issue #$n): setup pending; up ${age_min} min, console quiet ${quiet_min} min"
+            if (( age_min >= SETUP_CEILING_MIN || quiet_min >= SETUP_STALL_MIN )); then
+              local why
+              if (( quiet_min >= SETUP_STALL_MIN )); then
+                why="its setup stopped making progress for ${quiet_min} minutes"
+              else
+                why="its setup did not finish within ${SETUP_CEILING_MIN} minutes"
+              fi
+              exhaust "$n" "$inst" "setup" "$why. The instance is being shelved so it does not use your allocation; your files are kept. You can delete it and create again, or wait for the admins"
+              if ! gh workflow run control-instance-from-workflow.yml -f issue_number="$n" -f command_name=shelve; then
+                echo "::error ::Could not dispatch the shelve for $inst (issue #$n)"
+              fi
+            fi
+          }
+
           retry() {  # issue, instance, command, attempt, author
             echo "$2 (issue #$1): dispatching $3 again (attempt $4 of $max_followups)"
             clear_markers "$1"
@@ -102,14 +174,23 @@ jobs:
           }
 
           gh issue list --state open --limit 500 --json number,labels,author \
-            --jq '.[] | select(any(.labels[].name; startswith("followup:"))) | [.number, .author.login, ([.labels[].name | select(startswith("followup:"))] | first), ([.labels[].name | select(startswith("followup-count:")) | ltrimstr("followup-count:")] | first // "0")] | @tsv' | \
-            while IFS=$'\t' read -r issue_number author marker count; do
+            --jq '.[] | select(any(.labels[].name; startswith("followup:"))) | [.number, .author.login, ([.labels[].name | select(startswith("followup:"))] | first), ([.labels[].name | select(startswith("followup-count:")) | ltrimstr("followup-count:")] | first // "0"), (if any(.labels[].name; . == "request-creator:workshop" or . == "request-type:course-instance") then "other" else "member" end)] | @tsv' | \
+            while IFS=$'\t' read -r issue_number author marker count kind; do
               [[ -z "$issue_number" ]] && continue
               command=${marker#followup:}
               instance_name="${instance_prefix}instance-${issue_number}"
               echo "issue #$issue_number: $command pending (follow-ups so far: $count)"
               case "$command" in
                 unshelve|shelve|delete) ;;
+                setup)
+                  # Workshop sub-issues and course instances are the backfill's
+                  # and the course flow's; a stray marker is dropped, not acted on.
+                  if [[ "$kind" != "member" ]]; then
+                    echo "issue #$issue_number is not an individual request; dropping the setup marker"
+                    clear_markers "$issue_number"
+                    continue
+                  fi
+                  watch_setup "$issue_number" "$instance_name"; continue ;;
                 *) echo "::warning ::issue #$issue_number carries an unknown marker '$marker'; skipping"; continue ;;
               esac
 

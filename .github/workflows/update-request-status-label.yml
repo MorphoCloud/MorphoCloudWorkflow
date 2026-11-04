@@ -39,7 +39,11 @@ jobs:
               # An OpenStack-ACTIVE server is still installing until the
               # exoSetup marker reports complete — labeling it "active" misled
               # users into thinking the instance was ready (tester feedback).
-              if [[ "$status" == "ACTIVE" && "$exosetup" != *complete* ]]; then
+              if [[ "$status" == "ACTIVE" && "$exosetup" == *'"error"'* ]]; then
+                # Decision 33: the instance's own setup script failed; the
+                # server is up but will never be usable as built.
+                add_label="status:error"
+              elif [[ "$status" == "ACTIVE" && "$exosetup" != *complete* ]]; then
                 add_label="status:building"
               fi
 

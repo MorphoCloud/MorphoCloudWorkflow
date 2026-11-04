@@ -1,0 +1,172 @@
+name: Resume Setup
+
+# Decision 33 (INSTANCE_DASHBOARD_PLAN.md): the follow-through sweep dispatches
+# this when an instance whose setup outran the create's wait reports
+# "complete" on its console. It runs the create's own setup job for an
+# instance that already exists: the setup action (which sees "complete" at
+# once, then mounts the share, reboots, verifies, sets the properties and the
+# label) and the access email. Individual requests only; workshop sub-issues
+# are the backfill's.
+
+on:
+  # dispatch: manual
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Issue number of the member's instance request"
+        required: true
+        type: number
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  resume:
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    # Same per-issue lock as every command worker: never beside a /shelve or
+    # /delete on the same instance.
+    concurrency:
+      group: morphocloud-instance-issue-${{ inputs.issue_number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve the instance
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          source ~/venv/bin/activate
+          issue=$(gh issue view "$ISSUE_NUMBER" --json author,labels,state)
+          login=$(echo "$issue" | jq -r '.author.login')
+          gid=$(gh api "users/$login" --jq .id)
+          labels=$(echo "$issue" | jq -r '[.labels[].name] | join(",")')
+          refuse() {  # one sentence on the issue, then stop
+            gh issue comment "$ISSUE_NUMBER" --body "The setup could not be resumed automatically: $1. The MorphoCloud admins have been emailed." || true
+            echo "::error ::$1"
+            exit 1
+          }
+          if [[ ",$labels," == *",request-creator:workshop,"* || ",$labels," == *",request-type:course-instance,"* ]]; then
+            refuse "#$ISSUE_NUMBER is not an individual request (the workshop backfill or the course flow finishes it)"
+          fi
+          prefix=${PREFIX:+${PREFIX}_}
+          instance_name="${prefix}instance-${ISSUE_NUMBER}"
+          volume_name="My-Data-${ISSUE_NUMBER}${VOLUME_SUFFIX:+-$VOLUME_SUFFIX}"
+          status=$(openstack server show "$instance_name" -f value -c status)
+          if [[ "$status" != "ACTIVE" ]]; then
+            refuse "$instance_name is $status, not running"
+          fi
+          port_id=$(openstack port list --server "$instance_name" -f value -c ID | head -n1)
+          ip=""
+          if [[ -n "$port_id" ]]; then
+            ip=$(openstack floating ip list --port "$port_id" -f value -c 'Floating IP Address' | head -n1)
+          fi
+          if [[ -z "$ip" ]]; then
+            refuse "$instance_name has no public address (shelve it and unshelve it to get one)"
+          fi
+          storage_mode=""
+          if [[ ",$labels," == *",request-creator:user,"* ]]; then storage_mode="$STORAGE_MODE"; fi
+          {
+            echo "instance_name=$instance_name"
+            echo "volume_name=$volume_name"
+            echo "instance_ip=$ip"
+            echo "github_id=$gid"
+            echo "github_login=$login"
+            echo "storage_mode=$storage_mode"
+          } >> "$GITHUB_OUTPUT"
+          # This run owns the request from here.
+          gh issue edit "$ISSUE_NUMBER" --remove-label "followup:setup" >/dev/null 2>&1 || true
+        env:
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
+          VOLUME_SUFFIX: ${{ vars.VOLUME_NAME_SUFFIX }}
+          STORAGE_MODE: ${{ vars.MORPHOCLOUD_STORAGE_MODE }}
+
+      - name: Setup instance
+        id: setup
+        uses: ./.github/actions/setup-instance
+        with:
+          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          issue_number: ${{ inputs.issue_number }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          instance_name: ${{ steps.resolve.outputs.instance_name }}
+          volume_name: ${{ steps.resolve.outputs.volume_name }}
+          instance_ip: ${{ steps.resolve.outputs.instance_ip }}
+          progress_comment_id: ""
+          storage_mode: ${{ steps.resolve.outputs.storage_mode }}
+          github_id: ${{ steps.resolve.outputs.github_id }}
+          github_login: ${{ steps.resolve.outputs.github_login }}
+
+      - name: Send email
+        id: send_email
+        if: ${{ steps.setup.outputs.setup_status == 'complete' }}
+        uses: ./.github/actions/send-email
+        with:
+          storage_mode: ${{ steps.resolve.outputs.storage_mode }}
+          os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
+          email_lookup_api_key: ${{ secrets.MORPHOCLOUD_LOOKUP_API_KEY }}
+          issue_creator: ${{ steps.resolve.outputs.github_login }}
+          mail_server_username: ${{ secrets.MAIL_USERNAME }}
+          mail_server_password: ${{ secrets.MAIL_PASSWORD }}
+          instance_name: ${{ steps.resolve.outputs.instance_name }}
+          instance_issue_number: ${{ inputs.issue_number }}
+          expect_upload_page: "true"
+          template_ref: ${{ vars.MORPHOCLOUD_TEMPLATE_REF || 'main' }}
+          portal_url: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
+
+      - name: comment (failed to send email)
+        if: ${{ steps.send_email.outcome == 'failure' && failure() }}
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          issue-number: ${{ inputs.issue_number }}
+          body: |
+            Failed to send connection email for instance **${{ steps.resolve.outputs.instance_name }}**. ${{ steps.send_email.outputs.error_message }}
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      # Decision 27: a resume that fails needs an admin; one email, with
+      # what to look at.
+      - name: Describe the failure for the admins
+        id: describe_failure
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          printf 'Instance: %s (issue #%s)\n\nWhat happened: resume-setup (decision 33) could not finish the setup of an instance whose build outran the create; the step that failed is in the run log.\n\nWhat to do: look at the instance on Jetstream2 and the run; the member was told the admins have it.\n' \
+            "${INSTANCE_NAME:-unknown}" "$ISSUE_NUMBER" > "$RUNNER_TEMP/admin-mail-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.md"
+        env:
+          INSTANCE_NAME: ${{ steps.resolve.outputs.instance_name }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+
+      - name: Notify admins by email (resume failed)
+        if: ${{ failure() && steps.describe_failure.outcome == 'success' }}
+        uses: ./.github/actions/notify-admins
+        with:
+          admin_emails: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          mail_server_username: ${{ secrets.MAIL_USERNAME }}
+          mail_server_password: ${{ secrets.MAIL_PASSWORD }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue_number: ${{ inputs.issue_number }}
+          subject:
+            "resume-setup failed for ${{ steps.resolve.outputs.instance_name ||
+            'unknown' }} (issue #${{ inputs.issue_number }})"
+          body_file:
+            ${{ runner.temp }}/admin-mail-${{ github.run_id }}-${{
+            github.run_attempt }}.md
+
+      - name: Clear the follow-up markers
+        if: ${{ success() }}
+        shell: bash
+        run: |
+          for l in followup-count:1 followup-count:2 needs-admin; do
+            gh issue edit "$ISSUE_NUMBER" --remove-label "$l" >/dev/null 2>&1 || true
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
