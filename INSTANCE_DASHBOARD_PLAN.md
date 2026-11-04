@@ -887,3 +887,18 @@ and storage cards: a support assistant that helps users diagnose problems.
     Email, Control Instance, Create Instance, Delete Instance, /extend, /renew
     all skipped; variable removed → Send Email ran, and failed only because the
     instance had been deleted minutes earlier).
+19. Volume migration (decision 32): on Test, a seeded 2 GB `My-Data-466` (204
+    files, 85 MB: a project tree, a symlink, a fake `Slicer-5.8.1-linux-amd64`
+    install, a `.Trash-1001`) migrated by `mc_migrate_volume.py` for amm554's
+    closed #466: the dry run measures and leaves nothing mounted; the commit run
+    copies 202 files / 64 MB into `MyData/` at the share root beside Desktop,
+    Documents and Downloads, symlink kept, Slicer install and trash left out,
+    checksum pass clean, volume renamed `legacy-My-Data-466`, share stamped
+    (`mc_migrated_from/at/files`, `mc_last_activity`), the admin-locked runner
+    unlocked for the attach and locked again, the Exosphere automount taken
+    back. **Passed 2026-11-04 18:56Z** (run by hand on the Test runner; the
+    workflow wrapper is exercised with the first production member on the 23rd,
+    dry run first). Found and fixed during the rehearsal: by-id device names are
+    `scsi-0QEMU_QEMU_HARDDISK_<volume id>`; the runner is admin-locked; the
+    automount mounts every attached volume read-write; the first version put
+    MyData under a stray `MyDrive/` folder.
