@@ -93,10 +93,18 @@ jobs:
               # Retrieve the public address of the instance from Neutron (the
               # address bound to its port; Nova's `addresses` view is a cache
               # that can stay stale, decision 29). No address reads as "null".
-              port_id=$(openstack port list --server "$instance_name" -f value -c ID | head -n1)
+              # A failed read (an OpenStack hiccup) must not end the run
+              # under -e: say so and look at this instance again next tick.
+              if ! port_id=$(openstack port list --server "$instance_name" -f value -c ID | head -n1); then
+                echo "::warning ::Could not read the port of $instance_name; left for the next tick"
+                continue
+              fi
               instance_ip=""
               if [[ -n "$port_id" ]]; then
-                instance_ip=$(openstack floating ip list --port "$port_id" -f value -c 'Floating IP Address' | head -n1)
+                if ! instance_ip=$(openstack floating ip list --port "$port_id" -f value -c 'Floating IP Address' | head -n1); then
+                  echo "::warning ::Could not read the address of $instance_name; left for the next tick"
+                  continue
+                fi
               fi
               [[ -z "$instance_ip" ]] && instance_ip="null"
               echo "instance_ip [$instance_ip]"
