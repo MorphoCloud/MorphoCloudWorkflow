@@ -34,6 +34,47 @@ jobs:
           instance_prefix=${PREFIX:+${PREFIX}_}
           instance_basename="${instance_prefix}instance"
 
+          # INSTANCE_DASHBOARD_PLAN.md decision 26: an instance this job cannot
+          # reach is never skipped. Up for 30 minutes or more and not answering
+          # (three tries, 20 s apart), it is shelved on the wall clock through
+          # the same dispatch workshops use; younger, it is left to finish
+          # booting and looked at again next tick. Skipping it (the old
+          # `continue`) let a network-orphaned GPU instance run for days.
+          unreachable_after_min=30
+          ssh_out() {  # $1 address, $2 command: three tries, 20 s apart
+            local i
+            for i in 1 2 3; do
+              if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                     -o LogLevel=ERROR -o ConnectTimeout=15 "exouser@$1" "$2" < /dev/null; then
+                return 0
+              fi
+              sleep 20
+            done
+            return 1
+          }
+          shelve_if_unreachable() {  # $1 instance name, $2 issue number, $3 what failed
+            local since age_min
+            since=$(openstack server event list "$1" -f json \
+              | jq -r '[.[] | select(.Action == "create" or .Action == "unshelve" or .Action == "start" or .Action == "reboot") | ."Start Time"] | max // empty')
+            if [[ -z "$since" ]]; then
+              echo "::warning ::$1 (issue #$2): $3, and when it started is unknown; left for the next tick"
+              return
+            fi
+            age_min=$(( ( $(date -u +%s) - $(date -u -d "${since%%.*}" +%s) ) / 60 ))
+            if (( age_min < unreachable_after_min )); then
+              echo "$1 (issue #$2): $3; up for ${age_min} min (< ${unreachable_after_min}): waiting"
+              return
+            fi
+            echo "$1 (issue #$2): $3 after ${age_min} min up. Shelving on the wall clock."
+            gh issue comment "$2" --body "Your instance has not answered on the network for ${age_min} minutes since it started, so it is being shelved. Unshelve places it afresh." \
+              || echo "::warning ::Could not post the shelve note on issue #$2"
+            if ! gh workflow run control-instance-from-workflow.yml \
+              -f issue_number="$2" \
+              -f command_name=shelve; then
+              echo "::error ::Failed to trigger the shelve workflow for unreachable $1 (issue #$2)"
+            fi
+          }
+
           openstack server list --name "^${instance_basename}-\d+" -f json | \
           jq -r '.[] | [.Name, .Status, ."OS-EXT-STS:task_state"] | @tsv' | \
             while IFS=$'\t' read -r instance_name status task_state; do
@@ -127,9 +168,10 @@ jobs:
               )
               echo "instance_ip [$instance_ip]"
 
-              # Skip the instance if the IP address could not be retrieved
+              # No public address on an active instance: nobody can reach it
+              # (decision 25 shelves such an unshelve itself; this is the backstop).
               if [[ "$instance_ip" == "null" ]]; then
-                echo "::warning ::Failed to retrieve $instance_name IP"
+                shelve_if_unreachable "$instance_name" "$issue_number" "has no public address"
                 continue
               fi
 
@@ -138,35 +180,23 @@ jobs:
               #   an issue where SSH breaks out of the while loop in Bash.
               #   Reference: https://stackoverflow.com/questions/9393038/ssh-breaks-out-of-while-loop-in-bash
 
-              if ! has_check_instance_shelve_script=$(ssh \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
-                -o LogLevel=ERROR \
-                exouser@$instance_ip \
-                  'bash -c "[[ -f /opt/instance-config-support/dist/check-instance-shelve.sh ]] && echo yes || echo no"' < /dev/null); then
-                echo "::warning ::Failed to check if 'check-instance-shelve.sh' was found on $instance_name using IP $instance_ip"
+              if ! has_check_instance_shelve_script=$(ssh_out "$instance_ip" \
+                  'bash -c "[[ -f /opt/instance-config-support/dist/check-instance-shelve.sh ]] && echo yes || echo no"'); then
+                shelve_if_unreachable "$instance_name" "$issue_number" "does not answer on $instance_ip"
                 continue
               fi
 
               if [[ "$has_check_instance_shelve_script" == "yes" ]]; then
-                if ! uptime_hours=$(ssh \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
-                -o LogLevel=ERROR \
-                exouser@$instance_ip \
-                  '/opt/instance-config-support/dist/check-instance-shelve.sh -d' < /dev/null); then
-                  echo "::warning ::Failed to retrieve uptime for $instance_name using IP $instance_ip"
+                if ! uptime_hours=$(ssh_out "$instance_ip" \
+                    '/opt/instance-config-support/dist/check-instance-shelve.sh -d'); then
+                  shelve_if_unreachable "$instance_name" "$issue_number" "stopped answering on $instance_ip"
                   continue
                 fi
               else
                 # Retrieve the instance uptime using SSH
-                if ! uptime_seconds=$(ssh \
-                  -o StrictHostKeyChecking=no \
-                  -o UserKnownHostsFile=/dev/null \
-                  -o LogLevel=ERROR \
-                  exouser@$instance_ip \
-                    'cat /proc/uptime | awk  "{print \$1}"' < /dev/null); then
-                  echo "::warning ::Failed to retrieve uptime for $instance_name using IP $instance_ip"
+                if ! uptime_seconds=$(ssh_out "$instance_ip" \
+                    'cat /proc/uptime | awk  "{print \$1}"'); then
+                  shelve_if_unreachable "$instance_name" "$issue_number" "stopped answering on $instance_ip"
                   continue
                 fi
                 # $uptime_seconds also comes from the instance. bc cannot execute
