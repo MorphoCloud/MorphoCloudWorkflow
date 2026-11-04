@@ -545,6 +545,58 @@ jobs:
 
             If it fails again after retrying, please tag `@MorphoCloud/morphocloud-admins` for help.
 
+      # Decision 27: a failed create emails the admins with the diagnosis.
+      # Until now it emailed nobody: its comments are posted with
+      # GITHUB_TOKEN, which raises no issue_comment event, so the admin
+      # mentions in them reached no one. Not for what the member caused
+      # (no storage, an instance already there) nor a plain capacity
+      # shortage (the instance was removed; the member retries).
+      - name: Describe the failure for the admins
+        id: describe_failure
+        if:
+          ${{ failure() && env.CREATE_NO_STORAGE != 'true' &&
+          env.CREATE_ALREADY_EXISTS != 'true' && env.CREATE_INSTANCE_REMOVED !=
+          'true' }}
+        run: |
+          what=""; todo=""
+          if [[ "$PROVISION" == "failure" ]]; then
+            what="Provisioning failed before the instance was usable (floating IP, volume, build, or attaching the address); the issue's comments name the step, and the server, if any, is still there."
+            todo="The member was told to delete and create again. If the same step fails for others too, it is Jetstream2: open a ticket with the diagnostics comment."
+          elif [[ "$SETUP" == "failure" || "$SETUP_STATUS" != "complete" ]]; then
+            what="The server is up but its setup did not finish (status: ${SETUP_STATUS:-unknown}); the setup comment on the issue says which step. A setup that could not reach GitHub or PyPI is a network orphan: the address is dead."
+            todo="The member was told to delete and create again. A fresh placement fixes an orphan; if setup fails the same way twice, look at the image or Jetstream2."
+          elif [[ "$SEND_EMAIL" == "failure" ]]; then
+            what="The instance is ready but the credentials email to the member failed; the issue carries the details."
+            todo="Make sure the member has the access details (the portal shows them); check the mail account if it repeats."
+          else
+            what="An unhandled failure; the run log has the step."
+            todo="Read the run log."
+          fi
+          printf 'Command:  create\nInstance: %s\n\nWhat happened: %s\n\nWhat to do: %s\n' \
+            "${INSTANCE_NAME:-not created}" "$what" "$todo" > "$RUNNER_TEMP/admin-mail-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.md"
+        env:
+          INSTANCE_NAME: ${{ steps.provision.outputs.instance_name }}
+          PROVISION: ${{ steps.provision.outcome }}
+          SETUP: ${{ steps.setup.outcome }}
+          SETUP_STATUS: ${{ steps.setup.outputs.setup_status }}
+          SEND_EMAIL: ${{ steps.send_email.outcome }}
+
+      - name: Notify admins by email (create failed)
+        if: ${{ failure() && steps.describe_failure.outcome == 'success' }}
+        uses: ./.github/actions/notify-admins
+        with:
+          admin_emails: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          mail_server_username: ${{ secrets.MAIL_USERNAME }}
+          mail_server_password: ${{ secrets.MAIL_PASSWORD }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue_number: ${{ github.event.issue.number }}
+          subject:
+            "create failed for ${{ steps.provision.outputs.instance_name || 'the
+            requested instance' }} (issue #${{ github.event.issue.number }})"
+          body_file:
+            ${{ runner.temp }}/admin-mail-${{ github.run_id }}-${{
+            github.run_attempt }}.md
+
       # Last step in the job: 🚀 has been on the comment for the whole
       # provisioning run and only now becomes 👍/👎.
       - name: Report command outcome on the comment

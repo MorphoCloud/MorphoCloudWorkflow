@@ -272,6 +272,36 @@ Unshelve places it afresh") before the shelve. Where the portal runs, decision
 every minute); this is the backstop, and production's only guard until the
 migration. The uptime path for instances that answer is unchanged. |
 
+| 27 | **One email per incident, with the diagnosis and the action; none for
+what needs no admin; none ever lost.** (maintainer, 2026-11-04; step 6 of the
+reliability work) What the admins got until now: a bare "command failed" email
+from `control-instance` with links and no diagnosis; two emails per
+reconciliation violation (the issue comment's `@MorphoCloud/morphocloud-admins`
+mention through `on-admin-mention.yml`, plus the direct email); and no email at
+all for a failed create — its comments are posted with `GITHUB_TOKEN`, which
+raises no `issue_comment` event, so their admin mentions reached nobody. And a
+mail server failure (the SMTP 528 of 2026-11-03 02:12Z) was swallowed by
+`continue-on-error` on every mail step. Now: (1) **one channel per incident** —
+the workflow that found it emails directly through the new `notify-admins`
+action, with a body that says what happened and what to do (the failure class is
+read from the step outcomes: host failure, no address, address not attached,
+wrong end state, API error, timeout, setup not finished, credentials email
+failed, unhandled) and attaches the unshelve report or the Jetstream2
+diagnostics when there are any; bot comments carry no admin mention ("The
+MorphoCloud admins have been emailed"), so `on-admin-mention.yml` is for humans
+asking for help. (2) **No email for what needs no admin**: unapproved, does not
+exist, a plain capacity shortage (the member is told and retries, the backfill
+retries workshops), no storage, an instance already there. (3) **A failed send
+is never lost**: the action labels the issue `admin-email-failed` and posts the
+full notification as a comment; `reconcile-instances` sends one catch-up email
+listing those issues when mail works again and clears the labels; its own
+violation email, when it fails, un-flags the violations so they alert again next
+run instead of being silenced by the `invariant-violation` label. (4) Creates
+email the admins for the first time. The portal's own alerts (decisions 23
+and 20) keep their one-per-episode rule; an outbox with retry for them and a
+daily digest for the purely informational ones ("shelved automatically", "report
+is back") is the portal half of this step, to follow. |
+
 ## Sign-in (decision 8)
 
 The current OAuth App only reads team membership (`read:org`). Posting a command
@@ -643,4 +673,17 @@ and storage cards: a support assistant that helps users diagnose problems.
     30): waiting" and, had it been up 30 minutes, "Shelving on the wall clock"
     with the member's line on the issue; the shelve itself is the workshop
     dispatch already proven. On Test the portal (decision 23, 5 min) shelves
-    first, so the waiting line is what the test observes.
+    first, so the waiting line is what the test observes. **Passed 2026-11-04**
+    (second run, after #345 fixed the job shell's `-e` ending the run: #503,
+    "does not answer on 149.165.174.219 after 34 min up. Shelving on the wall
+    clock.", the member's line at 04:06:39Z, shelve dispatched 04:06:41Z, run
+    green).
+16. Admin email (decision 27): a forced unshelve failure on Test (a wrong
+    preferred address, or an unshelve while the pool is dry) produces exactly
+    one email, whose body names the failure class and what to do, and no
+    `on-admin-mention` email; a failed create (a type the allocation lacks is
+    capacity — use a bad image variable instead) produces one email for the
+    first time; with the mail password broken on Test, the same failure leaves
+    the `admin-email-failed` label and the comment, and the next
+    reconcile-instances run after the password is restored sends the catch-up
+    and clears the label.

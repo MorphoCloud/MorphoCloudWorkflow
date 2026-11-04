@@ -74,7 +74,8 @@ jobs:
           {"name": "volume:deleted", "color": "0E8CDB", "description": "The volume has been permanently deleted after the grace period."},
           {"name": "volume:expiration-pending", "color": "0E8CDB", "description": "The volume is detached and will be deleted after the grace period."},
           {"name": "error:system-capacity", "color": "B60205", "description": "Instance request rejected: system capacity limit reached"},
-          {"name": "invariant-violation", "color": "B60205", "description": "Automated reconciliation found the instance in an inconsistent state"}
+          {"name": "invariant-violation", "color": "B60205", "description": "Automated reconciliation found the instance in an inconsistent state"},
+          {"name": "admin-email-failed", "color": "B60205", "description": "An admin notification about this issue could not be sent; reconcile-instances re-sends it"}
         ]
     steps:
       - name: Create or Update Labels
