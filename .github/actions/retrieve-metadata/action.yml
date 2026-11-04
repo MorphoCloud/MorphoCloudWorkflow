@@ -43,26 +43,35 @@ runs:
 
         # Get instance floating IP, with a retry budget. After a /unshelve the
         # VM returns to ACTIVE a few seconds before OpenStack reassociates its
-        # floating IP, so a single read can see 'null' (or only the fixed IP)
-        # and a credential email would fail spuriously. Retry until the
-        # floating IP is attached, mirroring the password retry below.
+        # floating IP, so a single read can see nothing and a credential
+        # email would fail spuriously. Retry until the floating IP is
+        # attached, mirroring the password retry below.
+        #
+        # Read from Neutron (the address bound to the server's port), not from
+        # Nova's `addresses` view: that view is a cache, and it stayed stale
+        # for over 40 minutes on Instances#214 (2026-11-04) after an address
+        # was attached to a running server — Exosphere showed the address,
+        # /email failed five minutes at a time (decision 29).
         ip_max_wait=300   # JS2 floating-IP reassociation after unshelve can be slow under load
         ip_interval=10
         ip_start=$SECONDS
         instance_ip=""
         while (( SECONDS - ip_start < ip_max_wait )); do
-          instance_ip=$(
-            openstack server show $INSTANCE_NAME -c addresses -f json | \
-            jq -r '.addresses.auto_allocated_network[1] // empty'
-          )
-          if [[ -n "$instance_ip" && "$instance_ip" != "null" ]]; then
+          # Both reads are guarded: under `bash -eo pipefail` a transient
+          # API error would otherwise end the step instead of being retried.
+          port_id=$(openstack port list --server "$INSTANCE_NAME" -f value -c ID | head -n1) || port_id=""
+          instance_ip=""
+          if [[ -n "$port_id" ]]; then
+            instance_ip=$(openstack floating ip list --port "$port_id" -f value -c 'Floating IP Address' | head -n1) || instance_ip=""
+          fi
+          if [[ -n "$instance_ip" ]]; then
             echo "instance_ip [$instance_ip] (after $((SECONDS - ip_start))s)"
             break
           fi
           echo "floating IP not attached yet (waited $((SECONDS - ip_start))s of ${ip_max_wait}s); retrying in ${ip_interval}s..."
           sleep "$ip_interval"
         done
-        if [[ -z "$instance_ip" || "$instance_ip" == "null" ]]; then
+        if [[ -z "$instance_ip" ]]; then
           echo "::error ::Failed to retrieve $INSTANCE_NAME IP within ${ip_max_wait}s (floating IP never reassociated?)"
           exit 1
         fi
