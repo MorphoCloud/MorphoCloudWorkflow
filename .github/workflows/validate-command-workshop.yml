@@ -92,4 +92,4 @@ jobs:
           body: |
             ### MorphoCloud is closed for the storage migration until ${{ vars.MORPHOCLOUD_MAINTENANCE }}
 
-            Your instance and your files are kept; nothing is lost. This command was not run.
+            Your workshop request and any instances it already has are kept; nothing is lost. This command was not run.

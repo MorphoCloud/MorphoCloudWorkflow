@@ -601,8 +601,10 @@ jobs:
   maintenance-notice:
     runs-on: ubuntu-latest
     if:
-      ${{ vars.MORPHOCLOUD_MAINTENANCE != '' && github.event.action == 'opened'
-      && (contains(github.event.issue.labels.*.name, 'request-type:instance') ||
+      ${{ vars.MORPHOCLOUD_MAINTENANCE != '' && (github.event.action == 'opened'
+      || github.event.label.name == 'request-source:portal') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') &&
+      (contains(github.event.issue.labels.*.name, 'request-type:instance') ||
       contains(github.event.issue.labels.*.name, 'request-type:workshop')) }}
     steps:
       - uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
