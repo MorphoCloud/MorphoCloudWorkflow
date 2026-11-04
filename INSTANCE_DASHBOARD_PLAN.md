@@ -224,7 +224,18 @@ the MorphoDepot and morphocloud.org servers and any other server of the project
 are infrastructure: never counted, never touched (a non-routable address on one
 is still reported). And the pool is filled up to the rule, one mint per run, not
 only when the last spare is taken: with one instance running and four
-infrastructure servers, the project holds 5 = 1 running + 4 spare. |
+infrastructure servers, the project holds 5 = 1 running + 4 spare. **The
+infrastructure policy, confirmed by the maintainer 2026-11-04:** the name
+decides, nothing else — a server is a MorphoCloud instance if and only if its
+name ends in `instance-<number>`, which is what the workflows give. So (1) an
+infrastructure server must never be named so that it ends in `instance-<number>`
+(`instances-runner-5` is fine, `runner-instance-5` is not); (2) an unattached
+address is always the pool — below the rule the next instance start takes it,
+above the rule it is released after ten idle minutes — so an address for new
+infrastructure is allocated and attached in one step (Exosphere's create does
+that), never parked. New infrastructure servers need nothing else: they show up
+as `infra=N` in the policing log and the pool is unaffected. No tag or marker
+scheme; the maintainer declined one. |
 
 ## Sign-in (decision 8)
 
