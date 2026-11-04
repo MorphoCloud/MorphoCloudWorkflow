@@ -174,15 +174,23 @@ jobs:
           }
 
           gh issue list --state open --limit 500 --json number,labels,author \
-            --jq '.[] | select(any(.labels[].name; startswith("followup:"))) | [.number, .author.login, ([.labels[].name | select(startswith("followup:"))] | first), ([.labels[].name | select(startswith("followup-count:")) | ltrimstr("followup-count:")] | first // "0")] | @tsv' | \
-            while IFS=$'\t' read -r issue_number author marker count; do
+            --jq '.[] | select(any(.labels[].name; startswith("followup:"))) | [.number, .author.login, ([.labels[].name | select(startswith("followup:"))] | first), ([.labels[].name | select(startswith("followup-count:")) | ltrimstr("followup-count:")] | first // "0"), (if any(.labels[].name; . == "request-creator:workshop" or . == "request-type:course-instance") then "other" else "member" end)] | @tsv' | \
+            while IFS=$'\t' read -r issue_number author marker count kind; do
               [[ -z "$issue_number" ]] && continue
               command=${marker#followup:}
               instance_name="${instance_prefix}instance-${issue_number}"
               echo "issue #$issue_number: $command pending (follow-ups so far: $count)"
               case "$command" in
                 unshelve|shelve|delete) ;;
-                setup) watch_setup "$issue_number" "$instance_name"; continue ;;
+                setup)
+                  # Workshop sub-issues and course instances are the backfill's
+                  # and the course flow's; a stray marker is dropped, not acted on.
+                  if [[ "$kind" != "member" ]]; then
+                    echo "issue #$issue_number is not an individual request; dropping the setup marker"
+                    clear_markers "$issue_number"
+                    continue
+                  fi
+                  watch_setup "$issue_number" "$instance_name"; continue ;;
                 *) echo "::warning ::issue #$issue_number carries an unknown marker '$marker'; skipping"; continue ;;
               esac
 

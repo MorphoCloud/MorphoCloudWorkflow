@@ -42,17 +42,20 @@ jobs:
           login=$(echo "$issue" | jq -r '.author.login')
           gid=$(gh api "users/$login" --jq .id)
           labels=$(echo "$issue" | jq -r '[.labels[].name] | join(",")')
-          if [[ ",$labels," == *",request-creator:workshop,"* ]]; then
-            echo "::error ::#$ISSUE_NUMBER is a workshop sub-issue; the workshop backfill finishes those"
+          refuse() {  # one sentence on the issue, then stop
+            gh issue comment "$ISSUE_NUMBER" --body "The setup could not be resumed automatically: $1. The MorphoCloud admins have been emailed." || true
+            echo "::error ::$1"
             exit 1
+          }
+          if [[ ",$labels," == *",request-creator:workshop,"* || ",$labels," == *",request-type:course-instance,"* ]]; then
+            refuse "#$ISSUE_NUMBER is not an individual request (the workshop backfill or the course flow finishes it)"
           fi
           prefix=${PREFIX:+${PREFIX}_}
           instance_name="${prefix}instance-${ISSUE_NUMBER}"
           volume_name="My-Data-${ISSUE_NUMBER}${VOLUME_SUFFIX:+-$VOLUME_SUFFIX}"
           status=$(openstack server show "$instance_name" -f value -c status)
           if [[ "$status" != "ACTIVE" ]]; then
-            echo "::error ::$instance_name is $status, not ACTIVE; nothing to resume"
-            exit 1
+            refuse "$instance_name is $status, not running"
           fi
           port_id=$(openstack port list --server "$instance_name" -f value -c ID | head -n1)
           ip=""
@@ -60,8 +63,7 @@ jobs:
             ip=$(openstack floating ip list --port "$port_id" -f value -c 'Floating IP Address' | head -n1)
           fi
           if [[ -z "$ip" ]]; then
-            echo "::error ::$instance_name has no public address; an unshelve attaches one"
-            exit 1
+            refuse "$instance_name has no public address (shelve it and unshelve it to get one)"
           fi
           storage_mode=""
           if [[ ",$labels," == *",request-creator:user,"* ]]; then storage_mode="$STORAGE_MODE"; fi

@@ -454,6 +454,12 @@ jobs:
           # on the numeric ID, which never changes.
           github_id: ${{ github.event.issue.user.id }}
           github_login: ${{ github.event.issue.user.login }}
+          # Decision 33: an individual request's slow setup is handed to the
+          # follow-through sweep; a workshop sub-issue created from here by
+          # an organizer's /create keeps the plain report (the backfill's).
+          follow_through:
+            ${{ contains(github.event.issue.labels.*.name,
+            'request-creator:workshop') && 'false' || 'true' }}
 
       - name: Send email
         id: send_email
@@ -551,12 +557,16 @@ jobs:
       # mentions in them reached no one. Not for what the member caused
       # (no storage, an instance already there) nor a plain capacity
       # shortage (the instance was removed; the member retries).
+      # Decision 33: a setup timeout handed to the follow-through sweep is
+      # not a failure — no admin email (the sweep emails when it gives up).
       - name: Describe the failure for the admins
         id: describe_failure
         if:
           ${{ failure() && env.CREATE_NO_STORAGE != 'true' &&
           env.CREATE_ALREADY_EXISTS != 'true' && env.CREATE_INSTANCE_REMOVED !=
-          'true' }}
+          'true' && !(steps.setup.outputs.outcome == 'timeout' &&
+          !contains(github.event.issue.labels.*.name,
+          'request-creator:workshop')) }}
         run: |
           what=""; todo=""
           if [[ "$PROVISION" == "failure" ]]; then
@@ -598,9 +608,14 @@ jobs:
             github.run_attempt }}.md
 
       # Last step in the job: 🚀 has been on the comment for the whole
-      # provisioning run and only now becomes 👍/👎.
+      # provisioning run and only now becomes 👍/👎. A setup still running
+      # under the follow-through sweep (decision 33) keeps 🚀: the command
+      # is neither done nor failed.
       - name: Report command outcome on the comment
-        if: ${{ always() }}
+        if:
+          ${{ always() && !(steps.setup.outputs.outcome == 'timeout' &&
+          !contains(github.event.issue.labels.*.name,
+          'request-creator:workshop')) }}
         uses: ./.github/actions/report-command-outcome
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
