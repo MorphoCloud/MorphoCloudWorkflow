@@ -334,7 +334,22 @@ is nothing you need to do: MorphoCloud retries the command by itself once
 Jetstream2 has settled". A retried delete does not unapprove the request (the
 original flag is not kept). Not covered: capacity shortages (the member retries,
 decision 27), corrupt shelved state, address failures (decision 25 shelves again
-and tells the member). |
+and tells the member). | | 29 | **The public address of a server is read from
+Neutron, never from Nova's address view.** (maintainer, 2026-11-04;
+Instances#214) Nova's `addresses` field is a cache of the network state; it is
+rebuilt when a server is spawned, so the normal unshelve path never showed the
+problem, but after an address is attached to a server that is already running it
+can stay stale for a long time — on #214 it still listed only the fixed address
+40 minutes after Neutron had the floating IP bound to the port, while Exosphere
+(which reads Neutron) showed the address and SSH answered on it. Every `/email`
+meanwhile spent five minutes waiting for Nova and failed ("Failed to retrieve
+metadata"), and the automatic-shelving and uptime sweeps saw "no address" too.
+Now `retrieve-metadata`, `control-instance` (has-address check),
+`automatic-instance-shelving` and `collect-instance-uptime` take the address
+bound to the server's port (`openstack port list --server`,
+`openstack floating ip list --port`), as `reconcile-instances`, `create-ip` and
+the policing script already did. The fixed address still comes from Nova (it
+never changes). |
 
 | 30 | **An unshelve that fails at scheduling is reported as what it is: no host
 free for the flavor.** (maintainer, 2026-11-04; Instances#214, the same
