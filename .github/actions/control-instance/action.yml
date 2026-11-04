@@ -120,6 +120,21 @@ runs:
         prefix: ${{ inputs.instance_name_prefix }}
         issue_number: ${{ inputs.issue_number }}
 
+    # Decision 28: this run owns the request from here. A follow-up marker
+    # left by an abandoned earlier run is stale (the follow-through sweep
+    # removed it before dispatching this run; a member's own command
+    # supersedes it). The retry count stays until a run succeeds.
+    - name: Take over any pending follow-up
+      shell: bash
+      run: |
+        for l in followup:unshelve followup:shelve followup:delete; do
+          gh issue edit "$ISSUE_NUMBER" --remove-label "$l" >/dev/null 2>&1 || true
+        done
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+
     # The self-serve recovery the unshelve failure comments offer. Portal
     # mode: from the portal, files in the storage; otherwise typed commands
     # and the data volume.
@@ -267,7 +282,7 @@ runs:
         body: |
           ### Command Results ❌
 
-          Another operation on **${{ steps.define.outputs.instance_name }}** has been running on Jetstream2's side for over 10 minutes and appears stuck (task state `${{ steps.check_task_state.outputs.task_state }}`), so the `${{ inputs.command_name }}` command could not run. **There is nothing you need to do.** @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed. Your instance and data remain safely stored.
+          Another operation on **${{ steps.define.outputs.instance_name }}** has been running on Jetstream2's side for over 10 minutes and appears stuck (task state `${{ steps.check_task_state.outputs.task_state }}`), so the `${{ inputs.command_name }}` command could not run yet. **There is nothing you need to do:** MorphoCloud retries the command by itself once Jetstream2 has settled and posts the result here; if two retries fail, the admins take over. Your instance and data remain safely stored.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -994,9 +1009,9 @@ runs:
         body: |
           ### Command Results ❌
 
-          The `unshelve` command for **${{ steps.define.outputs.instance_name }}** did not complete within the expected time — it may be stuck on Jetstream2's side. @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed.
+          The `unshelve` command for **${{ steps.define.outputs.instance_name }}** did not complete within the expected time — Jetstream2 is still working on it, or it is stuck there. **There is nothing you need to do:** MorphoCloud checks every few minutes and, once Jetstream2 has settled, finishes the unshelve by itself (including your access email) or retries it; the result is posted here. If two retries fail, the admins take over.
 
-          **If your instance has not come up after ~10 minutes:** ${{ steps.recovery.outputs.line }}
+          **If you would rather not wait:** ${{ steps.recovery.outputs.line }}
 
           <details><summary>Diagnostics for admins</summary>
 
@@ -1016,9 +1031,28 @@ runs:
         body: |
           ### Command Results ❌
 
-          The `${{ inputs.command_name }}` command for **${{ steps.define.outputs.instance_name }}** did not complete within the expected time — it may be stuck on Jetstream2's side. **There is nothing you need to do.** @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed. Your instance and data remain safely stored.
+          The `${{ inputs.command_name }}` command for **${{ steps.define.outputs.instance_name }}** did not complete within the expected time — Jetstream2 is still working on it, or it is stuck there. **There is nothing you need to do:** MorphoCloud retries the command by itself once Jetstream2 has settled and posts the result here; if two retries fail, the admins take over. Your instance and data remain safely stored.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    # Decision 28: what this run had to abandon, the follow-through sweep
+    # finishes — once the server has settled, it dispatches the command
+    # again (twice at most), announcing each attempt on the issue.
+    - name: Mark the command for follow-through
+      if:
+        ${{ failure() && (steps.comment_task_state.outcome == 'success' ||
+        steps.comment_max_wait_unshelve.outcome == 'success' ||
+        steps.comment_max_wait.outcome == 'success' ||
+        steps.comment_unshelve_host_failure.outcome == 'success') }}
+      shell: bash
+      run: |
+        gh issue edit "$ISSUE_NUMBER" --add-label "followup:$COMMAND_NAME" \
+          || echo "::warning ::Could not mark issue #$ISSUE_NUMBER for follow-through"
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+        COMMAND_NAME: ${{ inputs.command_name }}
 
     - name: Extract flavor on capacity error
       if: ${{ steps.instance_poll.outputs.capacity_error == 'true' }}
@@ -1706,3 +1740,17 @@ runs:
         body_file:
           ${{ runner.temp }}/admin-mail-${{ github.run_id }}-${{
           github.run_attempt }}.md
+
+    # Decision 28: a command that got through ends the episode — the retry
+    # count and the needs-admin flag are over.
+    - name: Clear the follow-up markers
+      if: ${{ success() }}
+      shell: bash
+      run: |
+        for l in followup-count:1 followup-count:2 needs-admin; do
+          gh issue edit "$ISSUE_NUMBER" --remove-label "$l" >/dev/null 2>&1 || true
+        done
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
