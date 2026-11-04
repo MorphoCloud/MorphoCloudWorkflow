@@ -48,6 +48,11 @@ outputs:
   setup_status:
     description: "Instance setup status ('complete' when ready)"
     value: ${{ steps.instance_poll.outputs.status }}
+  outcome:
+    description:
+      "How the wait for setup ended: complete, error (the instance's own setup
+      script failed) or timeout (still running; decision 33)"
+    value: ${{ steps.instance_poll.outputs.outcome }}
 runs:
   using: "composite"
   steps:
@@ -117,6 +122,11 @@ runs:
                     if [ -n "$failed_item" ]; then detail="$detail (item \`$failed_item\`)"; fi
                 fi
                 set_failure_detail "$detail"
+                echo "outcome=error" >> "$GITHUB_OUTPUT"
+                # Decision 33: the instance's own error line is the one real
+                # failure; the status sweep turns this marker into status:error.
+                openstack server set --property 'exoSetup={"status":"error","epoch":'"$(date +%s)"'000}' "$INSTANCE_NAME" \
+                  || echo "::warning ::could not mark exoSetup=error on $INSTANCE_NAME"
                 echo "::error ::$detail"
                 exit 1
             else
@@ -129,6 +139,11 @@ runs:
             last_task=$(last_ansible_task "$log_output")
             detail="setup did NOT finish within ${max_wait_time}s (timed out); last task seen was \`${last_task:-unknown}\`"
             set_failure_detail "$detail"
+            # Decision 33: a timeout is "still setting up", not a failure. The
+            # follow-through sweep watches the console from here and finishes
+            # the job (resume-setup.yml) or shelves a stalled instance.
+            echo "outcome=timeout" >> "$GITHUB_OUTPUT"
+            echo "last_task=${last_task:-unknown}" >> "$GITHUB_OUTPUT"
             echo "::error ::$detail"
             exit 1
         fi
@@ -149,12 +164,42 @@ runs:
           $INSTANCE_NAME
 
         echo "status=$status" >> $GITHUB_OUTPUT
+        echo "outcome=complete" >> "$GITHUB_OUTPUT"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ inputs.instance_name }}
 
+    # Decision 33: a slow setup is not a failure. The member is told to wait,
+    # the issue is marked for the follow-through sweep, and this run ends.
+    - name: comment (setup still running)
+      if:
+        ${{ steps.instance_poll.outcome == 'failure' && failure() &&
+        steps.instance_poll.outputs.outcome == 'timeout' }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation: still setting up ⏳
+
+          Instance **${{ inputs.instance_name }}** is taking longer than usual to finish setting up (20 minutes so far; last step seen: `${{ steps.instance_poll.outputs.last_task }}`). **This is not a failure and there is nothing you need to do:** MorphoCloud checks every few minutes and finishes the setup, including your access email, as soon as the instance is ready. If it has not finished within an hour, the instance is shelved so it does not use your allocation, and you are told here.
+
+    - name: Mark the setup for follow-through
+      if:
+        ${{ steps.instance_poll.outcome == 'failure' && failure() &&
+        steps.instance_poll.outputs.outcome == 'timeout' }}
+      shell: bash
+      run: |
+        gh issue edit "$ISSUE_NUMBER" --add-label "followup:setup" \
+          || echo "::warning ::Could not mark issue #$ISSUE_NUMBER for follow-through"
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+
     - name: comment (setup failed)
-      if: ${{ steps.instance_poll.outcome == 'failure' && failure() }}
+      if:
+        ${{ steps.instance_poll.outcome == 'failure' && failure() &&
+        steps.instance_poll.outputs.outcome != 'timeout' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}

@@ -127,7 +127,7 @@ runs:
     - name: Take over any pending follow-up
       shell: bash
       run: |
-        for l in followup:unshelve followup:shelve followup:delete; do
+        for l in followup:unshelve followup:shelve followup:delete followup:setup; do
           gh issue edit "$ISSUE_NUMBER" --remove-label "$l" >/dev/null 2>&1 || true
         done
       env:
