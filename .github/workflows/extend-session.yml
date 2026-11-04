@@ -18,8 +18,8 @@ jobs:
   extend:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     if:
-      ${{ !github.event.issue.pull_request &&
-      contains(github.event.issue.labels.*.name, 'instance-request') &&
+      ${{ !github.event.issue.pull_request && vars.MORPHOCLOUD_MAINTENANCE == ''
+      && contains(github.event.issue.labels.*.name, 'instance-request') &&
       contains(github.event.comment.body, '/extend') }}
     steps:
       - uses: actions/checkout@v6

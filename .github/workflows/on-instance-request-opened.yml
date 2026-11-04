@@ -45,10 +45,10 @@ jobs:
   check-instance-team-membership:
     runs-on: ubuntu-latest
     if:
-      ${{ (github.event.action == 'opened' || github.event.label.name ==
-      'request-source:portal') && contains(github.event.issue.labels.*.name,
-      'request-type:instance') && contains(github.event.issue.labels.*.name,
-      'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' && (github.event.action == 'opened'
+      || github.event.label.name == 'request-source:portal') &&
+      contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -175,10 +175,10 @@ jobs:
     needs: [check-instance-team-membership]
     runs-on: ubuntu-latest
     if:
-      ${{ (github.event.action == 'opened' || github.event.label.name ==
-      'request-source:portal') && contains(github.event.issue.labels.*.name,
-      'request-type:instance') && contains(github.event.issue.labels.*.name,
-      'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' && (github.event.action == 'opened'
+      || github.event.label.name == 'request-source:portal') &&
+      contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -258,10 +258,10 @@ jobs:
         call-request-initial-comments,
       ]
     if:
-      ${{ (github.event.action == 'opened' || github.event.label.name ==
-      'request-source:portal') && contains(github.event.issue.labels.*.name,
-      'request-type:instance') && contains(github.event.issue.labels.*.name,
-      'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' && (github.event.action == 'opened'
+      || github.event.label.name == 'request-source:portal') &&
+      contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/validate-request.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
@@ -270,10 +270,10 @@ jobs:
   check-workshop-organizer-membership:
     runs-on: ubuntu-latest
     if:
-      ${{ (github.event.action == 'opened' || github.event.label.name ==
-      'request-source:portal') && contains(github.event.issue.labels.*.name,
-      'request-type:workshop') && contains(github.event.issue.labels.*.name,
-      'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' && (github.event.action == 'opened'
+      || github.event.label.name == 'request-source:portal') &&
+      contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -407,10 +407,10 @@ jobs:
     needs: [check-workshop-organizer-membership]
     runs-on: ubuntu-latest
     if:
-      ${{ (github.event.action == 'opened' || github.event.label.name ==
-      'request-source:portal') && contains(github.event.issue.labels.*.name,
-      'request-type:workshop') && contains(github.event.issue.labels.*.name,
-      'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' && (github.event.action == 'opened'
+      || github.event.label.name == 'request-source:portal') &&
+      contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - uses: actions/checkout@v6
 
@@ -533,10 +533,10 @@ jobs:
   call-validate-request-workshop:
     needs: [check-workshop-organizer-membership, validate-workshop-schedule]
     if:
-      ${{ (github.event.action == 'opened' || github.event.label.name ==
-      'request-source:portal') && contains(github.event.issue.labels.*.name,
-      'request-type:workshop') && contains(github.event.issue.labels.*.name,
-      'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' && (github.event.action == 'opened'
+      || github.event.label.name == 'request-source:portal') &&
+      contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/validate-request.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
@@ -545,10 +545,10 @@ jobs:
   call-request-notify-admin-workshop:
     needs: [check-workshop-organizer-membership, validate-workshop-schedule]
     if:
-      ${{ (github.event.action == 'opened' || github.event.label.name ==
-      'request-source:portal') && contains(github.event.issue.labels.*.name,
-      'request-type:workshop') && contains(github.event.issue.labels.*.name,
-      'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' && (github.event.action == 'opened'
+      || github.event.label.name == 'request-source:portal') &&
+      contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/request-notify-admin-workshop.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
@@ -557,10 +557,10 @@ jobs:
   call-request-labeler:
     needs: [check-instance-team-membership, check-instance-quota]
     if:
-      ${{ (github.event.action == 'opened' || github.event.label.name ==
-      'request-source:portal') && contains(github.event.issue.labels.*.name,
-      'request-type:instance') && contains(github.event.issue.labels.*.name,
-      'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' && (github.event.action == 'opened'
+      || github.event.label.name == 'request-source:portal') &&
+      contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/request-labeler.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
@@ -569,10 +569,10 @@ jobs:
   call-request-initial-comments:
     needs: [check-instance-team-membership, check-instance-quota]
     if:
-      ${{ (github.event.action == 'opened' || github.event.label.name ==
-      'request-source:portal') && contains(github.event.issue.labels.*.name,
-      'request-type:instance') && contains(github.event.issue.labels.*.name,
-      'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' && (github.event.action == 'opened'
+      || github.event.label.name == 'request-source:portal') &&
+      contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     uses: ./.github/workflows/request-initial-comments.yml
     with:
       issue_number: "${{ github.event.issue.number }}"
@@ -582,10 +582,10 @@ jobs:
     needs: [check-instance-team-membership, check-instance-quota]
     runs-on: ubuntu-latest
     if:
-      ${{ (github.event.action == 'opened' || github.event.label.name ==
-      'request-source:portal') && contains(github.event.issue.labels.*.name,
-      'request-type:instance') && contains(github.event.issue.labels.*.name,
-      'request-creator:user') }}
+      ${{ vars.MORPHOCLOUD_MAINTENANCE == '' && (github.event.action == 'opened'
+      || github.event.label.name == 'request-source:portal') &&
+      contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      contains(github.event.issue.labels.*.name, 'request-creator:user') }}
     steps:
       - name: Rename issue to canonical title
         run: |
@@ -594,3 +594,21 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+  # Decision 31: while MORPHOCLOUD_MAINTENANCE holds the reopening date, the
+  # member gets one sentence and nothing runs (every job above is gated on
+  # the same variable). Posted with GITHUB_TOKEN: it triggers nothing.
+  maintenance-notice:
+    runs-on: ubuntu-latest
+    if:
+      ${{ vars.MORPHOCLOUD_MAINTENANCE != '' && github.event.action == 'opened'
+      && (contains(github.event.issue.labels.*.name, 'request-type:instance') ||
+      contains(github.event.issue.labels.*.name, 'request-type:workshop')) }}
+    steps:
+      - uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### MorphoCloud is closed for the storage migration until ${{ vars.MORPHOCLOUD_MAINTENANCE }}
+
+            Your request is kept and will be handled after reopening.

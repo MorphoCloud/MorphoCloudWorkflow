@@ -14,8 +14,8 @@ jobs:
   update-issue:
     runs-on: ubuntu-latest
     if:
-      ${{ !github.event.issue.pull_request &&
-      contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      ${{ !github.event.issue.pull_request && vars.MORPHOCLOUD_MAINTENANCE == ''
+      && contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.comment.body, '/renew')}}
     steps:
       - uses: actions/checkout@v6
