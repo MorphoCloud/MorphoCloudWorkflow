@@ -97,7 +97,10 @@ jobs:
               # An override hour not declared in labels.yml would otherwise
               # fail --add-label and block instance creation (#228).
               gh label create "timeout:${hrs}hrs" --color "5319E7" --description "Instance shelves after ${hrs}h uptime" --force >/dev/null 2>&1 || true
-              gh issue edit "$NUMBER" --add-label "timeout:${hrs}hrs"
+              # A transient failure here degrades (default timeout) rather
+              # than blocking the create.
+              gh issue edit "$NUMBER" --add-label "timeout:${hrs}hrs" \
+                || echo "::warning ::Could not apply timeout:${hrs}hrs to #$NUMBER; the instance keeps the default session timeout"
               break
             fi
           done
