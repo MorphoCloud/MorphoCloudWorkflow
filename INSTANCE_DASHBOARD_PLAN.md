@@ -686,4 +686,10 @@ and storage cards: a support assistant that helps users diagnose problems.
     first time; with the mail password broken on Test, the same failure leaves
     the `admin-email-failed` label and the comment, and the next
     reconcile-instances run after the password is restored sends the catch-up
-    and clears the label.
+    and clears the label. **Passed 2026-11-04** (Test-Instances#503 locked so
+    its unshelve failed with an API error while `MAIL_PASSWORD` was wrong for 92
+    s: the diagnosis email was refused, the label and the full notification
+    comment landed at 06:19:35Z; password restored, a dispatched reconcile run
+    sent the catch-up and cleared the label, 06:21Z). The forced create and the
+    dry-pool unshelve were not exercised: the create path shares the action, and
+    a dry pool cannot be forced.
