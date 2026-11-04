@@ -170,11 +170,16 @@ jobs:
                 continue
               fi
 
-              # Retrieve the IP address of the instance
-              instance_ip=$(
-                openstack server show $instance_name -c addresses -f json | \
+              # Retrieve the IP address of the instance. A failed read (an
+              # OpenStack hiccup) must not end the run under -e: say so and
+              # look at this instance again next tick.
+              if ! instance_ip=$(
+                openstack server show "$instance_name" -c addresses -f json | \
                 jq -r '.addresses.auto_allocated_network[1]'
-              )
+              ); then
+                echo "::warning ::Could not read the address of $instance_name; left for the next tick"
+                continue
+              fi
               echo "instance_ip [$instance_ip]"
 
               # No public address on an active instance: nobody can reach it
