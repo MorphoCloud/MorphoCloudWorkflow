@@ -49,9 +49,10 @@ import time
 from pathlib import Path
 
 ROUTABLE_PREFIX = "149.165."
-# A MorphoCloud instance: morpho-cloud_instance-<n>, morpho-cloud-test_instance-<n>.
-# Everything else in the project (runners, the portal, …) is infrastructure.
-INSTANCE_RE = re.compile(r"_instance-[0-9]+$")
+# A MorphoCloud instance: instance-<n> (production), morpho-cloud-test_instance-<n>
+# (Test), <prefix>_instance-<n> in general. Everything else in the project
+# (runners, the portal, …) is infrastructure.
+INSTANCE_RE = re.compile(r"(^|[_-])instance-[0-9]+$")
 IDLE_BEFORE_RELEASE = 600
 SHELVED = ("SHELVED", "SHELVED_OFFLOADED")
 HOLD = int(os.environ.get("MORPHOCLOUD_FIP_HOLD", "5"))
@@ -436,7 +437,7 @@ def apply(action: tuple, state: dict, dry_run: bool) -> None:
         if not dry_run:
             os_run("floating", "ip", "delete", action[1])
     elif kind == "mint":
-        log("no spare in hand: " + ("would mint one" if dry_run else "minting one"))
+        log("below the rule: " + ("would mint one" if dry_run else "minting one"))
         if not dry_run:
             mint(state)
     elif kind == "alert":

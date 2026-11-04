@@ -90,10 +90,12 @@ def test_a_missing_timestamp_is_never_idle():
 
 
 def test_instance_names_are_told_from_infrastructure():
+    assert police.INSTANCE_RE.search("instance-254")  # production names them so
     assert police.INSTANCE_RE.search("morpho-cloud_instance-254")
     assert police.INSTANCE_RE.search("morpho-cloud-test_instance-503")
     assert not police.INSTANCE_RE.search("morphocloud-instances-runner-2")
     assert not police.INSTANCE_RE.search("mc-data-portal")
+    assert not police.INSTANCE_RE.search("md-models")
 
 
 def test_exactly_the_hold_when_quiet_does_nothing():
