@@ -307,18 +307,46 @@ and 20) keep their one-per-episode rule; an outbox with retry for them and a
 daily digest for the purely informational ones ("shelved automatically", "report
 is back") is the portal half of this step, to follow. |
 
-| 29 | **The public address of a server is read from Neutron, never from Nova's
-address view.** (maintainer, 2026-11-04; Instances#214) Nova's `addresses` field
-is a cache of the network state; it is rebuilt when a server is spawned, so the
-normal unshelve path never showed the problem, but after an address is attached
-to a server that is already running it can stay stale for a long time — on #214
-it still listed only the fixed address 40 minutes after Neutron had the floating
-IP bound to the port, while Exosphere (which reads Neutron) showed the address
-and SSH answered on it. Every `/email` meanwhile spent five minutes waiting for
-Nova and failed ("Failed to retrieve metadata"), and the automatic-shelving and
-uptime sweeps saw "no address" too. Now `retrieve-metadata`, `control-instance`
-(has-address check), `automatic-instance-shelving` and `collect-instance-uptime`
-take the address bound to the server's port (`openstack port list --server`,
+| 28 | **A command the workflow had to abandon is finished by the clock, not by
+a human.** (maintainer, 2026-11-04; after Instances#214: an unshelve whose boot
+hung on the compute host for 26 minutes was reported as "may be stuck" and
+dropped; the member's delete ten minutes later was refused because the task was
+still in flight and dropped too; the server then came up on its own and nothing
+finished the job — the maintainer traced it by hand) `control-instance` now
+leaves a `followup:<command>` label on the issue whenever it gives up on a
+command that may still complete: the wait for an in-flight action ran out, the
+status poll timed out, or the compute host failed the unshelve. The new
+`follow-through.yml` sweep (every five minutes from the runner clock) finishes
+it: once the server has settled — no task_state, unchanged for two minutes — it
+dispatches the command again through `control-instance-from-workflow.yml`, at
+most twice per episode (`followup-count:<n>`), announcing each attempt on the
+issue ("Jetstream2 has settled; retrying `unshelve` automatically (attempt 1 of
+2)"). An unshelve whose server is already ACTIVE takes the action's no-op path,
+which attaches a missing address, sets the properties and sends the access email
+— what #214 was owed. A shelve whose server is already shelved, or a delete
+whose server is gone, is closed with a note. Retries spent, or the server in
+ERROR: the issue gets `needs-admin`, the member is told the admins have it, and
+the admins get one email listing the issues (a failed send leaves
+`admin-email-failed`, decision 27). A run that starts drops any stale
+`followup:` marker (the member's own command supersedes the sweep); a run that
+succeeds clears the count and `needs-admin`. The failure comments say so: "There
+is nothing you need to do: MorphoCloud retries the command by itself once
+Jetstream2 has settled". A retried delete does not unapprove the request (the
+original flag is not kept). Not covered: capacity shortages (the member retries,
+decision 27), corrupt shelved state, address failures (decision 25 shelves again
+and tells the member). | | 29 | **The public address of a server is read from
+Neutron, never from Nova's address view.** (maintainer, 2026-11-04;
+Instances#214) Nova's `addresses` field is a cache of the network state; it is
+rebuilt when a server is spawned, so the normal unshelve path never showed the
+problem, but after an address is attached to a server that is already running it
+can stay stale for a long time — on #214 it still listed only the fixed address
+40 minutes after Neutron had the floating IP bound to the port, while Exosphere
+(which reads Neutron) showed the address and SSH answered on it. Every `/email`
+meanwhile spent five minutes waiting for Nova and failed ("Failed to retrieve
+metadata"), and the automatic-shelving and uptime sweeps saw "no address" too.
+Now `retrieve-metadata`, `control-instance` (has-address check),
+`automatic-instance-shelving` and `collect-instance-uptime` take the address
+bound to the server's port (`openstack port list --server`,
 `openstack floating ip list --port`), as `reconcile-instances`, `create-ip` and
 the policing script already did. The fixed address still comes from Nova (it
 never changes). |
@@ -714,3 +742,12 @@ and storage cards: a support assistant that helps users diagnose problems.
     sent the catch-up and cleared the label, 06:21Z). The forced create and the
     dry-pool unshelve were not exercised: the create path shares the action, and
     a dry pool cannot be forced.
+17. Follow-through (decision 28): on Test, a `followup:unshelve` label put by
+    hand on a shelved #503 makes the next `follow-through` run post "retrying
+    `unshelve` automatically (attempt 1 of 2)", set `followup-count:1` and
+    dispatch an unshelve that comes up with its address and email, after which
+    the count label is gone; `followup:shelve` on the running #503 shelves it
+    the same way; `followup:shelve` on a shelved #503 is closed with "completed
+    on Jetstream2 after all"; `followup:unshelve` + `followup-count:2` on a
+    shelved #503 yields `needs-admin`, the member's "could not be completed
+    automatically" comment and one admin email, with no dispatch.
