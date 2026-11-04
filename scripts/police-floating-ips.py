@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
-"""Keep the project's floating IPs at max(N, running + 1) and nothing more.
+"""Keep the MorphoCloud instances' floating IPs at max(N, running + 1).
 
 INSTANCE_DASHBOARD_PLAN.md decision 24. Runs from the acquire runner's
 crontab every five minutes (the runner is the clock, decision 21); the same
 code joins the portal runner's minute loop with the migration.
 
+Only MorphoCloud instances (…_instance-<n>) count: "held" is the addresses
+bound to them plus the unattached ones, "running" the addresses bound to
+them. The runners, the portal and every other server of the project are
+infrastructure — outside the rule, never counted, never touched.
+
 What one run does, in this order:
 
-1. A floating IP bound to a SHELVED server is released (Jetstream2's policy:
-   an address never stays on a shelved server; a failed unshelve leaves one).
+1. A floating IP bound to a SHELVED instance is released (Jetstream2's
+   policy: an address never stays on a shelved server; a failed unshelve
+   leaves one).
 2. A non-routable address (anything outside 149.165/16 — Jetstream2 hands out
    172.17.x when its pool is dry) is deleted when unattached; one bound to a
    running server is reported, since that server is unreachable.
-3. With no spare left, one is minted ahead so the next create or unshelve
-   finds an address in hand (create-ip does the same the moment it takes the
-   last one; this is the backstop). A mint that fails, or returns a
-   non-routable address, is the start of a drought: the admins hear once.
+3. With fewer held than max(N, running + 1), one is minted per run until the
+   rule is met, so a create or unshelve always finds an address in hand
+   (create-ip also mints one the moment it takes the last spare). A mint
+   that fails, or returns a non-routable address, is the start of a
+   drought: the admins hear once.
 4. With more held than max(N, running + 1), unattached routable addresses
    idle for ten minutes or more are deleted back to Jetstream2, oldest
    first. Ten minutes keeps clear of an unshelve that picked an address and
@@ -35,12 +42,16 @@ import calendar
 import fcntl
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 ROUTABLE_PREFIX = "149.165."
+# A MorphoCloud instance: morpho-cloud_instance-<n>, morpho-cloud-test_instance-<n>.
+# Everything else in the project (runners, the portal, …) is infrastructure.
+INSTANCE_RE = re.compile(r"_instance-[0-9]+$")
 IDLE_BEFORE_RELEASE = 600
 SHELVED = ("SHELVED", "SHELVED_OFFLOADED")
 HOLD = int(os.environ.get("MORPHOCLOUD_FIP_HOLD", "5"))
@@ -115,14 +126,21 @@ def addresses(nets) -> list[str]:
     return out
 
 
-def inventory() -> tuple[list[dict], dict[str, str]]:
-    """Every floating IP of the project, and fixed address -> server status."""
+def inventory() -> tuple[list[dict], dict[str, dict]]:
+    """Every floating IP of the project, and fixed address -> its server:
+    {"status", "instance" (a MorphoCloud instance, as opposed to a runner,
+    the portal or any other server of the project), "name"}."""
     fips = os_json("floating", "ip", "list")
     servers = os_json("server", "list", "--long")
-    by_fixed: dict[str, str] = {}
+    by_fixed: dict[str, dict] = {}
     for s in servers:
+        name = str(s.get("Name") or "")
         for a in addresses(s.get("Networks")):
-            by_fixed[a] = str(s.get("Status") or "")
+            by_fixed[a] = {
+                "status": str(s.get("Status") or ""),
+                "instance": INSTANCE_RE.search(name) is not None,
+                "name": name,
+            }
     if (
         servers and not by_fixed
     ):  # servers exist but none parsed: the client's shape changed
@@ -132,41 +150,71 @@ def inventory() -> tuple[list[dict], dict[str, str]]:
     return fips, by_fixed
 
 
+def nonroutable_alert(ip: str, f: dict, owner: dict | None, status: str) -> tuple:
+    return (
+        "alert",
+        f"nonroutable:{ip}",
+        f"Non-routable address {ip} on a running server",
+        f"Floating IP {ip} is bound to {owner['name'] if owner else 'an unknown port'} "
+        f"(fixed {f.get('Fixed IP Address')}, status {status or 'unknown'}). Nothing "
+        "reaches it. Shelve the server and unshelve it: the next address is "
+        "checked before use.",
+    )
+
+
+def classify(f: dict, by_fixed: dict[str, dict]) -> tuple[str, list[tuple]]:
+    """One floating IP: what it is to the rule, and what to do about it now.
+    "running" / "spare": ours, counted. "infra" / "unknown": bound to a
+    runner, the portal, … or to a port no listed server owns — not ours to
+    count or touch (a dead address on one is still reported). "dead": a
+    non-routable address of ours, deleted or reported."""
+    ip, fid, port = (
+        str(f.get("Floating IP Address") or ""),
+        str(f.get("ID") or ""),
+        f.get("Port"),
+    )
+    owner = by_fixed.get(str(f.get("Fixed IP Address") or ""))
+    status = owner["status"] if owner else ""
+    attached = port is not None
+    routable = ip.startswith(ROUTABLE_PREFIX)
+    if attached and not (owner is not None and owner["instance"]):
+        acts = [] if routable else [nonroutable_alert(ip, f, owner, status)]
+        return ("unknown" if owner is None else "infra"), acts
+    acts: list[tuple] = []
+    if attached and status in SHELVED:
+        acts.append(("unset", fid, ip, status))
+        attached = False
+    if not routable:
+        acts.append(
+            nonroutable_alert(ip, f, owner, status)
+            if attached
+            else ("delete", fid, ip, "non-routable")
+        )
+        return "dead", acts
+    return ("running" if attached else "spare"), acts
+
+
 def plan(
-    fips: list[dict], by_fixed: dict[str, str], hold: int, now: float, updated_at
+    fips: list[dict], by_fixed: dict[str, dict], hold: int, now: float, updated_at
 ) -> tuple[list, dict]:
     """The actions for this run (pure; `updated_at(fip)` is read lazily and
-    only for release candidates). Returns (actions, counts)."""
+    only for release candidates). Returns (actions, counts).
+
+    Only MorphoCloud instances count. An address bound to a runner, the
+    portal or any other server of the project is infrastructure: outside the
+    rule, never released, never deleted (a non-routable one is still
+    reported). An address bound to a port no listed server owns is left
+    alone too, and counted apart."""
     actions: list[tuple] = []
     routable: list[tuple[dict, bool]] = []
+    tally = {"infra": 0, "unknown": 0}
     for f in fips:
-        ip, fid, port = (
-            str(f.get("Floating IP Address") or ""),
-            str(f.get("ID") or ""),
-            f.get("Port"),
-        )
-        status = by_fixed.get(str(f.get("Fixed IP Address") or ""), "")
-        attached = port is not None
-        if attached and status in SHELVED:
-            actions.append(("unset", fid, ip, status))
-            attached = False
-        if not ip.startswith(ROUTABLE_PREFIX):
-            if attached:
-                actions.append(
-                    (
-                        "alert",
-                        f"nonroutable:{ip}",
-                        f"Non-routable address {ip} on a running instance",
-                        f"Floating IP {ip} is bound to a running server (fixed "
-                        f"{f.get('Fixed IP Address')}, status {status or 'unknown'}). Nothing "
-                        "reaches it. Shelve the instance and unshelve it: the next address "
-                        "is checked before use.",
-                    )
-                )
-            else:
-                actions.append(("delete", fid, ip, "non-routable"))
-            continue
-        routable.append((f, attached))
+        kind, acts = classify(f, by_fixed)
+        actions += acts
+        if kind in ("running", "spare"):
+            routable.append((f, kind == "running"))
+        elif kind in tally:
+            tally[kind] += 1
     held = len(routable)
     running = sum(1 for _, a in routable if a)
     spares = held - running
@@ -177,18 +225,13 @@ def plan(
         "spares": spares,
         "target": target,
         "hold": hold,
+        **tally,
     }
-    if spares == 0:
-        actions.append(("mint",))
+    if held < target:
+        actions.append(("mint",))  # one per run, up to the rule
     elif held > target:
-        idle = []
-        for f, attached in routable:
-            if attached:
-                continue
-            at = updated_at(f)
-            if now - at >= IDLE_BEFORE_RELEASE:
-                idle.append((at, f))
-        idle.sort(key=lambda x: x[0])
+        idle = [(updated_at(f), f) for f, attached in routable if not attached]
+        idle = sorted((at, f) for at, f in idle if now - at >= IDLE_BEFORE_RELEASE)
         for _, f in idle[: held - target]:
             actions.append(
                 ("delete", str(f["ID"]), str(f["Floating IP Address"]), "over the hold")
@@ -365,7 +408,8 @@ def run(dry_run: bool) -> int:
 
     actions, counts = plan(fips, by_fixed, HOLD, now, updated_at)
     log(
-        f"held={counts['held']} running={counts['running']} spares={counts['spares']} "
+        f"instances: held={counts['held']} running={counts['running']} spares={counts['spares']} "
+        f"(infra={counts['infra']} unknown={counts['unknown']}) "
         f"target={counts['target']} (hold {counts['hold']}) actions={len(actions)}"
     )
     seen = {a[1] for a in actions if a[0] == "alert"}

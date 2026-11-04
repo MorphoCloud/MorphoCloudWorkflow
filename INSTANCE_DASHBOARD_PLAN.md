@@ -216,7 +216,15 @@ until it recovers; the admins hear once per drought, through the new
 dispatchable `admin-alert.yml` (the runner cannot send mail), and once per
 non-routable address found on a running server. The two-week review reads the
 policing log (failed mints, refused starts) to move N. The first run on
-production releases the reserve of 8 down to the rule. |
+production releases the reserve of 8 down to the rule. **Amended 2026-11-04 by
+the maintainer, after the first production run:** only MorphoCloud instances
+(`…_instance-<n>`) count — "held" is the addresses bound to them plus the
+unattached ones, "running" the addresses bound to them. The runners, the portal,
+the MorphoDepot and morphocloud.org servers and any other server of the project
+are infrastructure: never counted, never touched (a non-routable address on one
+is still reported). And the pool is filled up to the rule, one mint per run, not
+only when the last spare is taken: with one instance running and four
+infrastructure servers, the project holds 5 = 1 running + 4 spare. |
 
 ## Sign-in (decision 8)
 
