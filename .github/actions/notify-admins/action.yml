@@ -38,7 +38,7 @@ runs:
           cat "$BODY_FILE" 2>/dev/null || echo "(no diagnosis was written: see the run log)"
           printf '\n\nIssue:   https://github.com/%s/issues/%s\nRun log: https://github.com/%s/actions/runs/%s\n' \
             "$GH_REPO" "$ISSUE_NUMBER" "$GH_REPO" "$RUN_ID"
-        } > /tmp/notify-admins-body.md
+        } > "$RUNNER_TEMP/notify-admins-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-body.md"
       env:
         BODY_FILE: ${{ inputs.body_file }}
         GH_REPO: ${{ github.repository }}
@@ -62,7 +62,11 @@ runs:
         from: MorphoCloudPortal <no-reply@morphocloud.org>
         to: ${{ inputs.admin_emails }}
         subject: "[${{ github.repository }}] ${{ inputs.subject }}"
-        body: file:///tmp/notify-admins-body.md
+        # Per-run file names: two jobs on one runner must not read each
+        # other's diagnosis.
+        body:
+          file://${{ runner.temp }}/notify-admins-${{ github.run_id }}-${{
+          github.run_attempt }}-body.md
 
     - name: Keep the undelivered notification
       if: ${{ inputs.admin_emails == '' || steps.send.outcome == 'failure' }}
@@ -75,12 +79,18 @@ runs:
         fi
         gh issue edit "$ISSUE_NUMBER" --add-label "admin-email-failed" \
           || echo "::warning ::Could not add the admin-email-failed label to issue #$ISSUE_NUMBER"
+        body="$RUNNER_TEMP/notify-admins-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-body.md"
+        comment="$RUNNER_TEMP/notify-admins-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-comment.md"
         {
-          printf '%s\n\n' "⚠️ The admin notification for this event could not be sent (mail server error at $(date -u +%Y-%m-%dT%H:%MZ)). It is re-sent automatically once mail works."
+          if [[ -z "$ADMIN_EMAILS" ]]; then
+            printf '%s\n\n' "⚠️ The admin notification for this event was not sent: MORPHOCLOUD_GITHUB_ADMIN_EMAILS is not set on this repository. It is sent automatically once the variable is set."
+          else
+            printf '%s\n\n' "⚠️ The admin notification for this event could not be sent (mail server error at $(date -u +%Y-%m-%dT%H:%MZ)). It is re-sent automatically once mail works."
+          fi
           printf 'Subject: %s\n\n' "$SUBJECT"
-          cat /tmp/notify-admins-body.md
-        } > /tmp/notify-admins-comment.md
-        gh issue comment "$ISSUE_NUMBER" --body-file /tmp/notify-admins-comment.md \
+          cat "$body"
+        } > "$comment"
+        gh issue comment "$ISSUE_NUMBER" --body-file "$comment" \
           || echo "::warning ::Could not comment on issue #$ISSUE_NUMBER"
       env:
         GH_TOKEN: ${{ inputs.token }}

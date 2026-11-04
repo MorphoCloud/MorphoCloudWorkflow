@@ -212,7 +212,7 @@ jobs:
       - name: Un-flag the violations whose email did not go out
         if: ${{ always() && steps.mail_violations.outcome == 'failure' }}
         run: |
-          grep -oE 'issue #[0-9]+' /tmp/reconcile-violations.txt | grep -oE '[0-9]+' | sort -u | while read -r n; do
+          grep -oE 'issue #[0-9]+' /tmp/reconcile-violations.txt 2>/dev/null | grep -oE '[0-9]+' | sort -u | while read -r n; do
             gh issue edit "$n" --remove-label "invariant-violation" \
               && echo "un-flagged issue #$n: it alerts again next run" \
               || echo "::warning ::Could not un-flag issue #$n"

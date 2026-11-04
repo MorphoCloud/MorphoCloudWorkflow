@@ -573,7 +573,7 @@ jobs:
             todo="Read the run log."
           fi
           printf 'Command:  create\nInstance: %s\n\nWhat happened: %s\n\nWhat to do: %s\n' \
-            "${INSTANCE_NAME:-not created}" "$what" "$todo" > /tmp/admin-mail-body.md
+            "${INSTANCE_NAME:-not created}" "$what" "$todo" > "$RUNNER_TEMP/admin-mail-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.md"
         env:
           INSTANCE_NAME: ${{ steps.provision.outputs.instance_name }}
           PROVISION: ${{ steps.provision.outcome }}
@@ -593,7 +593,9 @@ jobs:
           subject:
             "create failed for ${{ steps.provision.outputs.instance_name || 'the
             requested instance' }} (issue #${{ github.event.issue.number }})"
-          body_file: /tmp/admin-mail-body.md
+          body_file:
+            ${{ runner.temp }}/admin-mail-${{ github.run_id }}-${{
+            github.run_attempt }}.md
 
       # Last step in the job: 🚀 has been on the comment for the whole
       # provisioning run and only now becomes 👍/👎.

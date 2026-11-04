@@ -1649,7 +1649,7 @@ runs:
             printf '\n--- Jetstream2 diagnostics ---\n'
             cat "$DIAG_FILE"
           fi
-        } > /tmp/admin-mail-body.md
+        } > "$RUNNER_TEMP/admin-mail-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.md"
       env:
         COMMAND: ${{ inputs.command_name }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
@@ -1674,23 +1674,24 @@ runs:
           "${{ inputs.command_name }} failed for ${{
           steps.define.outputs.instance_name || 'unknown' }} (issue #${{
           inputs.issue_number }})"
-        body_file: /tmp/admin-mail-body.md
+        body_file:
+          ${{ runner.temp }}/admin-mail-${{ github.run_id }}-${{
+          github.run_attempt }}.md
 
     - name: Describe the stalled delete for the admins
+      id: describe_stalled_delete
       if:
         ${{ success() && steps.check_task_state.outputs.already_deleting ==
         'true' }}
       shell: bash
       run: |
         printf 'Instance: %s\n\nWhat happened: a delete was requested while an earlier delete of this server was still in progress on Jetstream2 (task_state "deleting"). The request was closed for the member.\n\nWhat to do: the server may still be listed and need a Jetstream2 admin to remove it from its host; the Jetstream2 diagnostics are a comment on the issue.\n' \
-          "$INSTANCE_NAME" > /tmp/admin-mail-body.md
+          "$INSTANCE_NAME" > "$RUNNER_TEMP/admin-mail-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.md"
       env:
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: Notify admins by email (delete stalled on Jetstream2)
-      if:
-        ${{ success() && steps.check_task_state.outputs.already_deleting ==
-        'true' }}
+      if: ${{ success() && steps.describe_stalled_delete.outcome == 'success' }}
       uses: ./.github/actions/notify-admins
       with:
         admin_emails: ${{ inputs.admin_emails }}
@@ -1702,4 +1703,6 @@ runs:
           "delete stalled on Jetstream2 for ${{
           steps.define.outputs.instance_name }} (issue #${{ inputs.issue_number
           }})"
-        body_file: /tmp/admin-mail-body.md
+        body_file:
+          ${{ runner.temp }}/admin-mail-${{ github.run_id }}-${{
+          github.run_attempt }}.md
