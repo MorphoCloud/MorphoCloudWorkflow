@@ -19,7 +19,7 @@ jobs:
       'request-type:course-instance') && startsWith(github.event.comment.body,
       '/') }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Validate course command
         id: validate-course

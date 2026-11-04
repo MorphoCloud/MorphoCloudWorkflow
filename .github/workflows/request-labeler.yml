@@ -41,7 +41,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Extract issue fields
         id: extract
