@@ -255,6 +255,23 @@ address: it would bill and be unreachable, and the portal would only shelve it
 half an hour later (decision 23). The stuck-address release before the unshelve
 and the end-state check after it are unchanged. Create already had this order. |
 
+| 26 | **The shelving job never skips an instance it cannot reach.**
+(maintainer, 2026-11-04; step 3 of the reliability work)
+`automatic-instance-shelving.yml` judged idleness by reading uptime over SSH,
+and when SSH failed it `continue`d: an unreachable instance could never be
+judged idle, so a network-orphaned GPU instance ran for days (Instances #178,
+Test-Instances #503) with only a warning in a green run. Now an active instance
+that does not answer (three SSH tries, 20 s apart) or has no public address is
+shelved on the wall clock once it has been up for 30 minutes — "up" dated from
+its latest create, unshelve, start or reboot in Nova's action log — through the
+same dispatch the workshop shelve uses; younger, it is left to finish booting
+and looked at again next tick. The member's issue gets one line ("has not
+answered on the network for N minutes since it started, so it is being shelved;
+Unshelve places it afresh") before the shelve. Where the portal runs, decision
+23 reaches the same instance first (half an hour of consecutive misses, measured
+every minute); this is the backstop, and production's only guard until the
+migration. The uptime path for instances that answer is unchanged. |
+
 ## Sign-in (decision 8)
 
 The current OAuth App only reads team membership (`read:org`). Posting a command
@@ -617,4 +634,13 @@ and storage cards: a support assistant that helps users diagnose problems.
     "Associate floating IP"; the card shows the new address; the floating-IP
     list shows nothing bound to a shelved instance before or after. A failed
     address step (forced by a wrong preferred address or a dry pool) ends with
-    the server shelved again and the member's comment saying so.
+    the server shelved again and the member's comment saying so. **Passed
+    2026-11-04** (Test-Instances#503, run 41767626047: Poll 03:32:36 → Retrieve
+    03:33:17 → Keep one in hand → Associate 03:33:20 → Verify 03:33:35;
+    shelve-to-unshelved 2 min 37 s; nothing bound to a shelved instance).
+15. Unreachable backstop (decision 26): with #503's security group closed, the
+    next auto-shelve run on Test says "does not answer on …; up for N min (<
+    30): waiting" and, had it been up 30 minutes, "Shelving on the wall clock"
+    with the member's line on the issue; the shelve itself is the workshop
+    dispatch already proven. On Test the portal (decision 23, 5 min) shelves
+    first, so the waiting line is what the test observes.
