@@ -138,7 +138,9 @@ jobs:
                   echo "Issue #$issue_number already flagged; not re-alerting."
                   continue
                 fi
-                printf '### Instance state alert\n\nAutomated reconciliation found **%s** in an inconsistent state: %s.\n\n@MorphoCloud/morphocloud-admins — please take a look.\n\nSee details at %s\n' "$instance_name" "$reason" "$RUN_URL" > /tmp/reconcile-comment.md
+                # No admin mention here: the email below is the channel (decision
+                # 27), and a mention would make it two emails per violation.
+                printf '### Instance state alert\n\nAutomated reconciliation found **%s** in an inconsistent state: %s.\n\nThe MorphoCloud admins have been emailed.\n\nSee details at %s\n' "$instance_name" "$reason" "$RUN_URL" > /tmp/reconcile-comment.md
                 gh issue edit "$issue_number" --add-label "invariant-violation" || echo "::warning ::Failed to add label to issue $issue_number"
                 gh issue comment "$issue_number" --body-file /tmp/reconcile-comment.md || echo "::warning ::Failed to comment on issue $issue_number"
                 printf -- '- %s (issue #%s): %s\n' "$instance_name" "$issue_number" "$reason" >> /tmp/reconcile-violations.txt
@@ -179,6 +181,7 @@ jobs:
           } >> $GITHUB_OUTPUT
 
       - name: Notify admins by email (new violations)
+        id: mail_violations
         # The mail step is the whole point of this step, so a send failure must
         # turn the run red rather than be swallowed.
         if:
@@ -202,3 +205,76 @@ jobs:
             ${{ steps.violations.outputs.details }}
 
             Run log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      # Decision 27: a notification that could not be sent is never lost. If
+      # the email above failed, un-flag the issues so the next run alerts
+      # again once mail works (the label would otherwise silence them).
+      - name: Un-flag the violations whose email did not go out
+        if: ${{ always() && steps.mail_violations.outcome == 'failure' }}
+        run: |
+          grep -oE 'issue #[0-9]+' /tmp/reconcile-violations.txt | grep -oE '[0-9]+' | sort -u | while read -r n; do
+            gh issue edit "$n" --remove-label "invariant-violation" \
+              && echo "un-flagged issue #$n: it alerts again next run" \
+              || echo "::warning ::Could not un-flag issue #$n"
+          done
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+
+      # Decision 27: the catch-up for notifications other workflows could not
+      # send (the notify-admins action labels the issue admin-email-failed).
+      - name: Collect undelivered admin notifications
+        id: undelivered
+        if: ${{ always() }}
+        run: |
+          gh issue list --label admin-email-failed --state all --limit 100 \
+            --json number,title,url --jq '.[] | "- #\(.number) \(.title): \(.url)"' > /tmp/undelivered.txt || true
+          if [[ ! -s /tmp/undelivered.txt ]]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "count=$(wc -l < /tmp/undelivered.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          {
+            echo "details<<UNDELIVERED_EOF"
+            cat /tmp/undelivered.txt
+            echo "UNDELIVERED_EOF"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Send the catch-up email
+        id: catch_up
+        if:
+          ${{ always() && steps.undelivered.outputs.found == 'true' &&
+          vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS != '' }}
+        uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
+        with:
+          server_address: webhost.dynadot.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: MorphoCloudPortal <no-reply@morphocloud.org>
+          to: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          subject:
+            "[${{ github.repository }}] ${{ steps.undelivered.outputs.count }}
+            admin notification(s) could not be sent earlier"
+          body: |
+            The mail server was failing when these were raised. Each issue carries the full notification as a comment:
+
+            ${{ steps.undelivered.outputs.details }}
+
+            Run log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Clear the flags now that the catch-up went out
+        if: ${{ always() && steps.catch_up.outcome == 'success' }}
+        run: |
+          grep -oE '^- #[0-9]+' /tmp/undelivered.txt | grep -oE '[0-9]+' | while read -r n; do
+            gh issue edit "$n" --remove-label "admin-email-failed" \
+              || echo "::warning ::Could not clear the admin-email-failed label on issue #$n"
+          done
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
