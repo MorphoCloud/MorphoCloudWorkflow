@@ -8,6 +8,7 @@ markdown all pass through untouched.
 
 import json
 import os
+import secrets
 import sys
 from pathlib import Path
 
@@ -42,10 +43,13 @@ def render(text: str) -> str:
     return text
 
 
+# A per-run delimiter: a rendered line equal to a fixed one would end the
+# value early and silently drop the rest of the email (#228).
+delim = f"__RENDER_{secrets.token_hex(8)}__"
 with Path(os.environ["GITHUB_OUTPUT"]).open("a") as out:
-    out.write("subject<<__RENDER_EOF__\n")
+    out.write(f"subject<<{delim}\n")
     out.write(render(t["credentials_subject"]) + "\n")
-    out.write("__RENDER_EOF__\n")
-    out.write("body<<__RENDER_EOF__\n")
+    out.write(f"{delim}\n")
+    out.write(f"body<<{delim}\n")
     out.write(render(t["credentials_body"]) + "\n")
-    out.write("__RENDER_EOF__\n")
+    out.write(f"{delim}\n")
