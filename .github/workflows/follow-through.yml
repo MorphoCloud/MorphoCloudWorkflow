@@ -1,0 +1,222 @@
+name: Follow Through
+
+# A command that control-instance had to abandon — the server's action was
+# still in flight on Jetstream2 when the wait ran out, another action was in
+# flight when the command arrived, or the compute host failed the unshelve —
+# leaves a `followup:<command>` label on its issue instead of a human's to-do.
+# This sweep finishes it: once the server has settled (no task_state, unchanged
+# for two minutes) the command is dispatched again, at most twice per episode
+# (`followup-count:<n>`), each attempt announced on the issue. When the retries
+# are spent, or the server is in ERROR, the issue gets `needs-admin`, the
+# member is told, and the admins are emailed once. Decision 28
+# (INSTANCE_DASHBOARD_PLAN.md). Instances#214, 2026-11-04: an unshelve whose
+# boot hung for 26 minutes, then a refused delete, both left for a human.
+
+on:
+  # dispatch: */5 * * * *
+  # The runner's crontab is the clock (scripts/runner-cron-dispatcher.md). The
+  # schedule below is only a backstop: GitHub fires it a few times a day.
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ vars.MORPHOCLOUD_OS_CLOUD }}
+  cancel-in-progress: false
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  follow-through:
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # App token: `gh workflow run` needs it (the same way
+      # automatic-instance-shelving dispatches its shelves).
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Finish abandoned commands
+        id: sweep
+        run: |
+          source ~/venv/bin/activate
+
+          instance_prefix=${PREFIX:+${PREFIX}_}
+          max_followups=2  # clear_markers and the labels.yml entries follow it
+          settle_seconds=120
+          # Issues whose retries ran out this tick, for the one admin email
+          # below (written from inside the pipeline, so a file).
+          : > /tmp/followup-exhausted.txt
+
+          clear_markers() {
+            local n=$1 l i
+            for l in "followup:unshelve" "followup:shelve" "followup:delete"; do
+              gh issue edit "$n" --remove-label "$l" >/dev/null 2>&1 || true
+            done
+            for ((i = 1; i <= max_followups; i++)); do
+              gh issue edit "$n" --remove-label "followup-count:$i" >/dev/null 2>&1 || true
+            done
+          }
+
+          finish() {  # issue, instance, command, why
+            echo "$2 (issue #$1): $3 is done: $4"
+            clear_markers "$1"
+            printf 'The `%s` command for **%s** completed on Jetstream2 after all (%s). No further action is needed.\n' "$3" "$2" "$4" > /tmp/followup-note.md
+            gh issue comment "$1" --body-file /tmp/followup-note.md || echo "::warning ::Could not post on issue #$1"
+            # A finished delete closes the request, as the action's own
+            # delete path does.
+            if [[ "$3" == "delete" ]]; then
+              gh issue close "$1" --reason completed || echo "::warning ::Could not close issue #$1"
+            fi
+          }
+
+          exhaust() {  # issue, instance, command, why
+            echo "::warning ::$2 (issue #$1): $3 needs an admin: $4"
+            clear_markers "$1"
+            gh issue edit "$1" --add-label "needs-admin" || echo "::warning ::Could not label issue #$1 needs-admin"
+            printf '### Command Results ❌\n\nThe `%s` command for **%s** could not be completed automatically: %s. This request is flagged for the MorphoCloud admins (`needs-admin`), who take it from here; you will hear back on this issue.\n' "$3" "$2" "$4" > /tmp/followup-note.md
+            gh issue comment "$1" --body-file /tmp/followup-note.md || echo "::warning ::Could not post on issue #$1"
+            printf -- '- %s (issue #%s): `%s` — %s\n' "$2" "$1" "$3" "$4" >> /tmp/followup-exhausted.txt
+          }
+
+          retry() {  # issue, instance, command, attempt, author
+            echo "$2 (issue #$1): dispatching $3 again (attempt $4 of $max_followups)"
+            clear_markers "$1"
+            gh issue edit "$1" --add-label "followup-count:$4" || echo "::warning ::Could not count the follow-up on issue #$1"
+            printf 'Jetstream2 has settled; retrying `%s` for **%s** automatically (attempt %s of %s). The result is posted here.\n' "$3" "$2" "$4" "$max_followups" > /tmp/followup-note.md
+            gh issue comment "$1" --body-file /tmp/followup-note.md || echo "::warning ::Could not post on issue #$1"
+            local args=(-f "issue_number=$1" -f "command_name=$3")
+            if [[ "$3" == "unshelve" ]]; then
+              args+=(-f "issue_creator=$5" -f "course_team_slug=$COURSE_TEAM_SLUG")
+            fi
+            if ! gh workflow run control-instance-from-workflow.yml "${args[@]}"; then
+              echo "::error ::Could not dispatch $3 for $2 (issue #$1); the marker is put back for the next tick"
+              gh issue edit "$1" --add-label "followup:$3" || true
+            fi
+          }
+
+          gh issue list --state open --limit 500 --json number,labels,author \
+            --jq '.[] | select(any(.labels[].name; startswith("followup:"))) | [.number, .author.login, ([.labels[].name | select(startswith("followup:"))] | first), ([.labels[].name | select(startswith("followup-count:")) | ltrimstr("followup-count:")] | first // "0")] | @tsv' | \
+            while IFS=$'\t' read -r issue_number author marker count; do
+              [[ -z "$issue_number" ]] && continue
+              command=${marker#followup:}
+              instance_name="${instance_prefix}instance-${issue_number}"
+              echo "issue #$issue_number: $command pending (follow-ups so far: $count)"
+              case "$command" in
+                unshelve|shelve|delete) ;;
+                *) echo "::warning ::issue #$issue_number carries an unknown marker '$marker'; skipping"; continue ;;
+              esac
+
+              if ! j=$(openstack server show "$instance_name" -f json 2>/dev/null); then
+                if [[ "$command" == "delete" ]]; then
+                  finish "$issue_number" "$instance_name" "$command" "the server is gone"
+                else
+                  exhaust "$issue_number" "$instance_name" "$command" "the server no longer exists on Jetstream2"
+                fi
+                continue
+              fi
+              status=$(echo "$j" | jq -r '.status // ""')
+              task_state=$(echo "$j" | jq -r '."OS-EXT-STS:task_state" // ""')
+              updated=$(echo "$j" | jq -r '.updated // ""')
+              echo "  status [$status] task_state [$task_state] updated [$updated]"
+
+              # Settled: nothing in flight and nothing changed for a while
+              # (covers a workflow between two OpenStack calls).
+              if [[ -n "$task_state" ]]; then
+                echo "  still in flight on Jetstream2; waiting"
+                continue
+              fi
+              updated_epoch=$(date -u -d "$updated" +%s 2>/dev/null || echo 0)
+              now_epoch=$(date -u +%s)
+              if (( now_epoch - updated_epoch < settle_seconds )); then
+                echo "  changed ${now_epoch}-${updated_epoch}s ago; waiting for it to settle"
+                continue
+              fi
+
+              # Already where the command wanted it: say so and stop.
+              if [[ "$command" == "shelve" && "$status" == "SHELVED_OFFLOADED" ]]; then
+                finish "$issue_number" "$instance_name" "$command" "it is shelved"
+                continue
+              fi
+              if [[ "$status" == "ERROR" ]]; then
+                exhaust "$issue_number" "$instance_name" "$command" "the server is in ERROR on Jetstream2"
+                continue
+              fi
+              if (( count >= max_followups )); then
+                exhaust "$issue_number" "$instance_name" "$command" "$max_followups automatic retries did not bring it to the requested state"
+                continue
+              fi
+              # unshelve on an ACTIVE server is the no-op path of the action:
+              # it attaches a missing address, sets the properties and sends
+              # the credentials email — exactly what an abandoned unshelve
+              # whose boot finished later still owes the member.
+              retry "$issue_number" "$instance_name" "$command" "$((count + 1))" "$author"
+            done
+        env:
+          OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
+          COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
+
+      - name: Summarize what needs an admin
+        id: exhausted
+        if: ${{ always() }}
+        run: |
+          if [[ ! -s /tmp/followup-exhausted.txt ]]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "count=$(wc -l < /tmp/followup-exhausted.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          {
+            echo "details<<FOLLOWUP_EOF"
+            cat /tmp/followup-exhausted.txt
+            echo "FOLLOWUP_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Notify admins by email (retries spent)
+        id: mail
+        if:
+          ${{ always() && steps.exhausted.outputs.found == 'true' &&
+          vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS != '' }}
+        uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
+        with:
+          server_address: webhost.dynadot.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: MorphoCloudPortal <no-reply@morphocloud.org>
+          to: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          subject:
+            "[${{ github.repository }}] ${{ steps.exhausted.outputs.count }}
+            command(s) need an admin"
+          body: |
+            The follow-through sweep retried these commands twice after Jetstream2 settled; they still did not reach the requested state. Each issue carries the details and is labeled needs-admin. The member was told the admins have it.
+
+            ${{ steps.exhausted.outputs.details }}
+
+            Look at the server on Jetstream2 (openstack server show / server event list); a Jetstream2 ticket is the usual next step. A successful command clears the label.
+
+            Run log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      # Decision 27: a notification that could not be sent is never lost. The
+      # issue comment already carries the text; the label gets it re-sent by
+      # reconcile-instances' catch-up.
+      - name: Flag the issues whose email did not go out
+        if: ${{ always() && steps.mail.outcome == 'failure' }}
+        run: |
+          grep -oE 'issue #[0-9]+' /tmp/followup-exhausted.txt 2>/dev/null | grep -oE '[0-9]+' | sort -u | while read -r n; do
+            gh issue edit "$n" --add-label "admin-email-failed" \
+              || echo "::warning ::Could not flag issue #$n"
+          done
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}

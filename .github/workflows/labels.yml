@@ -75,7 +75,13 @@ jobs:
           {"name": "volume:expiration-pending", "color": "0E8CDB", "description": "The volume is detached and will be deleted after the grace period."},
           {"name": "error:system-capacity", "color": "B60205", "description": "Instance request rejected: system capacity limit reached"},
           {"name": "invariant-violation", "color": "B60205", "description": "Automated reconciliation found the instance in an inconsistent state"},
-          {"name": "admin-email-failed", "color": "B60205", "description": "An admin notification about this issue could not be sent; reconcile-instances re-sends it"}
+          {"name": "admin-email-failed", "color": "B60205", "description": "An admin notification about this issue could not be sent; reconcile-instances re-sends it"},
+          {"name": "followup:unshelve", "color": "FBCA04", "description": "An unshelve was abandoned mid-flight; follow-through retries it once Jetstream2 settles"},
+          {"name": "followup:shelve", "color": "FBCA04", "description": "A shelve was abandoned mid-flight; follow-through retries it once Jetstream2 settles"},
+          {"name": "followup:delete", "color": "FBCA04", "description": "A delete was abandoned mid-flight; follow-through retries it once Jetstream2 settles"},
+          {"name": "followup-count:1", "color": "FBCA04", "description": "Follow-through has retried the command once this episode"},
+          {"name": "followup-count:2", "color": "FBCA04", "description": "Follow-through has retried the command twice this episode (the last automatic try)"},
+          {"name": "needs-admin", "color": "B60205", "description": "Automatic retries are spent; an admin has to look at the server on Jetstream2"}
         ]
     steps:
       - name: Create or Update Labels
