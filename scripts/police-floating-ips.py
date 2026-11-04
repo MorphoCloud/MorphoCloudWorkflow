@@ -118,11 +118,14 @@ def addresses(nets) -> list[str]:
 def inventory() -> tuple[list[dict], dict[str, str]]:
     """Every floating IP of the project, and fixed address -> server status."""
     fips = os_json("floating", "ip", "list")
+    servers = os_json("server", "list", "--long")
     by_fixed: dict[str, str] = {}
-    for s in os_json("server", "list", "--long"):
+    for s in servers:
         for a in addresses(s.get("Networks")):
             by_fixed[a] = str(s.get("Status") or "")
-    if fips and not by_fixed:
+    if (
+        servers and not by_fixed
+    ):  # servers exist but none parsed: the client's shape changed
         log(
             "WARNING: no server addresses parsed; shelved-server releases and reports are off this run"
         )
