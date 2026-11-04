@@ -71,7 +71,7 @@ runs:
           echo "floating IP not attached yet (waited $((SECONDS - ip_start))s of ${ip_max_wait}s); retrying in ${ip_interval}s..."
           sleep "$ip_interval"
         done
-        if [[ -z "$instance_ip" || "$instance_ip" == "null" ]]; then
+        if [[ -z "$instance_ip" ]]; then
           echo "::error ::Failed to retrieve $INSTANCE_NAME IP within ${ip_max_wait}s (floating IP never reassociated?)"
           exit 1
         fi
