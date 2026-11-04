@@ -14,7 +14,12 @@ What one run does, in this order:
 
 1. A floating IP bound to a SHELVED instance is released (Jetstream2's
    policy: an address never stays on a shelved server; a failed unshelve
-   leaves one).
+   leaves one) — but only when the server has no action in flight
+   (task_state empty) and the address has been bound for ten minutes or
+   more. Production binds the address before `server unshelve`, so for the
+   length of an unshelve a shelved server legitimately holds one; Instances
+   #214 lost its address three minutes into a hung unshelve this way. Such
+   an address counts as running.
 2. A non-routable address (anything outside 149.165/16 — Jetstream2 hands out
    172.17.x when its pool is dry) is deleted when unattached; one bound to a
    running server is reported, since that server is unreachable.
@@ -129,16 +134,21 @@ def addresses(nets) -> list[str]:
 
 def inventory() -> tuple[list[dict], dict[str, dict]]:
     """Every floating IP of the project, and fixed address -> its server:
-    {"status", "instance" (a MorphoCloud instance, as opposed to a runner,
-    the portal or any other server of the project), "name"}."""
+    {"status", "task" (the action in flight, "" when none), "instance" (a
+    MorphoCloud instance, as opposed to a runner, the portal or any other
+    server of the project), "name"}."""
     fips = os_json("floating", "ip", "list")
     servers = os_json("server", "list", "--long")
     by_fixed: dict[str, dict] = {}
     for s in servers:
         name = str(s.get("Name") or "")
+        task = str(s.get("Task State") or "")
         for a in addresses(s.get("Networks")):
             by_fixed[a] = {
                 "status": str(s.get("Status") or ""),
+                # `or ""` covers a JSON null; the client also renders a null
+                # task state as the strings "None" / "null" in -f json.
+                "task": "" if task in ("None", "null") else task,
                 "instance": INSTANCE_RE.search(name) is not None,
                 "name": name,
             }
@@ -163,12 +173,18 @@ def nonroutable_alert(ip: str, f: dict, owner: dict | None, status: str) -> tupl
     )
 
 
-def classify(f: dict, by_fixed: dict[str, dict]) -> tuple[str, list[tuple]]:
+def classify(
+    f: dict, by_fixed: dict[str, dict], settled=lambda _f: True
+) -> tuple[str, list[tuple]]:
     """One floating IP: what it is to the rule, and what to do about it now.
     "running" / "spare": ours, counted. "infra" / "unknown": bound to a
     runner, the portal, … or to a port no listed server owns — not ours to
     count or touch (a dead address on one is still reported). "dead": a
-    non-routable address of ours, deleted or reported."""
+    non-routable address of ours, deleted or reported.
+
+    An address on a shelved instance is released only when the server has no
+    action in flight and `settled(f)` says the binding is old enough: an
+    unshelve binds first and boots after, and must not lose its address."""
     ip, fid, port = (
         str(f.get("Floating IP Address") or ""),
         str(f.get("ID") or ""),
@@ -182,7 +198,9 @@ def classify(f: dict, by_fixed: dict[str, dict]) -> tuple[str, list[tuple]]:
         acts = [] if routable else [nonroutable_alert(ip, f, owner, status)]
         return ("unknown" if owner is None else "infra"), acts
     acts: list[tuple] = []
-    if attached and status in SHELVED:
+    # attached implies owner is an instance (the return above), so owner is
+    # a dict here; `settled` last, so an in-flight server costs no API call.
+    if attached and status in SHELVED and not owner.get("task") and settled(f):
         acts.append(("unset", fid, ip, status))
         attached = False
     if not routable:
@@ -199,7 +217,8 @@ def plan(
     fips: list[dict], by_fixed: dict[str, dict], hold: int, now: float, updated_at
 ) -> tuple[list, dict]:
     """The actions for this run (pure; `updated_at(fip)` is read lazily and
-    only for release candidates). Returns (actions, counts).
+    only for release candidates, including an address on a shelved
+    instance). Returns (actions, counts).
 
     Only MorphoCloud instances count. An address bound to a runner, the
     portal or any other server of the project is infrastructure: outside the
@@ -209,8 +228,12 @@ def plan(
     actions: list[tuple] = []
     routable: list[tuple[dict, bool]] = []
     tally = {"infra": 0, "unknown": 0}
+
+    def settled(f: dict) -> bool:
+        return now - updated_at(f) >= IDLE_BEFORE_RELEASE
+
     for f in fips:
-        kind, acts = classify(f, by_fixed)
+        kind, acts = classify(f, by_fixed, settled)
         actions += acts
         if kind in ("running", "spare"):
             routable.append((f, kind == "running"))

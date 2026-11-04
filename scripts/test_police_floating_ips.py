@@ -34,9 +34,10 @@ def fip(ip, port=None, fixed=None, fid=None):
     }
 
 
-def srv(status="ACTIVE", instance=True, name=None):
+def srv(status="ACTIVE", instance=True, name=None, task=""):
     return {
         "status": status,
+        "task": task,
         "instance": instance,
         "name": name
         or ("morpho-cloud_instance-7" if instance else "morphocloud-instances-runner"),
@@ -44,6 +45,9 @@ def srv(status="ACTIVE", instance=True, name=None):
 
 
 def run_plan(fips, by_fixed=None, hold=5, ages=None):
+    # ages: address -> seconds since its binding changed. An address not
+    # listed counts as changed just now, so it is never idle and never a
+    # release candidate; a test that expects a release must list it.
     ages = ages or {}
     return police.plan(
         fips,
@@ -191,10 +195,57 @@ def test_over_the_hold_releases_idle_spares_oldest_first_down_to_running_plus_on
 def test_shelved_instance_loses_its_address_and_it_counts_as_spare():
     fips = [fip("149.165.1.1", "p1", "10.0.0.1"), fip("149.165.1.2", "p2", "10.0.0.2")]
     actions, counts = run_plan(
-        fips, {"10.0.0.1": srv(), "10.0.0.2": srv("SHELVED_OFFLOADED")}
+        fips,
+        {"10.0.0.1": srv(), "10.0.0.2": srv("SHELVED_OFFLOADED")},
+        ages={"149.165.1.2": 900},  # bound long ago: a leftover, not an unshelve
     )
     assert kinds(actions) == [("unset", "149.165.1.2"), ("mint",)]
     assert counts["running"] == 1
+    assert counts["spares"] == 1
+
+
+def test_an_in_flight_task_blocks_the_release_even_of_an_old_binding():
+    # Both guards are needed, not either: a hung unshelve (Instances #214 sat
+    # in task_state spawning for 26 minutes) outlives the ten-minute window.
+    fips = [fip("149.165.1.1", "p1", "10.0.0.1")]
+    actions, counts = run_plan(
+        fips,
+        {"10.0.0.1": srv("SHELVED_OFFLOADED", task="spawning")},
+        hold=1,
+        ages={"149.165.1.1": 1560},
+    )
+    assert kinds(actions) == [("mint",)]
+    assert counts["running"] == 1
+
+
+def test_an_unshelve_in_flight_keeps_its_address():
+    # Instances #214 (2026-11-04): production binds the address, then
+    # unshelves; the boot hung with task_state "spawning" and the address
+    # was released from under it. In flight = counted as running, untouched.
+    fips = [fip("149.165.1.1", "p1", "10.0.0.1")]
+    actions, counts = run_plan(
+        fips, {"10.0.0.1": srv("SHELVED_OFFLOADED", task="spawning")}, hold=1
+    )
+    assert kinds(actions) == [("mint",)]  # 1 running + 1 ahead
+    assert counts["running"] == 1
+    assert counts["spares"] == 0
+
+
+def test_an_address_just_bound_to_a_shelved_instance_is_left_for_ten_minutes():
+    # Between "add floating ip" and "server unshelve" nothing is in flight;
+    # the binding's age tells that window from a leftover.
+    fips = [fip("149.165.1.1", "p1", "10.0.0.1")]
+    fresh = {"149.165.1.1": 180}
+    actions, counts = run_plan(
+        fips, {"10.0.0.1": srv("SHELVED_OFFLOADED")}, hold=1, ages=fresh
+    )
+    assert kinds(actions) == [("mint",)]
+    assert counts["running"] == 1
+    old = {"149.165.1.1": 900}
+    actions, counts = run_plan(
+        fips, {"10.0.0.1": srv("SHELVED_OFFLOADED")}, hold=1, ages=old
+    )
+    assert kinds(actions) == [("unset", "149.165.1.1")]
     assert counts["spares"] == 1
 
 
@@ -234,6 +285,7 @@ def test_non_routable_addresses_are_deleted_or_reported():
             "10.0.0.4": srv(instance=False),  # a runner on a dead address: reported too
         },
         hold=1,
+        ages={"172.17.21.23": 900},
     )
     assert kinds(actions) == [
         ("delete", "172.17.20.187"),

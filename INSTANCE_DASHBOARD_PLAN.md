@@ -203,39 +203,44 @@ this is what makes N a quiet-time floor rather than a burst buffer: creates and
 unshelves are serialized on the acquire lane, and each leaves a spare behind.
 (2) `scripts/police-floating-ips.py` runs from the runner's crontab every five
 minutes (decision 21): it releases an address bound to a shelved server
-(Jetstream2's policy; a failed unshelve leaves one), deletes non-routable
-addresses and reports one bound to a running server, mints one when no spare is
-in hand, and when more than `max(N, running + 1)` are held, deletes unattached
-routable addresses idle for ten minutes or more, oldest first — ten minutes
-keeps clear of an unshelve that just picked one. (3) Workshops are not
-pre-minted: their instances draw on the same pool during creation and the
-backfill retries a start refused for want of an address as it retries "no host".
-Nothing is exempt. (4) What N buys is a drought: while Jetstream2 has nothing to
-give, `N − running` more starts succeed, then starts fail with the clear message
-until it recovers; the admins hear once per drought, through the new
-dispatchable `admin-alert.yml` (the runner cannot send mail), and once per
-non-routable address found on a running server. The two-week review reads the
-policing log (failed mints, refused starts) to move N. The first run on
-production releases the reserve of 8 down to the rule. **Amended 2026-11-04 by
-the maintainer, after the first production run:** only MorphoCloud instances
-(`…_instance-<n>`) count — "held" is the addresses bound to them plus the
-unattached ones, "running" the addresses bound to them. The runners, the portal,
-the MorphoDepot and morphocloud.org servers and any other server of the project
-are infrastructure: never counted, never touched (a non-routable address on one
-is still reported). And the pool is filled up to the rule, one mint per run, not
-only when the last spare is taken: with one instance running and four
-infrastructure servers, the project holds 5 = 1 running + 4 spare. **The
-infrastructure policy, confirmed by the maintainer 2026-11-04:** the name
-decides, nothing else — a server is a MorphoCloud instance if and only if its
-name ends in `instance-<number>`, which is what the workflows give. So (1) an
-infrastructure server must never be named so that it ends in `instance-<number>`
-(`instances-runner-5` is fine, `runner-instance-5` is not); (2) an unattached
-address is always the pool — below the rule the next instance start takes it,
-above the rule it is released after ten idle minutes — so an address for new
-infrastructure is allocated and attached in one step (Exosphere's create does
-that), never parked. New infrastructure servers need nothing else: they show up
-as `infra=N` in the policing log and the pool is unaffected. No tag or marker
-scheme; the maintainer declined one. |
+(Jetstream2's policy; a failed unshelve leaves one) — amended 2026-11-04 after
+Instances #214: production binds the address before `server unshelve` (until
+decision 25 reaches it), and the script released #214's address three minutes
+into a hung unshelve, so the server came up ACTIVE with no public address; now
+an address on a shelved server is released only when the server has no action in
+flight (task_state empty) and the address has been bound for ten minutes or
+more, and until then it counts as running — deletes non-routable addresses and
+reports one bound to a running server, mints one when no spare is in hand, and
+when more than `max(N, running + 1)` are held, deletes unattached routable
+addresses idle for ten minutes or more, oldest first — ten minutes keeps clear
+of an unshelve that just picked one. (3) Workshops are not pre-minted: their
+instances draw on the same pool during creation and the backfill retries a start
+refused for want of an address as it retries "no host". Nothing is exempt. (4)
+What N buys is a drought: while Jetstream2 has nothing to give, `N − running`
+more starts succeed, then starts fail with the clear message until it recovers;
+the admins hear once per drought, through the new dispatchable `admin-alert.yml`
+(the runner cannot send mail), and once per non-routable address found on a
+running server. The two-week review reads the policing log (failed mints,
+refused starts) to move N. The first run on production releases the reserve of 8
+down to the rule. **Amended 2026-11-04 by the maintainer, after the first
+production run:** only MorphoCloud instances (`…_instance-<n>`) count — "held"
+is the addresses bound to them plus the unattached ones, "running" the addresses
+bound to them. The runners, the portal, the MorphoDepot and morphocloud.org
+servers and any other server of the project are infrastructure: never counted,
+never touched (a non-routable address on one is still reported). And the pool is
+filled up to the rule, one mint per run, not only when the last spare is taken:
+with one instance running and four infrastructure servers, the project holds 5 =
+1 running + 4 spare. **The infrastructure policy, confirmed by the maintainer
+2026-11-04:** the name decides, nothing else — a server is a MorphoCloud
+instance if and only if its name ends in `instance-<number>`, which is what the
+workflows give. So (1) an infrastructure server must never be named so that it
+ends in `instance-<number>` (`instances-runner-5` is fine, `runner-instance-5`
+is not); (2) an unattached address is always the pool — below the rule the next
+instance start takes it, above the rule it is released after ten idle minutes —
+so an address for new infrastructure is allocated and attached in one step
+(Exosphere's create does that), never parked. New infrastructure servers need
+nothing else: they show up as `infra=N` in the policing log and the pool is
+unaffected. No tag or marker scheme; the maintainer declined one. |
 
 | 25 | **An unshelve takes and binds its address only once the server is ACTIVE;
 no address, no running server.** (maintainer, 2026-11-04; step 5 of the
