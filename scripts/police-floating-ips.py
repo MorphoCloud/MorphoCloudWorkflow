@@ -32,6 +32,7 @@ MORPHOCLOUD_DISPATCH_REPO and MORPHOCLOUD_DISPATCH_TOKEN_FILE for alerts.
 from __future__ import annotations
 
 import calendar
+import fcntl
 import json
 import os
 import subprocess
@@ -50,6 +51,10 @@ TOKEN_FILE = Path(
     )
 ).expanduser()
 STATE_FILE = Path("~/.config/morphocloud/fip-police.json").expanduser()
+LOCK_FILE = Path("~/.config/morphocloud/fip-police.lock").expanduser()
+ALERT_WAIT = (
+    120  # seconds to wait for admin-alert.yml to finish before counting it sent
+)
 MINT_DESCRIPTION = "MorphoCloud"
 # The client next to this interpreter (the runner's venv); cron has no PATH.
 OPENSTACK = (
@@ -82,9 +87,32 @@ def os_run(*args: str) -> None:
 
 
 def epoch(iso: str | None) -> float:
+    """A missing timestamp counts as now: never idle, never a release candidate."""
     if not iso:
-        return 0.0
-    return float(calendar.timegm(time.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S")))
+        return time.time()
+    try:
+        return float(calendar.timegm(time.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S")))
+    except ValueError:
+        return time.time()
+
+
+def addresses(nets) -> list[str]:
+    """Every address in a server's Networks field, whatever shape the client
+    renders it in: {"net": ["10.0.0.5", …]}, {"net": [{"addr": "10.0.0.5"}]},
+    or the flat "net=10.0.0.5, 149.165.1.1; net2=…" of older clients."""
+    out: list[str] = []
+    if isinstance(nets, dict):
+        for addrs in nets.values():
+            for a in addrs if isinstance(addrs, list) else [addrs]:
+                addr = a.get("addr") if isinstance(a, dict) else a
+                if addr:
+                    out.append(str(addr))
+    elif isinstance(nets, str):
+        for part in nets.replace(";", ",").split(","):
+            a = part.split("=", 1)[-1].strip()
+            if a:
+                out.append(a)
+    return out
 
 
 def inventory() -> tuple[list[dict], dict[str, str]]:
@@ -92,10 +120,12 @@ def inventory() -> tuple[list[dict], dict[str, str]]:
     fips = os_json("floating", "ip", "list")
     by_fixed: dict[str, str] = {}
     for s in os_json("server", "list", "--long"):
-        nets = s.get("Networks") or {}
-        for addrs in nets.values() if isinstance(nets, dict) else []:
-            for a in addrs if isinstance(addrs, list) else []:
-                by_fixed[str(a)] = str(s.get("Status") or "")
+        for a in addresses(s.get("Networks")):
+            by_fixed[a] = str(s.get("Status") or "")
+    if fips and not by_fixed:
+        log(
+            "WARNING: no server addresses parsed; shelved-server releases and reports are off this run"
+        )
     return fips, by_fixed
 
 
@@ -190,6 +220,7 @@ def send_alert(subject: str, body: str) -> bool:
     if not REPO or not token:
         log(f"ALERT (no dispatch repo/token): {subject} -- {body}")
         return False
+    dispatched_at = time.time()
     r = subprocess.run(
         [
             "gh",
@@ -214,8 +245,47 @@ def send_alert(subject: str, body: str) -> bool:
     if r.returncode != 0:
         log(f"ALERT could not be dispatched ({r.stderr.strip()[-200:]}): {subject}")
         return False
-    log(f"alert dispatched: {subject}")
-    return True
+    # Accepted is not delivered: wait for that run to finish, and count the
+    # alert as sent only when it succeeded. Otherwise the next tick retries.
+    deadline = time.time() + ALERT_WAIT
+    while time.time() < deadline:
+        time.sleep(10)
+        q = subprocess.run(
+            [
+                "gh",
+                "run",
+                "list",
+                "--repo",
+                REPO,
+                "--workflow",
+                "admin-alert.yml",
+                "--limit",
+                "1",
+                "--json",
+                "status,conclusion,createdAt",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={**os.environ, "GH_TOKEN": token},
+        )
+        try:
+            runs = json.loads(q.stdout or "[]")
+        except ValueError:
+            runs = []
+        if (
+            runs
+            and epoch(runs[0].get("createdAt")) >= dispatched_at - 5
+            and runs[0].get("status") == "completed"
+        ):
+            if runs[0].get("conclusion") == "success":
+                log(f"alert sent: {subject}")
+                return True
+            log(f"ALERT run failed ({runs[0].get('conclusion')}): {subject}")
+            return False
+    log(f"ALERT run not finished within {ALERT_WAIT}s; will retry next tick: {subject}")
+    return False
 
 
 def alert_once(state: dict, key: str, subject: str, body: str) -> None:
@@ -271,6 +341,14 @@ def mint(state: dict) -> None:
 
 
 def run(dry_run: bool) -> int:
+    # One run at a time: a slow one must not overlap the next tick's.
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lock = LOCK_FILE.open("w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log("another run is still going; skipping this tick")
+        return 0
     fips, by_fixed = inventory()
     state = load_state()
     now = time.time()
@@ -287,36 +365,38 @@ def run(dry_run: bool) -> int:
         f"held={counts['held']} running={counts['running']} spares={counts['spares']} "
         f"target={counts['target']} (hold {counts['hold']}) actions={len(actions)}"
     )
-    seen_nonroutable = set()
+    seen = {a[1] for a in actions if a[0] == "alert"}
     for a in actions:
-        kind = a[0]
-        if kind == "unset":
-            log(
-                f"{'would release' if dry_run else 'releasing'} {a[2]} from a {a[3]} server"
-            )
-            if not dry_run:
-                os_run("floating", "ip", "unset", "--port", a[1])
-        elif kind == "delete":
-            log(f"{'would delete' if dry_run else 'deleting'} {a[2]} ({a[3]})")
-            if not dry_run:
-                os_run("floating", "ip", "delete", a[1])
-        elif kind == "mint":
-            log("no spare in hand: " + ("would mint one" if dry_run else "minting one"))
-            if not dry_run:
-                mint(state)
-        elif kind == "alert":
-            seen_nonroutable.add(a[1])
-            if not dry_run:
-                alert_once(state, a[1], a[2], a[3])
-            else:
-                log(f"would alert: {a[2]}")
-    for key in [
-        k for k in state if k.startswith("nonroutable:") and k not in seen_nonroutable
-    ]:
+        apply(a, state, dry_run)
+    for key in [k for k in state if k.startswith("nonroutable:") and k not in seen]:
         clear_alert(state, key)  # gone: the next one alerts again
     if not dry_run:
         save_state(state)
     return 0
+
+
+def apply(action: tuple, state: dict, dry_run: bool) -> None:
+    """One planned action, done or (dry run) described."""
+    kind = action[0]
+    if kind == "unset":
+        log(
+            f"{'would release' if dry_run else 'releasing'} {action[2]} from a {action[3]} server"
+        )
+        if not dry_run:
+            os_run("floating", "ip", "unset", "--port", action[1])
+    elif kind == "delete":
+        log(f"{'would delete' if dry_run else 'deleting'} {action[2]} ({action[3]})")
+        if not dry_run:
+            os_run("floating", "ip", "delete", action[1])
+    elif kind == "mint":
+        log("no spare in hand: " + ("would mint one" if dry_run else "minting one"))
+        if not dry_run:
+            mint(state)
+    elif kind == "alert":
+        if dry_run:
+            log(f"would alert: {action[2]}")
+        else:
+            alert_once(state, action[1], action[2], action[3])
 
 
 def main(argv: list[str]) -> int:

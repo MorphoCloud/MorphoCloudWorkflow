@@ -48,6 +48,31 @@ def kinds(actions):
     return out
 
 
+def test_addresses_are_read_from_every_shape_the_client_renders():
+    assert police.addresses({"net": ["10.0.0.5", "149.165.1.1"]}) == [
+        "10.0.0.5",
+        "149.165.1.1",
+    ]
+    assert police.addresses(
+        {"net": [{"addr": "10.0.0.5", "OS-EXT-IPS:type": "fixed"}]}
+    ) == ["10.0.0.5"]
+    assert police.addresses("net=10.0.0.5, 149.165.1.1; net2=10.0.1.9") == [
+        "10.0.0.5",
+        "149.165.1.1",
+        "10.0.1.9",
+    ]
+    assert police.addresses(None) == []
+
+
+NOV_4_2026 = 1793750400.0  # 2026-11-04T00:00:00Z
+
+
+def test_a_missing_timestamp_is_never_idle():
+    assert police.epoch(None) >= police.time.time() - 1
+    assert police.epoch("garbage") >= police.time.time() - 1
+    assert police.epoch("2026-11-04T00:00:00Z") == NOV_4_2026
+
+
 def test_quiet_project_within_the_hold_does_nothing():
     fips = [
         fip("149.165.1.1", "p1", "10.0.0.1"),

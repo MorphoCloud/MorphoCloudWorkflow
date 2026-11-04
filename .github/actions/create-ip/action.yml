@@ -29,10 +29,11 @@ runs:
         # route, and an instance on one is "Active" and dead (Test-Instances
         # #513, 2026-11-02). Unattached non-routable ones are deleted here.
         all_unassigned=$(openstack floating ip list -f json | jq 'map(select(.Port == null))')
-        for bad in $(echo "$all_unassigned" | jq -r 'map(select(."Floating IP Address" | startswith("149.165.") | not)) | .[].ID'); do
+        while IFS= read -r bad; do
+          [[ -n "$bad" ]] || continue
           echo "Deleting unattached non-routable floating IP $bad"
           openstack floating ip delete "$bad" || echo "::warning ::Could not delete non-routable floating IP $bad"
-        done
+        done < <(echo "$all_unassigned" | jq -r 'map(select(."Floating IP Address" | startswith("149.165.") | not)) | .[].ID')
         json_output=$(echo "$all_unassigned" | jq 'map(select(."Floating IP Address" | startswith("149.165.")))')
         echo "Filtered JSON Output:"
         echo "$json_output" | jq
@@ -101,6 +102,10 @@ runs:
       # address, leave one spare for the next create or unshelve; the
       # policing script on the runner's crontab is the backstop. A failed
       # mint here is a warning, not a failure: this instance has its address.
+      # Only on the retrieve path, on purpose: when the pool was empty and
+      # ip_create had to mint, Jetstream2 is already short, and a second
+      # mint right away would take two from a dry pool; the crontab fills
+      # the spare within five minutes once it can.
       if: ${{ steps.ip_retrieve_unassigned.outputs.floating_ip_address != '' }}
       shell: bash
       run: |
