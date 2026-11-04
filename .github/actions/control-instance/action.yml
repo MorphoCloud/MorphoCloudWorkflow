@@ -530,97 +530,6 @@ runs:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
-    - name: Retrieve or create a floating IP
-      if:
-        ${{ steps.check_instance.outputs.exists == 'true' && inputs.command_name
-        == 'unshelve' && steps.check_instance_has_ip.outputs.has_ip_assigned ==
-        'false' }}
-      id: ip_create
-      uses: ./.github/actions/create-ip
-      with:
-        os_cloud: ${{ inputs.os_cloud }}
-        preferred_ip_address:
-          ${{ steps.check_instance_has_ip.outputs.instance_ip }}
-
-    - name: comment (failed to retrieve or create floating IP)
-      id: comment_ip_create_failed
-      if: ${{ steps.ip_create.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
-      with:
-        issue-number: ${{ inputs.issue_number }}
-        body: |
-          ### Command Results ❌
-
-          `${{ inputs.command_name }}` command failed to be applied to **${{ steps.define.outputs.instance_name }}** instance.
-          Failed to retrieve or create a floating IP.
-
-          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-    - name: Associate floating IP with unshelved instance
-      if:
-        ${{ steps.check_instance.outputs.exists == 'true' && inputs.command_name
-        == 'unshelve' && steps.check_instance_has_ip.outputs.has_ip_assigned ==
-        'false' }}
-      id: associate_ip
-      shell: bash
-      run: |
-        source ~/venv/bin/activate
-
-        # Mirror the create path: JS2's Neutron API sometimes returns HTTP 500
-        # from 'add floating ip' even though the association actually applied,
-        # and Nova's cached 'server show -c addresses' view lags the real
-        # binding. Verify against the Neutron floating-IP object (its port
-        # binding), tolerate the spurious 500, and retry before failing — so an
-        # /unshelve doesn't fall over on the same transient that /create handles.
-        has_ip() {
-          local pid
-          pid=$(openstack floating ip show "$FLOATING_IP_UUID" -c port_id -f value 2>/dev/null) \
-            || return 1
-          [[ -n "$pid" && "$pid" != "None" && "$pid" != "null" ]]
-        }
-
-        if has_ip; then
-          echo "Floating IP already associated."
-        else
-          max_wait=300   # JS2 floating-IP association can lag under load
-          interval=10
-          start=$SECONDS
-          associated=false
-          while :; do
-            openstack server add floating ip "$INSTANCE_NAME" "$FLOATING_IP_ADDRESS" \
-              || echo "add floating ip returned non-zero (possible spurious JS2 500); verifying..."
-            sleep 5
-            if has_ip; then associated=true; break; fi
-            if (( SECONDS - start >= max_wait )); then break; fi
-            echo "IP not associated yet (waited $((SECONDS - start))s of ${max_wait}s); retrying in ${interval}s..."
-            sleep "$interval"
-          done
-          if [[ "$associated" != "true" ]]; then
-            echo "::error ::Failed to associate $FLOATING_IP_ADDRESS with $INSTANCE_NAME after ${max_wait}s"
-            exit 1
-          fi
-          echo "Floating IP associated."
-        fi
-      env:
-        OS_CLOUD: ${{ inputs.os_cloud }}
-        FLOATING_IP_ADDRESS: ${{ steps.ip_create.outputs.floating_ip_address }}
-        FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
-        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
-
-    - name: comment (failed to associate floating IP with unshelved instance)
-      id: comment_associate_ip_failed
-      if: ${{ steps.associate_ip.outcome == 'failure' && failure() }}
-      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
-      with:
-        issue-number: ${{ inputs.issue_number }}
-        body: |
-          ### Command Results ❌
-
-          `${{ inputs.command_name }}` command failed to be applied to **${{ steps.define.outputs.instance_name }}** instance.
-          Failed to associate floating IP with unshelved instance.
-
-          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
     # Share mode: a hard delete loses writes the instance has not flushed to
     # the share yet (STORAGE_REDESIGN_PLAN.md, test 4). The mode is per
     # repository, so on Test-Instances every delete (workshop instances too)
@@ -1187,6 +1096,131 @@ runs:
       with:
         issue-number: ${{ inputs.issue_number }}
         body-path: ${{ steps.command_diagnostics.outputs.file }}
+
+    # Decision 25: the address is taken and bound only once the unshelve has
+    # reached ACTIVE. Binding it before the unshelve (the old order) left an
+    # address stuck on a shelved server every time the compute host failed
+    # the unshelve (17 times Sept–Nov 2026), which is what Jetstream2's policy
+    # forbids and what the reconciler then emailed about. success() here means
+    # the poll passed (or the unshelve was a no-op on an already active server
+    # that lost its address).
+    - name: Retrieve or create a floating IP
+      if:
+        ${{ success() && steps.check_instance.outputs.exists == 'true' &&
+        inputs.command_name == 'unshelve' &&
+        steps.check_instance_has_ip.outputs.has_ip_assigned == 'false' }}
+      id: ip_create
+      uses: ./.github/actions/create-ip
+      with:
+        os_cloud: ${{ inputs.os_cloud }}
+        preferred_ip_address:
+          ${{ steps.check_instance_has_ip.outputs.instance_ip }}
+
+    - name: comment (failed to retrieve or create floating IP)
+      id: comment_ip_create_failed
+      if: ${{ steps.ip_create.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Command Results ❌
+
+          `${{ inputs.command_name }}` command failed to be applied to **${{ steps.define.outputs.instance_name }}** instance.
+          No public address could be obtained for it — Jetstream2 may be out of addresses right now. The instance is being shelved again; try again later.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Associate floating IP with unshelved instance
+      if:
+        ${{ success() && steps.check_instance.outputs.exists == 'true' &&
+        inputs.command_name == 'unshelve' &&
+        steps.check_instance_has_ip.outputs.has_ip_assigned == 'false' }}
+      id: associate_ip
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+
+        # Mirror the create path: JS2's Neutron API sometimes returns HTTP 500
+        # from 'add floating ip' even though the association actually applied,
+        # and Nova's cached 'server show -c addresses' view lags the real
+        # binding. Verify against the Neutron floating-IP object (its port
+        # binding), tolerate the spurious 500, and retry before failing — so an
+        # /unshelve doesn't fall over on the same transient that /create handles.
+        has_ip() {
+          local pid
+          pid=$(openstack floating ip show "$FLOATING_IP_UUID" -c port_id -f value 2>/dev/null) \
+            || return 1
+          [[ -n "$pid" && "$pid" != "None" && "$pid" != "null" ]]
+        }
+
+        if has_ip; then
+          echo "Floating IP already associated."
+        else
+          max_wait=300   # JS2 floating-IP association can lag under load
+          interval=10
+          start=$SECONDS
+          associated=false
+          while :; do
+            openstack server add floating ip "$INSTANCE_NAME" "$FLOATING_IP_ADDRESS" \
+              || echo "add floating ip returned non-zero (possible spurious JS2 500); verifying..."
+            sleep 5
+            if has_ip; then associated=true; break; fi
+            if (( SECONDS - start >= max_wait )); then break; fi
+            echo "IP not associated yet (waited $((SECONDS - start))s of ${max_wait}s); retrying in ${interval}s..."
+            sleep "$interval"
+          done
+          if [[ "$associated" != "true" ]]; then
+            echo "::error ::Failed to associate $FLOATING_IP_ADDRESS with $INSTANCE_NAME after ${max_wait}s"
+            exit 1
+          fi
+          echo "Floating IP associated."
+        fi
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        FLOATING_IP_ADDRESS: ${{ steps.ip_create.outputs.floating_ip_address }}
+        FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+
+    - name: comment (failed to associate floating IP with unshelved instance)
+      id: comment_associate_ip_failed
+      if: ${{ steps.associate_ip.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Command Results ❌
+
+          `${{ inputs.command_name }}` command failed to be applied to **${{ steps.define.outputs.instance_name }}** instance.
+          The public address could not be attached to it. The instance is being shelved again; try again later.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: Shelve again after a failed address step
+      id: shelve_again_on_address_failure
+      # Decision 25: the server reached ACTIVE but got no address. Left running
+      # it would bill and be unreachable (the portal would shelve it in half an
+      # hour, decision 23); shelve it now and release whatever was half-bound,
+      # so the member's next unshelve starts clean. Best effort: the run has
+      # already failed, and the admins' email names the instance.
+      if:
+        ${{ failure() && inputs.command_name == 'unshelve' &&
+        (steps.ip_create.outcome == 'failure' || steps.associate_ip.outcome ==
+        'failure') }}
+      continue-on-error: true
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+        if [[ -n "$FLOATING_IP_UUID" ]]; then
+          # An association that never took leaves no port on the address, and
+          # unset then answers "Floating IP has no port": that is fine.
+          openstack floating ip unset --port "$FLOATING_IP_UUID" || true
+        fi
+        openstack server shelve "$INSTANCE_NAME"
+        echo "Shelved $INSTANCE_NAME again after the address step failed."
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
+        FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
 
     - name: Disassociate floating IP from shelved instance
       if:
