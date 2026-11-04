@@ -390,6 +390,32 @@ rots. The landing banner is the join app's `ONBOARDING_PAUSED` flag, already up
 since 2026-10-28. Rollback at any point is: vendorize from the
 `pre-migration-2026-11` tag, restore the old names, unset the variable. |
 
+| 32 | **A member's volume is moved to their share by one script, one member at
+a time, with a report on the issue.** (maintainer, 2026-11-04; step 2 of the
+migration) `mc_migrate_volume.py` (portal repository, `runner/`, deployed next
+to the share runner) runs on the allocation's acquire runner through the
+`migrate-volume` workflow (`issue_number`, `commit`). For issue N it: resolves
+`My-Data-N` and the old server; refuses unless the server is shelved or gone;
+makes sure the member's share exists (the share runner's `ensure`, same name
+`mc-user-<github id>` and cephx rule the portal uses) and mounts it on the
+runner; detaches the volume from the old server (allowed while shelved),
+attaches it to the runner, mounts it read-only and measures it; refuses when the
+data would not fit the share. Without `commit` it stops there and reports ("dry
+run": measured size, file count, free room). With `commit` it copies `MyData/`
+(the old volume's layout: `/media/volume/MyData`, which also held the Slicer
+install) into `MyDrive/MyData/` on the share with rsync, preserving owner, times
+and links, **excluding the old Slicer install (`Slicer-*-linux-amd64`)**,
+`lost+found` and trash — Slicer lives on the image in share mode and extensions
+are reinstalled; verifies with a checksum pass that must report no difference
+and matching file counts and sizes; then unmounts and detaches, renames the
+volume `legacy-My-Data-N` and the old server `legacy-instance-N` so no workflow
+finds them (the rollback copy, deleted 30 days after reopening), and stamps the
+share (`mc_migrated_from`, `mc_migrated_at`, `mc_migrated_files`). The report —
+sizes, counts, duration, what was excluded — is posted on the member's issue by
+the workflow, which also labels it `storage:migrated`. Resumable: a volume
+already attached to the runner from an interrupted run is picked up where it
+was. Rehearsed on Test with seeded volumes before the 23rd. |
+
 ## Sign-in (decision 8)
 
 The current OAuth App only reads team membership (`read:org`). Posting a command
