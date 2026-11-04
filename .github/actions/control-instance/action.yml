@@ -1046,6 +1046,12 @@ runs:
         steps.comment_unshelve_host_failure.outcome == 'success') }}
       shell: bash
       run: |
+        # Only the commands the sweep knows how to repeat (a timed-out create
+        # is the create workflow's own business).
+        case "$COMMAND_NAME" in
+          unshelve|shelve|delete) ;;
+          *) echo "no follow-through for '$COMMAND_NAME'"; exit 0 ;;
+        esac
         gh issue edit "$ISSUE_NUMBER" --add-label "followup:$COMMAND_NAME" \
           || echo "::warning ::Could not mark issue #$ISSUE_NUMBER for follow-through"
       env:
