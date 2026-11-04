@@ -24,7 +24,17 @@ runs:
       run: |
         source ~/venv/bin/activate
 
-        json_output=$(openstack floating ip list -f json | jq 'map(select(.Port == null))')
+        # Only a routable address counts (INSTANCE_DASHBOARD_PLAN.md decision
+        # 24): under exhaustion Jetstream2 hands out 172.17.x, which does not
+        # route, and an instance on one is "Active" and dead (Test-Instances
+        # #513, 2026-11-02). Unattached non-routable ones are deleted here.
+        all_unassigned=$(openstack floating ip list -f json | jq 'map(select(.Port == null))')
+        while IFS= read -r bad; do
+          [[ -n "$bad" ]] || continue
+          echo "Deleting unattached non-routable floating IP $bad"
+          openstack floating ip delete "$bad" || echo "::warning ::Could not delete non-routable floating IP $bad"
+        done < <(echo "$all_unassigned" | jq -r 'map(select(."Floating IP Address" | startswith("149.165.") | not)) | .[].ID')
+        json_output=$(echo "$all_unassigned" | jq 'map(select(."Floating IP Address" | startswith("149.165.")))')
         echo "Filtered JSON Output:"
         echo "$json_output" | jq
 
@@ -53,23 +63,71 @@ runs:
       run: |
         source ~/venv/bin/activate
 
-        json_output=$(openstack floating ip create public -f json)
-        echo "Floating IP Creation Output:"
-        echo "$json_output"
+        # Nothing in hand: mint, and refuse a non-routable address (decision
+        # 24). Two tries, then fail fast with the real reason, so the member
+        # is told "no address available" instead of getting a dead instance.
+        floating_ip_address=""
+        floating_ip_uuid=""
+        for attempt in 1 2; do
+          if ! json_output=$(openstack floating ip create public --description MorphoCloud -f json); then
+            echo "::warning ::floating ip create failed (attempt $attempt)"
+            continue
+          fi
+          echo "Floating IP Creation Output:"
+          echo "$json_output"
+          address=$(echo "$json_output" | jq -r ".floating_ip_address")
+          uuid=$(echo "$json_output" | jq -r ".id")
+          if [[ "$address" == 149.165.* ]]; then
+            floating_ip_address="$address"
+            floating_ip_uuid="$uuid"
+            break
+          fi
+          echo "::warning ::Jetstream2 handed out non-routable $address (attempt $attempt); deleting it"
+          openstack floating ip delete "$uuid" || true
+        done
+        if [[ -z "$floating_ip_address" ]]; then
+          echo "::error ::No routable floating IP available on Jetstream2: its public address pool is exhausted. Try again later."
+          exit 1
+        fi
 
-        floating_ip_uuid=$(
-          echo $json_output |
-          jq -r ".id"
-        )
         echo "floating_ip_uuid [$floating_ip_uuid]"
         echo "floating_ip_uuid=$floating_ip_uuid" >> $GITHUB_OUTPUT
-
-        floating_ip_address=$(
-          echo $json_output |
-          jq -r ".floating_ip_address"
-        )
         echo "floating_ip_address [$floating_ip_address]"
         echo "floating_ip_address=$floating_ip_address" >> $GITHUB_OUTPUT
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+
+    - name: "Keep one in hand"
+      # Decision 24: the project holds max(N, running + 1). Having taken an
+      # address, leave one spare for the next create or unshelve; the
+      # policing script on the runner's crontab is the backstop. A failed
+      # mint here is a warning, not a failure: this instance has its address.
+      # Only on the retrieve path, on purpose: when the pool was empty and
+      # ip_create had to mint, Jetstream2 is already short, and a second
+      # mint right away would take two from a dry pool; the crontab fills
+      # the spare within five minutes once it can.
+      if: ${{ steps.ip_retrieve_unassigned.outputs.floating_ip_address != '' }}
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+        taken="${{ steps.ip_retrieve_unassigned.outputs.floating_ip_uuid }}"
+        spare=$(openstack floating ip list -f json \
+          | jq --arg id "$taken" '[.[] | select(.Port == null and .ID != $id and (."Floating IP Address" | startswith("149.165.")))] | length')
+        echo "routable spares left after this one: $spare"
+        if [[ "$spare" -gt 0 ]]; then
+          exit 0
+        fi
+        if json_output=$(openstack floating ip create public --description MorphoCloud -f json); then
+          address=$(echo "$json_output" | jq -r ".floating_ip_address")
+          if [[ "$address" == 149.165.* ]]; then
+            echo "minted $address: one in hand for the next start"
+          else
+            echo "::warning ::Jetstream2 handed out non-routable $address for the spare; deleting it (its pool is dry)"
+            openstack floating ip delete "$(echo "$json_output" | jq -r ".id")" || true
+          fi
+        else
+          echo "::warning ::Could not mint a spare floating IP (Jetstream2 pool dry?); the policing script will keep trying"
+        fi
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
 

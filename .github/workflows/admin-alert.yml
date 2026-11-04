@@ -1,0 +1,52 @@
+name: Admin alert
+
+# One email to the admins, on demand (INSTANCE_DASHBOARD_PLAN.md decision 24).
+# The runner cannot send mail, so what it has to say — a floating-IP mint
+# failing, a start refused for want of an address — comes here through
+# `gh workflow run admin-alert.yml -f subject=… -f body=…` with its
+# dispatcher token. Once per episode is the caller's job; this just sends.
+
+on:
+  # dispatch: manual
+  workflow_dispatch:
+    inputs:
+      subject:
+        description: "Subject line (the repository is prefixed)"
+        required: true
+        type: string
+      body:
+        description: "Plain-text body"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send
+        if: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS != '' }}
+        uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
+        with:
+          server_address: webhost.dynadot.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: MorphoCloudPortal <no-reply@morphocloud.org>
+          to: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          subject: "[${{ github.repository }}] ${{ inputs.subject }}"
+          body: |
+            ${{ inputs.body }}
+
+            Sent by admin-alert.yml, run https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: No admin address configured
+        if: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS == '' }}
+        run: |
+          echo "::error ::MORPHOCLOUD_GITHUB_ADMIN_EMAILS is not set; the alert was not sent: ${SUBJECT}"
+          exit 1
+        env:
+          SUBJECT: ${{ inputs.subject }}

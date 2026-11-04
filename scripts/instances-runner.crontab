@@ -11,6 +11,8 @@
 7,37 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh reconcile-instances.yml
 0 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh update-workshop.yml
 */10 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh workshop-backfill.yml
+# --- runner-side scripts on the same clock ---
+*/5 * * * * OS_CLOUD=BIO180006_IU MORPHOCLOUD_FIP_HOLD=5 MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/venv/bin/python /home/exouser/police-floating-ips.py >> /home/exouser/fip-police.log 2>&1
 # --- appended verbatim from instances-runner.crontab.extra ---
 # Monthly usage report -> MorphoCloudAnalytics (separate repo + dedicated token)
 0 0 1 * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/MorphoCloudAnalytics MORPHOCLOUD_DISPATCH_TOKEN_FILE=/home/exouser/.config/morphocloud/analytics-dispatch.pat /home/exouser/morphocloud-dispatch.sh monthly-usage.yml

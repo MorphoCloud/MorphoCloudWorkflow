@@ -187,6 +187,37 @@ ten minutes: shelve it by hand). Never a reboot: Test-Instances #503 showed on
 Production gets this with the migration, together with the runner's dispatcher
 token. |
 
+| 24 | **Floating IPs: the project holds `max(N, running + 1)` and nothing more,
+N = 5.** (maintainer, 2026-11-04; step 4 of the reliability work; replaces the
+reserve of 8 unattached addresses minted on 2026-11-03) Jetstream2 runs out of
+public addresses routinely and, when dry, hands out 172.17.x, which does not
+route: Test-Instances #513 came up "Active" on one and was dead. Holding spares
+on top of what runs is what Jetstream2's admins dislike, so the rule counts
+attached addresses too: at quiet times N are held, at busy times exactly one
+more than is running. (1) `create-ip` takes only a routable (149.165/16)
+unattached address, deletes unattached non-routable ones on sight, and when it
+has to mint, refuses a non-routable result (two tries) and fails fast with "no
+routable floating IP available on Jetstream2". Having taken the last spare, it
+mints one in the same run, so the next create or unshelve finds one in hand —
+this is what makes N a quiet-time floor rather than a burst buffer: creates and
+unshelves are serialized on the acquire lane, and each leaves a spare behind.
+(2) `scripts/police-floating-ips.py` runs from the runner's crontab every five
+minutes (decision 21): it releases an address bound to a shelved server
+(Jetstream2's policy; a failed unshelve leaves one), deletes non-routable
+addresses and reports one bound to a running server, mints one when no spare is
+in hand, and when more than `max(N, running + 1)` are held, deletes unattached
+routable addresses idle for ten minutes or more, oldest first — ten minutes
+keeps clear of an unshelve that just picked one. (3) Workshops are not
+pre-minted: their instances draw on the same pool during creation and the
+backfill retries a start refused for want of an address as it retries "no host".
+Nothing is exempt. (4) What N buys is a drought: while Jetstream2 has nothing to
+give, `N − running` more starts succeed, then starts fail with the clear message
+until it recovers; the admins hear once per drought, through the new
+dispatchable `admin-alert.yml` (the runner cannot send mail), and once per
+non-routable address found on a running server. The two-week review reads the
+policing log (failed mints, refused starts) to move N. The first run on
+production releases the reserve of 8 down to the rule. |
+
 ## Sign-in (decision 8)
 
 The current OAuth App only reads team membership (`read:org`). Posting a command
@@ -533,4 +564,11 @@ and storage cards: a support assistant that helps users diagnose problems.
     the Test portal and an instance whose security group is closed, the card
     goes Unreachable at about 3 minutes and "Being shelved automatically" at
     about 5; the shelve workflow runs; the card reads Shelved with the note; one
-    admin email arrives with the diagnosis; Unshelve clears the note.
+    admin email arrives with the diagnosis; Unshelve clears the note. **Passed
+    2026-11-04** (Test-Instances#503: port closed 00:43:49Z, shelve dispatched
+    00:49:43Z, shelved 00:52:20Z, email sent).
+13. Floating IPs (decision 24): `police-floating-ips.py --dry-run` on the Test
+    runner lists the two 172.17 addresses for deletion and the address stuck on
+    the shelved #503 for release; the real run does it and the next run is
+    quiet; an unshelve on Test takes the spare and leaves one behind (the "Keep
+    one in hand" step in the run log).
