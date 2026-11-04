@@ -29,6 +29,8 @@ permissions:
 jobs:
   migrate:
     runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
+    # A 100 GB volume copies in well under an hour; anything longer is stuck.
+    timeout-minutes: 240
     # One member at a time per allocation: the runner's mount points and
     # the share runner's state are shared.
     concurrency:
@@ -37,14 +39,25 @@ jobs:
     steps:
       - name: Migrate
         id: migrate
+        shell: bash
         run: |
+          set -euo pipefail
           source ~/venv/bin/activate
           args=(--issue "$ISSUE_NUMBER")
           if [[ "$COMMIT" == "true" ]]; then args+=(--commit); fi
           rc=0
-          python3 "$HOME/mc-data/mc_migrate_volume.py" "${args[@]}" > "$RUNNER_TEMP/migrate-report.md" || rc=$?
+          # stdout is the report; stderr (the share runner's log, a traceback)
+          # goes to the step log, and into the report when the script failed.
+          python3 "$HOME/mc-data/mc_migrate_volume.py" "${args[@]}" \
+            > "$RUNNER_TEMP/migrate-report.md" 2> "$RUNNER_TEMP/migrate-stderr.txt" || rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           cat "$RUNNER_TEMP/migrate-report.md"
+          cat "$RUNNER_TEMP/migrate-stderr.txt"
+          if [[ "$rc" != "0" && -s "$RUNNER_TEMP/migrate-stderr.txt" ]]; then
+            printf '\n<details><summary>Script output</summary>\n\n```\n' >> "$RUNNER_TEMP/migrate-report.md"
+            tail -c 3000 "$RUNNER_TEMP/migrate-stderr.txt" >> "$RUNNER_TEMP/migrate-report.md"
+            printf '\n```\n</details>\n' >> "$RUNNER_TEMP/migrate-report.md"
+          fi
           printf '\n<sub>Run: https://github.com/%s/actions/runs/%s</sub>\n' "$GH_REPO" "$RUN_ID" >> "$RUNNER_TEMP/migrate-report.md"
         env:
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
@@ -57,7 +70,9 @@ jobs:
 
       - name: Post the report on the issue
         if: ${{ always() && steps.migrate.outcome != 'skipped' }}
+        shell: bash
         run: |
+          set -euo pipefail
           gh issue comment "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/migrate-report.md" \
             || echo "::warning ::Could not post the report on issue #$ISSUE_NUMBER"
           if [[ "$RC" == "0" && "$COMMIT" == "true" ]]; then
@@ -73,6 +88,7 @@ jobs:
 
       - name: Fail the run when the script did
         if: ${{ steps.migrate.outputs.rc != '0' }}
+        shell: bash
         run: |
           echo "::error ::migration script exited ${RC}; see the report on issue #${ISSUE_NUMBER}"
           exit 1

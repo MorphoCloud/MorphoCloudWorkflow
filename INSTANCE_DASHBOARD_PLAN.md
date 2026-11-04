@@ -403,8 +403,9 @@ attaches it to the runner, mounts it read-only and measures it; refuses when the
 data would not fit the share. Without `commit` it stops there and reports ("dry
 run": measured size, file count, free room). With `commit` it copies `MyData/`
 (the old volume's layout: `/media/volume/MyData`, which also held the Slicer
-install) into `MyDrive/MyData/` on the share with rsync, preserving owner, times
-and links, **excluding the old Slicer install (`Slicer-*-linux-amd64`)**,
+install) into `MyData/` at the share's root — what an instance mounts as
+MyDrive, beside Desktop, Documents and Downloads — with rsync, preserving owner,
+times and links, **excluding the old Slicer install (`Slicer-*-linux-amd64`)**,
 `lost+found` and trash — Slicer lives on the image in share mode and extensions
 are reinstalled; verifies with a checksum pass that must report no difference
 and matching file counts and sizes; then unmounts and detaches, renames the
