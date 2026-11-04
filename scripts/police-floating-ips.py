@@ -51,6 +51,12 @@ TOKEN_FILE = Path(
 ).expanduser()
 STATE_FILE = Path("~/.config/morphocloud/fip-police.json").expanduser()
 MINT_DESCRIPTION = "MorphoCloud"
+# The client next to this interpreter (the runner's venv); cron has no PATH.
+OPENSTACK = (
+    str(Path(sys.executable).with_name("openstack"))
+    if Path(sys.executable).with_name("openstack").exists()
+    else "openstack"
+)
 
 
 def log(msg: str) -> None:
@@ -60,7 +66,7 @@ def log(msg: str) -> None:
 
 def os_json(*args: str):
     r = subprocess.run(
-        ["openstack", *args, "-f", "json"],
+        [OPENSTACK, *args, "-f", "json"],
         capture_output=True,
         text=True,
         timeout=180,
@@ -71,7 +77,7 @@ def os_json(*args: str):
 
 def os_run(*args: str) -> None:
     subprocess.run(
-        ["openstack", *args], capture_output=True, text=True, timeout=180, check=True
+        [OPENSTACK, *args], capture_output=True, text=True, timeout=180, check=True
     )
 
 
