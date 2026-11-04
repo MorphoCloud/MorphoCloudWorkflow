@@ -418,11 +418,15 @@ runs:
       run: |
         source ~/venv/bin/activate
 
-        # Get instance floating IP
-        instance_ip=$(
-          openstack server show $INSTANCE_NAME -c addresses -f json | \
-          jq -r '.addresses.auto_allocated_network | if length > 1 then .[1] else "" end'
-        )
+        # Get instance floating IP from Neutron (the address bound to the
+        # server's port). Nova's `addresses` view is a cache that can stay
+        # stale for a long time after an address is attached to a running
+        # server (Instances#214, 2026-11-04; decision 29).
+        port_id=$(openstack port list --server "$INSTANCE_NAME" -f value -c ID | head -n1)
+        instance_ip=""
+        if [[ -n "$port_id" ]]; then
+          instance_ip=$(openstack floating ip list --port "$port_id" -f value -c 'Floating IP Address' | head -n1)
+        fi
         echo "instance_ip [$instance_ip]"
 
         # Get instance internal IP (also called fixed IP)
