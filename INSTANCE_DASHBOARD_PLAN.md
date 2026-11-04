@@ -237,6 +237,24 @@ that), never parked. New infrastructure servers need nothing else: they show up
 as `infra=N` in the policing log and the pool is unaffected. No tag or marker
 scheme; the maintainer declined one. |
 
+| 25 | **An unshelve takes and binds its address only once the server is ACTIVE;
+no address, no running server.** (maintainer, 2026-11-04; step 5 of the
+reliability work) `control-instance` bound the floating IP before
+`server unshelve`, so every host-side unshelve failure (17 between September and
+November 2026) left an address stuck on a shelved server — the policy violation
+Jetstream2 forbids and the reconciler's most frequent email. Now the address
+steps run after the status poll has seen ACTIVE (or after a no-op unshelve of an
+already active server that lost its address): a host-failed or timed-out
+unshelve leaves nothing bound, and the member's own retry starts clean. If the
+server reaches ACTIVE but no address can be obtained (Jetstream2 dry,
+decision 24) or attached, the run releases whatever was half-bound, shelves the
+server again — best effort — and tells the member: "No public address could be
+obtained — Jetstream2 may be out of addresses right now. The instance has been
+shelved again; try again later." A server is never left running without an
+address: it would bill and be unreachable, and the portal would only shelve it
+half an hour later (decision 23). The stuck-address release before the unshelve
+and the end-state check after it are unchanged. Create already had this order. |
+
 ## Sign-in (decision 8)
 
 The current OAuth App only reads team membership (`read:org`). Posting a command
@@ -590,4 +608,13 @@ and storage cards: a support assistant that helps users diagnose problems.
     runner lists the two 172.17 addresses for deletion and the address stuck on
     the shelved #503 for release; the real run does it and the next run is
     quiet; an unshelve on Test takes the spare and leaves one behind (the "Keep
-    one in hand" step in the run log).
+    one in hand" step in the run log). **Passed 2026-11-04** (dry run, then the
+    02:00Z run on Test deleted 172.17.20.187 and released + deleted
+    172.17.21.23; production's 02:05Z run released the reserve of 8 and, after
+    the amendment, filled to 5 = 1 running + 4 spare by 02:45Z).
+14. Unshelve order (decision 25): in the run log of an unshelve on Test, "Poll
+    instance status" finishes before "Retrieve or create a floating IP" and
+    "Associate floating IP"; the card shows the new address; the floating-IP
+    list shows nothing bound to a shelved instance before or after. A failed
+    address step (forced by a wrong preferred address or a dry pool) ends with
+    the server shelved again and the member's comment saying so.
