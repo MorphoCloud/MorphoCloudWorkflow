@@ -170,17 +170,22 @@ jobs:
                 continue
               fi
 
-              # Retrieve the IP address of the instance
-              instance_ip=$(
-                openstack server show $instance_name -c addresses -f json | \
+              # Retrieve the IP address of the instance. A failed read (an
+              # OpenStack hiccup) must not end the run under -e: say so and
+              # look at this instance again next tick.
+              if ! instance_ip=$(
+                openstack server show "$instance_name" -c addresses -f json | \
                 jq -r '.addresses.auto_allocated_network[1]'
-              )
+              ); then
+                echo "::warning ::Could not read the address of $instance_name; left for the next tick"
+                continue
+              fi
               echo "instance_ip [$instance_ip]"
 
               # No public address on an active instance: nobody can reach it
               # (decision 25 shelves such an unshelve itself; this is the backstop).
               if [[ "$instance_ip" == "null" ]]; then
-                shelve_if_unreachable "$instance_name" "$issue_number" "has no public address"
+                shelve_if_unreachable "$instance_name" "$issue_number" "has no public address" || true
                 continue
               fi
 
@@ -189,11 +194,14 @@ jobs:
               #   an issue where SSH breaks out of the while loop in Bash.
               #   Reference: https://stackoverflow.com/questions/9393038/ssh-breaks-out-of-while-loop-in-bash
 
+              # The `|| rc=$?` form matters: the job shell runs with -e, and a
+              # bare failing assignment would end the whole run (seen on the
+              # first test, exit 255 after the three tries).
+              rc=0
               has_check_instance_shelve_script=$(ssh_out "$instance_ip" \
-                  'bash -c "[[ -f /opt/instance-config-support/dist/check-instance-shelve.sh ]] && echo yes || echo no"')
-              rc=$?
+                  'bash -c "[[ -f /opt/instance-config-support/dist/check-instance-shelve.sh ]] && echo yes || echo no"') || rc=$?
               if (( rc == 255 )); then
-                shelve_if_unreachable "$instance_name" "$issue_number" "does not answer on $instance_ip"
+                shelve_if_unreachable "$instance_name" "$issue_number" "does not answer on $instance_ip" || true
                 continue
               elif (( rc != 0 )); then
                 echo "::warning ::Could not check for 'check-instance-shelve.sh' on $instance_name ($instance_ip): exit $rc"
@@ -201,11 +209,11 @@ jobs:
               fi
 
               if [[ "$has_check_instance_shelve_script" == "yes" ]]; then
+                rc=0
                 uptime_hours=$(ssh_out "$instance_ip" \
-                    '/opt/instance-config-support/dist/check-instance-shelve.sh -d')
-                rc=$?
+                    '/opt/instance-config-support/dist/check-instance-shelve.sh -d') || rc=$?
                 if (( rc == 255 )); then
-                  shelve_if_unreachable "$instance_name" "$issue_number" "stopped answering on $instance_ip"
+                  shelve_if_unreachable "$instance_name" "$issue_number" "stopped answering on $instance_ip" || true
                   continue
                 elif (( rc != 0 )); then
                   echo "::warning ::check-instance-shelve.sh failed on $instance_name ($instance_ip): exit $rc; it answers, so it is left alone"
@@ -213,11 +221,11 @@ jobs:
                 fi
               else
                 # Retrieve the instance uptime using SSH
+                rc=0
                 uptime_seconds=$(ssh_out "$instance_ip" \
-                    'cat /proc/uptime | awk  "{print \$1}"')
-                rc=$?
+                    'cat /proc/uptime | awk  "{print \$1}"') || rc=$?
                 if (( rc == 255 )); then
-                  shelve_if_unreachable "$instance_name" "$issue_number" "stopped answering on $instance_ip"
+                  shelve_if_unreachable "$instance_name" "$issue_number" "stopped answering on $instance_ip" || true
                   continue
                 elif (( rc != 0 )); then
                   echo "::warning ::Could not read the uptime of $instance_name ($instance_ip): exit $rc; it answers, so it is left alone"
