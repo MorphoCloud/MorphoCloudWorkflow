@@ -749,8 +749,25 @@ runs:
                 failed_req=$(check_new_unshelve_error)
                 if [[ -n "$failed_req" ]]; then
                     echo ""
-                    echo "Attempt $attempt failed on the compute host (request $failed_req)."
                     known_error_reqs="${known_error_reqs}${failed_req},"
+                    # Which step of the action failed tells a capacity
+                    # shortage from a sick host: schedule_instances Error =
+                    # no host can take the flavor (Nova records no fault on
+                    # a shelved server, so the status never says so —
+                    # Instances#214, 2026-11-04, was reported as a host
+                    # failure with 0 g3.xl free); compute_unshelve_instance
+                    # Error = the chosen host failed. Decision 30.
+                    failed_step=$(openstack server event show "$INSTANCE_NAME" "$failed_req" -f json 2>/dev/null | \
+                      jq -r '[.events[]? | select((.result // "") | ascii_downcase == "error") | .event] | join(",")' 2>/dev/null || true)
+                    if [[ -z "$failed_step" ]]; then
+                        echo "::warning ::Could not read which step of request $failed_req failed; treating it as a host failure."
+                    fi
+                    if [[ "$failed_step" == *schedule_instances* ]]; then
+                        echo "Attempt $attempt found no host for the flavor (request $failed_req): no capacity."
+                        failure_mode="no_capacity"
+                        break
+                    fi
+                    echo "Attempt $attempt failed on the compute host (request $failed_req; failed step: ${failed_step:-unknown})."
                     if [ $attempt -lt $max_attempts ]; then
                         attempt=$((attempt + 1))
                         gh issue comment "$ISSUE_NUMBER" --body "⏳ The first unshelve attempt failed on Jetstream2's side — retrying automatically. A final result will be posted here in a few minutes." || echo "::warning ::Failed to post retry notification comment."
@@ -771,6 +788,33 @@ runs:
         echo "status=$status" >> $GITHUB_OUTPUT
         echo "capacity_error=$capacity_error" >> $GITHUB_OUTPUT
         echo "failure_mode=$failure_mode" >> $GITHUB_OUTPUT
+
+        # Decision 30: a scheduling failure is a capacity shortage. The
+        # server is back at SHELVED_OFFLOADED, untouched; the member is told
+        # the truth with the live number and retries. Not the capacity_error
+        # branch below — that one deletes the server, which is right for a
+        # build that never got a host and wrong for a shelved instance.
+        if [[ "$failure_mode" == "no_capacity" ]]; then
+            flavor=$(gh issue view "$ISSUE_NUMBER" --json labels \
+              --jq '[.labels[].name | select(startswith("flavor:")) | split(":")[1]][0] // ""' 2>/dev/null || true)
+            vacancy=""
+            if [[ -n "$flavor" ]]; then
+              vacancy=$(curl -s --max-time 15 https://morphocloud.org/api/availability 2>/dev/null | \
+                jq -r --arg f "$flavor" '[.flavors[]? | select(.name == $f) | .count][0] // ""' 2>/dev/null || true)
+            fi
+            {
+              printf '%s\n\n' '### Command Results ❌'
+              printf '%s' "Jetstream2 has no **${flavor:-the requested flavor}** host free right now, so **${INSTANCE_NAME}** could not be placed"
+              if [[ -n "$vacancy" ]]; then printf ' (Jetstream2 reports %s available)' "$vacancy"; fi
+              printf '%s\n\n' '. **Your instance is safely shelved and nothing was changed.** Try `/unshelve` again later — capacity usually frees up within hours. Live availability: https://grafana.jetstream-cloud.org/public-dashboards/b39f9f91452949389a4d333c3f451eac'
+              printf '%s\n\n' '<details><summary>Diagnostics for admins</summary>'
+              printf '%s\n\n' "Unshelve request ${failed_req} failed at scheduling (schedule_instances Error); no admin action needed."
+              printf '%s\n' "Run: https://github.com/${GH_REPO}/actions/runs/${RUN_ID}"
+              printf '%s\n' '</details>'
+            } > /tmp/unshelve_failure_body.md
+            echo "::error ::no ${flavor:-flavor} capacity on Jetstream2 (unshelve request $failed_req failed at scheduling)."
+            exit 1
+        fi
 
         if [[ "$failure_mode" == "host_error" ]]; then
             total_failures=$(( ${RECENT_FAILURES:-0} + attempt ))
@@ -828,6 +872,18 @@ runs:
         issue-number: ${{ inputs.issue_number }}
         body-path: /tmp/unshelve_failure_body.md
 
+    # Decision 30: no host for the flavor. The member retries; no admin
+    # email (nothing for an admin to do).
+    - name: comment (no capacity for the unshelve)
+      id: comment_no_capacity_unshelve
+      if:
+        ${{ steps.instance_poll.outcome == 'failure' && failure() &&
+        steps.instance_poll.outputs.failure_mode == 'no_capacity' }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body-path: /tmp/unshelve_failure_body.md
+
     # Two variants of the same timeout report, split on the command. Only
     # unshelve has a safe self-serve recovery: delete + create rebuilds the
     # instance from the untouched data volume. The identical advice on a
@@ -840,6 +896,7 @@ runs:
         ${{ steps.instance_poll.outcome == 'failure' && failure() &&
         steps.instance_poll.outputs.capacity_error != 'true' &&
         steps.instance_poll.outputs.failure_mode != 'host_error' &&
+        steps.instance_poll.outputs.failure_mode != 'no_capacity' &&
         inputs.command_name == 'unshelve' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -868,6 +925,7 @@ runs:
         ${{ steps.instance_poll.outcome == 'failure' && failure() &&
         steps.instance_poll.outputs.capacity_error != 'true' &&
         steps.instance_poll.outputs.failure_mode != 'host_error' &&
+        steps.instance_poll.outputs.failure_mode != 'no_capacity' &&
         inputs.command_name != 'unshelve' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
@@ -1255,6 +1313,7 @@ runs:
         steps.comment_max_wait.outcome != 'success' &&
         steps.comment_max_wait_unshelve.outcome != 'success' &&
         steps.comment_no_capacity.outcome != 'success' &&
+        steps.comment_no_capacity_unshelve.outcome != 'success' &&
         steps.comment_disassociate_failed.outcome != 'success' &&
         steps.comment_set_properties_failed.outcome != 'success' &&
         steps.comment_postcondition_failed.outcome != 'success' &&
@@ -1294,7 +1353,8 @@ runs:
       if:
         ${{ failure() && inputs.admin_emails != '' &&
         steps.comment_not_approved.outcome != 'success' &&
-        steps.comment_not_exist.outcome != 'success' }}
+        steps.comment_not_exist.outcome != 'success' &&
+        steps.instance_poll.outputs.failure_mode != 'no_capacity' }}
       uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
       with:
         server_address: webhost.dynadot.com
