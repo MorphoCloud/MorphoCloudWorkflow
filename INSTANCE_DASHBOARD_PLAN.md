@@ -846,4 +846,17 @@ and storage cards: a support assistant that helps users diagnose problems.
     the same way; `followup:shelve` on a shelved #503 is closed with "completed
     on Jetstream2 after all"; `followup:unshelve` + `followup-count:2` on a
     shelved #503 yields `needs-admin`, the member's "could not be completed
-    automatically" comment and one admin email, with no dispatch.
+    automatically" comment and one admin email, with no dispatch. **Exhaustion
+    case passed 2026-11-04 18:50Z on #514** (cron tick 16:50:07Z: comment,
+    `needs-admin`, one admin email; a second run ten seconds later found nothing
+    to do). The shelve/unshelve cases were not run: #503 and #514 were deleted
+    by the maintainer the same day.
+18. Maintenance switch (decision 31): with `MORPHOCLOUD_MAINTENANCE` set on
+    Test-Instances, a typed `/email` on an instance issue gets only the notice
+    and every command workflow run is skipped; with the variable removed, the
+    same command runs. **Passed 2026-11-04 18:32Z** on #514 (notice "closed for
+    the storage migration until 2026-11-27 … This command was not run"; Validate
+    Instance Command: `maintenance-notice` success, `validate` skipped; Send
+    Email, Control Instance, Create Instance, Delete Instance, /extend, /renew
+    all skipped; variable removed → Send Email ran, and failed only because the
+    instance had been deleted minutes earlier).
