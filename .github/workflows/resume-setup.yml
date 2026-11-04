@@ -128,6 +128,35 @@ jobs:
 
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
+      # Decision 27: a resume that fails needs an admin; one email, with
+      # what to look at.
+      - name: Describe the failure for the admins
+        id: describe_failure
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          printf 'Instance: %s (issue #%s)\n\nWhat happened: resume-setup (decision 33) could not finish the setup of an instance whose build outran the create; the step that failed is in the run log.\n\nWhat to do: look at the instance on Jetstream2 and the run; the member was told the admins have it.\n' \
+            "${INSTANCE_NAME:-unknown}" "$ISSUE_NUMBER" > "$RUNNER_TEMP/admin-mail-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.md"
+        env:
+          INSTANCE_NAME: ${{ steps.resolve.outputs.instance_name }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+
+      - name: Notify admins by email (resume failed)
+        if: ${{ failure() && steps.describe_failure.outcome == 'success' }}
+        uses: ./.github/actions/notify-admins
+        with:
+          admin_emails: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          mail_server_username: ${{ secrets.MAIL_USERNAME }}
+          mail_server_password: ${{ secrets.MAIL_PASSWORD }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue_number: ${{ inputs.issue_number }}
+          subject:
+            "resume-setup failed for ${{ steps.resolve.outputs.instance_name ||
+            'unknown' }} (issue #${{ inputs.issue_number }})"
+          body_file:
+            ${{ runner.temp }}/admin-mail-${{ github.run_id }}-${{
+            github.run_attempt }}.md
+
       - name: Clear the follow-up markers
         if: ${{ success() }}
         shell: bash

@@ -44,6 +44,14 @@ inputs:
     description: "GitHub login of the instance owner (share mode)"
     required: false
     default: ""
+  follow_through:
+    description:
+      "'true' when a setup that outruns the wait is handed to the follow-through
+      sweep (decision 33: individual requests); otherwise a timeout is reported
+      as before. Workshop sub-issues and course instances stay out: the backfill
+      and the course flow own them."
+    required: false
+    default: "false"
 outputs:
   setup_status:
     description: "Instance setup status ('complete' when ready)"
@@ -174,7 +182,8 @@ runs:
     - name: comment (setup still running)
       if:
         ${{ steps.instance_poll.outcome == 'failure' && failure() &&
-        steps.instance_poll.outputs.outcome == 'timeout' }}
+        steps.instance_poll.outputs.outcome == 'timeout' &&
+        inputs.follow_through == 'true' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
@@ -186,7 +195,8 @@ runs:
     - name: Mark the setup for follow-through
       if:
         ${{ steps.instance_poll.outcome == 'failure' && failure() &&
-        steps.instance_poll.outputs.outcome == 'timeout' }}
+        steps.instance_poll.outputs.outcome == 'timeout' &&
+        inputs.follow_through == 'true' }}
       shell: bash
       run: |
         gh issue edit "$ISSUE_NUMBER" --add-label "followup:setup" \
@@ -199,7 +209,8 @@ runs:
     - name: comment (setup failed)
       if:
         ${{ steps.instance_poll.outcome == 'failure' && failure() &&
-        steps.instance_poll.outputs.outcome != 'timeout' }}
+        (steps.instance_poll.outputs.outcome != 'timeout' ||
+        inputs.follow_through != 'true') }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
