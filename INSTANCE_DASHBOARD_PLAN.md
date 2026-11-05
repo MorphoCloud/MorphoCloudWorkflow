@@ -479,7 +479,23 @@ workflows but cannot post). Mints and deletes of spare addresses touch no member
 and stay in the log. The rule for what comes next: a new automatic actor on
 production starts in a report-only mode (`--dry-run` or its equivalent) for a
 week, its would-be actions read from its log, before it is allowed to act — the
-policing script went live acting on day one and cost a member their address. |
+policing script went live acting on day one and cost a member their address. | |
+36 | **The dashboard keeps itself current without the member pressing refresh.**
+(maintainer, 2026-11-05: a tab left open since the morning still showed a
+long-shelved instance as running and reachable, with its web desktop link, until
+Firefox's refresh button was pressed) The cards used to re-fetch only while one
+of the member's own actions was in progress (every 10 s), so anything another
+actor did — auto-shelve, an admin's command, the follow-through sweep, reconcile
+— never reached an open page. Now: every 10 s while something is in progress,
+every 60 s otherwise, and at once (when the last fetch is older than 15 s) when
+the tab becomes visible again or is restored from the browser's back/forward
+cache. A hidden tab does not poll; it catches up when shown. One render costs
+one GitHub call on the member's own token, so a visible idle tab spends about 60
+calls an hour against GitHub's 5,000. A background fetch never undoes what the
+member is doing: it is dropped if a button was pressed after it started, skipped
+while a button is still working, and a chosen instance type stays chosen across
+the swap. A failed fetch (a portal restart, a 502) keeps the page as it is and
+tries again; only a signed-out answer sends the page to the sign-in screen. |
 
 ## Sign-in (decision 8)
 
