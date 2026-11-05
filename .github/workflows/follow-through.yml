@@ -94,7 +94,7 @@ jobs:
           SETUP_CEILING_MIN=60
           SETUP_STALL_MIN=15
           watch_setup() {  # issue, instance
-            local n=$1 inst=$2 j status log line sstatus created created_epoch now age_min lines prop prev_lines prev_epoch quiet_min
+            local n=$1 inst=$2 j status log line sstatus created created_epoch now age_min mark prop prev_mark prev_epoch quiet_min
             if ! j=$(openstack server show "$inst" -f json 2>/dev/null); then
               exhaust "$n" "$inst" "setup" "the server no longer exists on Jetstream2"
               return
@@ -118,7 +118,10 @@ jobs:
             fi
             log=$(openstack console log show "$inst" 2>/dev/null || true)
             line=$(printf '%s\n' "$log" | grep -E '^\{"status":"' | tail -n1 || true)
-            sstatus=$(printf '%s\n' "${line:-{\"status\":\"pending\"}}" | jq -r '.status // "pending"' 2>/dev/null || echo pending)
+            sstatus=pending
+            if [[ -n "$line" ]]; then
+              sstatus=$(printf '%s\n' "$line" | jq -r '.status // "pending"' 2>/dev/null || echo pending)
+            fi
             if [[ "$sstatus" == "complete" ]]; then
               echo "$inst (issue #$n): setup finished on the instance; completing it"
               clear_markers "$n"
@@ -140,13 +143,18 @@ jobs:
             created_epoch=$(date -u -d "$created" +%s 2>/dev/null || echo 0)
             now=$(date -u +%s)
             age_min=$(( (now - created_epoch) / 60 ))
-            lines=$(printf '%s\n' "$log" | wc -l | tr -d ' ')
-            # "lines:epoch" of the last time the console grew.
-            prop=$(echo "$j" | jq -r '(.properties | if type == "object" then (.mc_setup_watch // "") else tostring end)' 2>/dev/null | grep -oE '[0-9]+:[0-9]+' | head -1 || true)
-            prev_lines=${prop%%:*}
+            # Progress = the console's tail changed. Nova caps the console log,
+            # so its line count stops growing long before the setup does; a
+            # digest of the last lines moves with every new line.
+            # The system-load logger prints a {"epoch": …, "cpuPctUsed": …}
+            # line every minute; that is not progress and is left out.
+            mark=$(printf '%s\n' "$log" | grep -v -E '^\{"epoch":' | tail -n 30 | md5sum | cut -c1-12)
+            # "digest:epoch" of the last time the console moved.
+            prop=$(echo "$j" | jq -r '(.properties | if type == "object" then (.mc_setup_watch // "") else tostring end)' 2>/dev/null | grep -oE '[0-9a-f]+:[0-9]+' | head -1 || true)
+            prev_mark=${prop%%:*}
             prev_epoch=${prop##*:}
-            if [[ -z "$prop" || "$prev_lines" != "$lines" ]]; then
-              openstack server set --property "mc_setup_watch=${lines}:${now}" "$inst" || true
+            if [[ -z "$prop" || "$prev_mark" != "$mark" ]]; then
+              openstack server set --property "mc_setup_watch=${mark}:${now}" "$inst" || true
               prev_epoch=$now
             fi
             quiet_min=$(( (now - prev_epoch) / 60 ))
