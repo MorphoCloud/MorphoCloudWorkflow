@@ -824,12 +824,13 @@ was run as **amm554**, a member with no privileges. `muratmaga` is an
 organization owner and a MorphoCloud admin: every authorization gate, quota and
 portal-only check waves it through, so a pass under that account proves nothing
 about what a member will get. This holds for every item below and for the
-migration (the amm554 pass of step 3 on production). In portal-only mode amm554
-cannot type commands, so a member-level test of a command goes through the
-portal as amm554 — an admin typing the command on amm554's issue exercises the
-owner, share and email, not the member's own path. Items run under `muratmaga`
-before this date (12 to 18 on #503 and #514) keep their notes as evidence of the
-mechanism and are repeated as amm554 before the 23rd.
+migration (the amm554 pass of step 3 on production). The expected shape of a
+test (maintainer, 2026-11-05): the request is opened and owned by amm554, and
+`muratmaga` types the commands on amm554's issue — that is the admin's normal
+way of operating on a member's instance, and the owner, share, labels and email
+are the member's. Items run under `muratmaga` before this date (12 to 18 on #503
+and #514) keep their notes as evidence of the mechanism and are repeated as
+amm554 before the 23rd.
 
 1. Sign in with the GitHub App; non-members are refused.
 2. First Create: issue opened, `/create` runs, card turns active, access details
