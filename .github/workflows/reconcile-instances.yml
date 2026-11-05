@@ -10,7 +10,8 @@ name: Reconcile Instances
 # floating IP that was missing.
 #
 # Invariants (instances with a pending task_state, or updated within the
-# grace window, are skipped as in-flight):
+# grace window — 30 minutes, or 5 for a running server with no address, which
+# is repaired rather than reported (decision 34) — are skipped as in-flight):
 #   ACTIVE            -> has a floating IP
 #   SHELVED_OFFLOADED -> no floating IP left bound to its port
 #   SHELVED           -> transient; persisting means a failed/corrupt shelve
@@ -96,17 +97,6 @@ jobs:
                 continue
               fi
               updated_epoch=$(date -d "$updated" +%s 2>/dev/null || echo 0)
-              # Decision 34: a running server with no address is repaired on
-              # a short grace — an address is bound within a couple of
-              # minutes of any legitimate change, and the unreachable-shelve
-              # (decision 23/26) would otherwise shelve the member's session
-              # before this sweep gets to repair it.
-              if [[ "$status" == "ACTIVE" ]] && (( now_epoch - updated_epoch >= repair_grace_seconds )); then
-                :
-              elif (( now_epoch - updated_epoch < grace_seconds )); then
-                echo "Updated within grace window; skipping."
-                continue
-              fi
 
               # Floating-IP presence is judged from the Neutron port binding
               # (same as the action's verify_end_state step), not from Nova's
@@ -118,6 +108,19 @@ jobs:
                 fip_count=$(echo "$floating_ips" | jq --arg port "$port_id" '[.[] | select(.Port == $port)] | length')
               fi
               echo "port [$port_id] floating IPs bound [$fip_count]"
+
+              # Decision 34: a running server with no address is repaired on
+              # a short grace — an address is bound within a couple of
+              # minutes of any legitimate change, and the unreachable-shelve
+              # (decision 23/26) would otherwise shelve the member's session
+              # before this sweep gets to repair it. Everything else keeps
+              # the full grace.
+              if [[ "$status" == "ACTIVE" && "$fip_count" -lt 1 ]] && (( now_epoch - updated_epoch >= repair_grace_seconds )); then
+                :
+              elif (( now_epoch - updated_epoch < grace_seconds )); then
+                echo "Updated within grace window; skipping."
+                continue
+              fi
 
               reason=""
               repair=""
