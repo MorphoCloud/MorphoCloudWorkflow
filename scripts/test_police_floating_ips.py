@@ -252,6 +252,34 @@ def test_an_address_just_bound_to_a_shelved_instance_is_left_for_ten_minutes():
     assert counts["spares"] == 1
 
 
+def test_a_release_note_goes_through_admin_alert(monkeypatch, tmp_path):
+    # Decision 35: the note is a dispatch of admin-alert.yml with the issue
+    # number read from the instance's name.
+    token = tmp_path / "pat"
+    token.write_text("gho_test")
+    monkeypatch.setattr(police, "TOKEN_FILE", token)
+    monkeypatch.setattr(police, "REPO", "MorphoCloud/Instances")
+    calls = []
+
+    class Done:
+        returncode = 0
+        stderr = ""
+
+    monkeypatch.setattr(
+        police.subprocess,
+        "run",
+        lambda args, **_kw: (calls.append(list(args)), Done())[1],
+    )
+    police.note_issue("morpho-cloud_instance-7", "released")
+    assert len(calls) == 1
+    assert calls[0][:4] == ["gh", "workflow", "run", "admin-alert.yml"]
+    assert "issue=7" in calls[0]
+    assert "note=released" in calls[0]
+    # Not an instance name: nothing is dispatched.
+    police.note_issue("notinstance-5", "released")
+    assert len(calls) == 1
+
+
 def test_infrastructure_is_never_touched_even_when_shelved_or_unknown():
     fips = [
         fip("149.165.1.1", "p1", "10.0.0.1"),  # a shelved runner: not ours

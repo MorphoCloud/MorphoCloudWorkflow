@@ -280,13 +280,14 @@ def save_state(state: dict) -> None:
         json.dump(state, fh)
 
 
-ISSUE_RE = re.compile(r"instance-([0-9]+)$")
+ISSUE_RE = re.compile(r"(^|[_-])instance-([0-9]+)$")  # the same boundary as INSTANCE_RE
 
 
 def note_issue(server_name: str, note: str) -> None:
     """Decision 35: an automatic change to a member's instance is said on
-    the member's issue, through admin-alert.yml (the runner cannot post);
-    fire and forget — the runner log is the fallback record."""
+    the member's issue, through admin-alert.yml (the runner cannot post).
+    Fire and forget, unlike send_alert: a courtesy line is not worth holding
+    the tick for two minutes, and the runner log keeps the record."""
     m = ISSUE_RE.search(server_name)
     try:
         with TOKEN_FILE.open(encoding="utf-8") as fh:
@@ -307,7 +308,7 @@ def note_issue(server_name: str, note: str) -> None:
             "--ref",
             "main",
             "-f",
-            f"issue={m.group(1)}",
+            f"issue={m.group(2)}",
             "-f",
             f"note={note}",
         ],
