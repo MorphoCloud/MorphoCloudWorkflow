@@ -464,6 +464,23 @@ item 21: the repair acts five minutes after the server's last change, not thirty
 would otherwise shelve the member's session before the repair gets its turn; an
 address is bound within a couple of minutes of any legitimate change. |
 
+| 35 | **An automatic actor that changes a member's instance says so on the
+member's issue; new automation on production runs report-only for a week.**
+(maintainer, 2026-11-05; item 5 of the robustness plan; on 2026-11-04 the
+policing script released Instances#214's address mid-unshelve and the only trace
+was a line in a log on the runner) Auto-shelve, follow-through and reconcile
+already post what they do. The one silent actor was the floating-IP policing
+script: its only member-facing action, releasing an address from a shelved
+instance, now posts one line on the issue — "The public address … was released
+from your shelved instance: an address never stays on a shelved server. The next
+unshelve attaches a fresh one." — through `admin-alert.yml`, which gained an
+`issue` + `note` mode (a note without an email; the runner can dispatch
+workflows but cannot post). Mints and deletes of spare addresses touch no member
+and stay in the log. The rule for what comes next: a new automatic actor on
+production starts in a report-only mode (`--dry-run` or its equivalent) for a
+week, its would-be actions read from its log, before it is allowed to act — the
+policing script went live acting on day one and cost a member their address. |
+
 ## Sign-in (decision 8)
 
 The current OAuth App only reads team membership (`read:org`). Posting a command
