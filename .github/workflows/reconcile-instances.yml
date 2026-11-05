@@ -169,6 +169,7 @@ jobs:
                       -f issue_creator="$author" -f course_team_slug="$COURSE_TEAM_SLUG"; then
                     echo "::error ::Could not dispatch the $repair for $instance_name (issue #$issue_number)"
                     printf -- '- %s (issue #%s): %s; the automatic repair could not be dispatched\n' "$instance_name" "$issue_number" "$reason" >> /tmp/reconcile-violations.txt
+                    printf '%s invariant-violation\n' "$issue_number" >> /tmp/reconcile-flagged.txt
                   fi
                   continue
                 fi
