@@ -940,9 +940,19 @@ amm554 before the 23rd.
     `scsi-0QEMU_QEMU_HARDDISK_<volume id>`; the runner is admin-locked; the
     automount mounts every attached volume read-write; the first version put
     MyData under a stray `MyDrive/` folder.
-20. Slow setup (decision 33): on Test, with `followup:setup` put by hand on an
-    ACTIVE, finished instance, the next follow-through run reads `complete` on
-    the console, posts "Setup has finished on the instance", dispatches
-    `resume-setup`, and the resumed setup job ends with the access email and the
-    markers cleared. The error and stall branches are verified by reading, as a
-    console error or a 60-minute hang cannot be forced on Test.
+20. Slow setup (decision 33): on Test, as amm554 (#519), the create was
+    interrupted during "Setup instance" (the shape of a create that gave up
+    while the instance kept installing), `followup:setup` set by hand: the
+    instance printed `complete` on its own at 05:14Z; the sweep read it, posted
+    "Setup has finished on the instance", dispatched `resume-setup`, which ran
+    the setup tail (share mount, reboot, verify, properties), sent amm554 the
+    access email and cleared the markers; `status:active`, `exoSetup` complete.
+    **Passed 2026-11-05 05:53Z.** Found and fixed on the way (#365 to #368): a
+    stale marker on an already finished setup is dropped (the reboot erases the
+    console's complete line; the server property is the sign); `resume-setup`
+    refuses a finished instance instead of waiting 20 minutes; the sweep's
+    status-line parse appended a stray brace (every status read as pending);
+    progress is a digest of the console tail minus the load logger's heartbeat,
+    not a line count (Nova caps the console); `resume-setup` opens its own
+    progress table. The error and stall branches are verified by reading, as a
+    console error or a hang cannot be forced on Test.
