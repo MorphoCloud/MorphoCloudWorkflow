@@ -94,7 +94,7 @@ jobs:
           SETUP_CEILING_MIN=60
           SETUP_STALL_MIN=15
           watch_setup() {  # issue, instance
-            local n=$1 inst=$2 j status log line sstatus created created_epoch now age_min lines prop prev_lines prev_epoch quiet_min
+            local n=$1 inst=$2 j status log line sstatus created created_epoch now age_min mark prop prev_mark prev_epoch quiet_min
             if ! j=$(openstack server show "$inst" -f json 2>/dev/null); then
               exhaust "$n" "$inst" "setup" "the server no longer exists on Jetstream2"
               return
@@ -146,7 +146,9 @@ jobs:
             # Progress = the console's tail changed. Nova caps the console log,
             # so its line count stops growing long before the setup does; a
             # digest of the last lines moves with every new line.
-            mark=$(printf '%s\n' "$log" | tail -n 30 | md5sum | cut -c1-12)
+            # The system-load logger prints a {"epoch": …, "cpuPctUsed": …}
+            # line every minute; that is not progress and is left out.
+            mark=$(printf '%s\n' "$log" | grep -v -E '^\{"epoch":' | tail -n 30 | md5sum | cut -c1-12)
             # "digest:epoch" of the last time the console moved.
             prop=$(echo "$j" | jq -r '(.properties | if type == "object" then (.mc_setup_watch // "") else tostring end)' 2>/dev/null | grep -oE '[0-9a-f]+:[0-9]+' | head -1 || true)
             prev_mark=${prop%%:*}
