@@ -240,7 +240,16 @@ instance start takes it, above the rule it is released after ten idle minutes â€
 so an address for new infrastructure is allocated and attached in one step
 (Exosphere's create does that), never parked. New infrastructure servers need
 nothing else: they show up as `infra=N` in the policing log and the pool is
-unaffected. No tag or marker scheme; the maintainer declined one. |
+unaffected. No tag or marker scheme; the maintainer declined one. **Amended
+2026-11-05 (a drought email on Test said "each create or unshelve from now on
+fails" while a shelve gave the spare back five minutes later, and no email ever
+said the drought ended):** the drought email states what is in hand (spares
+beside running instances) and how many more starts that covers, and that a
+shelve returns an address. While the drought is open and no mint is due, the
+script asks Jetstream2 for one address once an hour and hands it straight back;
+the first routable answer, from that probe or from a mint, sends one "Jetstream2
+has public addresses again" email. An all-clear that cannot be sent keeps the
+drought open for the next probe. |
 
 | 25 | **An unshelve takes and binds its address only once the server is ACTIVE;
 no address, no running server.** (maintainer, 2026-11-04; step 5 of the
