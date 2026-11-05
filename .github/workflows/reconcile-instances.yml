@@ -69,6 +69,7 @@ jobs:
           # email below. Written from inside the `while read` pipeline, so it
           # has to be a file — that subshell cannot export variables out.
           : > /tmp/reconcile-violations.txt
+          : > /tmp/reconcile-flagged.txt
 
           # One snapshot for all port-binding lookups below; a slightly stale
           # view is fine — a violation that appears mid-run is caught by the
@@ -111,8 +112,13 @@ jobs:
               echo "port [$port_id] floating IPs bound [$fip_count]"
 
               reason=""
+              repair=""
               if [[ "$status" == "ACTIVE" && "$fip_count" -lt 1 ]]; then
                 reason="the instance is ACTIVE but has no floating IP — it is unreachable (users cannot connect, auto-shelving cannot measure uptime) while still consuming SUs"
+                # Decision 34: this one is repaired, not only reported — an
+                # unshelve of an already running server is the action's no-op
+                # path, which attaches an address and sends the access email.
+                repair="unshelve"
               elif [[ "$status" == "SHELVED" ]]; then
                 reason="the instance is stuck in SHELVED — the offload never completed, typically a failed shelve that /unshelve cannot recover"
               elif [[ "$status" == "ERROR" ]]; then
@@ -127,15 +133,44 @@ jobs:
                 continue
               fi
 
-              if ! has_label=$(gh issue view "$issue_number" --json labels --jq 'any(.labels[].name; . == "invariant-violation")'); then
+              if ! issue_json=$(gh issue view "$issue_number" --json labels,author); then
                 echo "::warning ::Failed to retrieve labels for issue $issue_number (instance $instance_name); skipping."
                 continue
               fi
+              has_label=$(echo "$issue_json" | jq -r 'any(.labels[].name; . == "invariant-violation")')
+              has_admin=$(echo "$issue_json" | jq -r 'any(.labels[].name; . == "needs-admin")')
+              author=$(echo "$issue_json" | jq -r '.author.login // ""')
 
               if [[ -n "$reason" ]]; then
                 echo "::warning ::$instance_name violates an invariant: $reason"
                 if [[ "$has_label" == "true" ]]; then
-                  echo "Issue #$issue_number already flagged; not re-alerting."
+                  if [[ -n "$repair" && "$has_admin" != "true" ]]; then
+                    # The repair was dispatched last run and the address is
+                    # still missing: hand it to the admins, once.
+                    echo "Repair of $instance_name did not take; escalating."
+                    gh issue edit "$issue_number" --add-label "needs-admin" || echo "::warning ::Failed to label issue $issue_number needs-admin"
+                    printf '### Instance state alert\n\n**%s** is running but still has no public address after an automatic repair. This request is flagged for the MorphoCloud admins (`needs-admin`), who take it from here.\n' "$instance_name" > /tmp/reconcile-comment.md
+                    gh issue comment "$issue_number" --body-file /tmp/reconcile-comment.md || echo "::warning ::Failed to comment on issue $issue_number"
+                    printf -- '- %s (issue #%s): %s; the automatic repair (an unshelve) did not attach one\n' "$instance_name" "$issue_number" "$reason" >> /tmp/reconcile-violations.txt
+                    # Which label this run added, for the un-flag step below.
+                    printf '%s needs-admin\n' "$issue_number" >> /tmp/reconcile-flagged.txt
+                  else
+                    echo "Issue #$issue_number already flagged; not re-alerting."
+                  fi
+                  continue
+                fi
+                if [[ -n "$repair" ]]; then
+                  echo "Repairing $instance_name: dispatching $repair for issue #$issue_number"
+                  gh issue edit "$issue_number" --add-label "invariant-violation" || echo "::warning ::Failed to add label to issue $issue_number"
+                  printf 'Your instance is running but has no public address, so nothing can reach it. MorphoCloud is attaching one now; a new access email follows in a few minutes.\n' > /tmp/reconcile-comment.md
+                  gh issue comment "$issue_number" --body-file /tmp/reconcile-comment.md || echo "::warning ::Failed to comment on issue $issue_number"
+                  if ! gh workflow run control-instance-from-workflow.yml \
+                      -f issue_number="$issue_number" -f command_name="$repair" \
+                      -f issue_creator="$author" -f course_team_slug="$COURSE_TEAM_SLUG"; then
+                    echo "::error ::Could not dispatch the $repair for $instance_name (issue #$issue_number)"
+                    printf -- '- %s (issue #%s): %s; the automatic repair could not be dispatched\n' "$instance_name" "$issue_number" "$reason" >> /tmp/reconcile-violations.txt
+                    printf '%s invariant-violation\n' "$issue_number" >> /tmp/reconcile-flagged.txt
+                  fi
                   continue
                 fi
                 # No admin mention here: the email below is the channel (decision
@@ -144,9 +179,13 @@ jobs:
                 gh issue edit "$issue_number" --add-label "invariant-violation" || echo "::warning ::Failed to add label to issue $issue_number"
                 gh issue comment "$issue_number" --body-file /tmp/reconcile-comment.md || echo "::warning ::Failed to comment on issue $issue_number"
                 printf -- '- %s (issue #%s): %s\n' "$instance_name" "$issue_number" "$reason" >> /tmp/reconcile-violations.txt
+                printf '%s invariant-violation\n' "$issue_number" >> /tmp/reconcile-flagged.txt
               elif [[ "$has_label" == "true" ]]; then
                 echo "Instance $instance_name is healthy again; clearing label on issue #$issue_number."
                 gh issue edit "$issue_number" --remove-label "invariant-violation" || echo "::warning ::Failed to remove label from issue $issue_number"
+                if [[ "$has_admin" == "true" ]]; then
+                  gh issue edit "$issue_number" --remove-label "needs-admin" || echo "::warning ::Failed to remove needs-admin from issue $issue_number"
+                fi
               fi
             done
         env:
@@ -154,6 +193,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
+          COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
           RUN_URL:
             https://github.com/${{ github.repository }}/actions/runs/${{
             github.run_id }}
@@ -212,9 +252,13 @@ jobs:
       - name: Un-flag the violations whose email did not go out
         if: ${{ always() && steps.mail_violations.outcome == 'failure' }}
         run: |
-          grep -oE 'issue #[0-9]+' /tmp/reconcile-violations.txt 2>/dev/null | grep -oE '[0-9]+' | sort -u | while read -r n; do
-            gh issue edit "$n" --remove-label "invariant-violation" \
-              && echo "un-flagged issue #$n: it alerts again next run" \
+          # Each line is "<issue> <label added this run>": the report-only
+          # path adds invariant-violation, the escalation of a failed repair
+          # (decision 34) adds needs-admin on an issue already flagged.
+          sort -u /tmp/reconcile-flagged.txt 2>/dev/null | while read -r n label; do
+            [[ -n "$n" && -n "$label" ]] || continue
+            gh issue edit "$n" --remove-label "$label" \
+              && echo "un-flagged issue #$n ($label): it alerts again next run" \
               || echo "::warning ::Could not un-flag issue #$n"
           done
         env:

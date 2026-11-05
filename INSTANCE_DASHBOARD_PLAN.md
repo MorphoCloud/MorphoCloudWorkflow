@@ -442,6 +442,24 @@ and create again or wait, `needs-admin` and one admin email. A member's own
 /shelve or /delete drops the watch. Workshop sub-issues are outside this (the
 backfill owns them). |
 
+| 34 | **An ACTIVE instance without a public address is repaired, not only
+reported.** (maintainer, 2026-11-05; item 2 of the robustness plan;
+Instances#214 ran address-less at 64 SU/h from 15:58Z to 16:05Z on 2026-11-04
+and only a hand fixed it) `reconcile-instances` already checks "ACTIVE must have
+a floating IP" twice an hour and labeled the issue and emailed the admins. Now,
+on the first sighting, it dispatches an unshelve for the instance through
+`control-instance-from-workflow`: on a server that is already running that is
+the action's no-op path, which takes a spare address from the pool, binds it,
+sets the properties and sends the member a new access email. The member is told
+("no public address; attaching one now; a new access email follows"), the issue
+is labeled `invariant-violation` as before, and no admin email is sent. If the
+address is still missing on the next sweep (half an hour later), the issue gets
+`needs-admin`, the member is told the admins have it, and the admins get the
+usual violation email with "the automatic repair did not attach one". Both
+labels clear when the instance is healthy again. The other violations (stuck
+SHELVED, ERROR, an address left on a shelved server) keep the report-only path;
+the policing script already releases the last. |
+
 ## Sign-in (decision 8)
 
 The current OAuth App only reads team membership (`read:org`). Posting a command
@@ -956,3 +974,8 @@ amm554 before the 23rd.
     not a line count (Nova caps the console); `resume-setup` opens its own
     progress table. The error and stall branches are verified by reading, as a
     console error or a hang cannot be forced on Test.
+21. Address repair (decision 34): on Test, with amm554's running instance
+    stripped of its floating IP by hand (`openstack floating ip unset`), the
+    next reconcile run posts "no public address; attaching one now", dispatches
+    the unshelve, and the instance ends with an address bound, a new access
+    email to amm554 and the label cleared on the following sweep.
