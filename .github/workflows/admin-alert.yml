@@ -48,8 +48,9 @@ jobs:
         if: ${{ inputs.issue != '' && inputs.note != '' }}
         shell: bash
         run: |
+          # A failed note must not keep the email below from going out.
           gh issue comment "$ISSUE" --body "$NOTE" \
-            || { echo "::error ::Could not post the note on issue #$ISSUE"; exit 1; }
+            || echo "::warning ::Could not post the note on issue #$ISSUE: $NOTE"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
