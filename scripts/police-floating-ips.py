@@ -545,6 +545,8 @@ def main(argv: list[str]) -> int:
     except Exception as e:
         log(f"run crashed: {type(e).__name__}: {e}")
         traceback.print_exc()
+        if "--dry-run" in argv:
+            return 1  # a dry run changes nothing, including the alert state
         state = load_state()
         alert_once(
             state,
