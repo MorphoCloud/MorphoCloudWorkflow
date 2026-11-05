@@ -458,7 +458,11 @@ address is still missing on the next sweep (half an hour later), the issue gets
 usual violation email with "the automatic repair did not attach one". Both
 labels clear when the instance is healthy again. The other violations (stuck
 SHELVED, ERROR, an address left on a shelved server) keep the report-only path;
-the policing script already releases the last. |
+the policing script already releases the last. Amended 2026-11-05 after test
+item 21: the repair acts five minutes after the server's last change, not thirty
+— the unreachable-shelve (decisions 23/26, 30 minutes on production, 5 on Test)
+would otherwise shelve the member's session before the repair gets its turn; an
+address is bound within a couple of minutes of any legitimate change. |
 
 ## Sign-in (decision 8)
 
