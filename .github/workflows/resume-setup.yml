@@ -53,9 +53,16 @@ jobs:
           prefix=${PREFIX:+${PREFIX}_}
           instance_name="${prefix}instance-${ISSUE_NUMBER}"
           volume_name="My-Data-${ISSUE_NUMBER}${VOLUME_SUFFIX:+-$VOLUME_SUFFIX}"
-          status=$(openstack server show "$instance_name" -f value -c status)
+          server=$(openstack server show "$instance_name" -f json)
+          status=$(echo "$server" | jq -r '.status // ""')
           if [[ "$status" != "ACTIVE" ]]; then
             refuse "$instance_name is $status, not running"
+          fi
+          # A setup job that already finished wrote exoSetup=complete (and
+          # rebooted the instance, so its console no longer shows the
+          # instance's own complete line): nothing to resume.
+          if echo "$server" | jq -r '(.properties | if type == "object" then (.exoSetup // "") else tostring end)' | grep -q '"complete"'; then
+            refuse "the setup of $instance_name already finished; there is nothing to resume"
           fi
           port_id=$(openstack port list --server "$instance_name" -f value -c ID | head -n1)
           ip=""
