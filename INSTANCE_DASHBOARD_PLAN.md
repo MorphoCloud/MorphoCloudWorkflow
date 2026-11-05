@@ -978,8 +978,14 @@ amm554 before the 23rd.
     not a line count (Nova caps the console); `resume-setup` opens its own
     progress table. The error and stall branches are verified by reading, as a
     console error or a hang cannot be forced on Test.
-21. Address repair (decision 34): on Test, with amm554's running instance
-    stripped of its floating IP by hand (`openstack floating ip unset`), the
-    next reconcile run posts "no public address; attaching one now", dispatches
-    the unshelve, and the instance ends with an address bound, a new access
-    email to amm554 and the label cleared on the following sweep.
+21. Address repair (decision 34): on Test, as amm554 (#521), the running
+    instance's floating IP unset by hand at 17:58:28Z; reconcile dispatched at
+    17:58:32Z read "ACTIVE but no floating IP", posted "no public address;
+    attaching one now", labeled `invariant-violation` and dispatched the
+    unshelve; the no-op unshelve bound 149.165.170.223, set the properties and
+    sent amm554 the access email by 18:00:16Z ("was already unshelved ✅"); the
+    label clears on the first sweep after the server's 30-minute grace. **Passed
+    2026-11-05 18:00Z.** The first attempt (17:16Z) was shelved by the Test
+    portal's 5-minute unreachable-shelve before reconcile's 30-minute grace let
+    it act — the race that led to the amended five-minute repair grace (#371);
+    the Test portal's delay was 1800 for the second run and is back at 300.
