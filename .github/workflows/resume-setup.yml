@@ -93,6 +93,23 @@ jobs:
           VOLUME_SUFFIX: ${{ vars.VOLUME_NAME_SUFFIX }}
           STORAGE_MODE: ${{ vars.MORPHOCLOUD_STORAGE_MODE }}
 
+      # The setup action updates a progress table by comment id; the create
+      # that this resumes left its own table in a failed state, so a fresh
+      # one is opened here (setup pending, the rest done by the create).
+      - name: comment (progress)
+        id: progress
+        uses: ./.github/actions/comment-progress
+        with:
+          issue-number: ${{ inputs.issue_number }}
+          storage_mode: ${{ steps.resolve.outputs.storage_mode }}
+          create_ip: ✅
+          create_volume: ✅
+          create_instance: ✅
+          associate_ip: ✅
+          setup_instance: ⏳
+          attach_volume: ""
+          send_email: ""
+
       - name: Setup instance
         id: setup
         uses: ./.github/actions/setup-instance
@@ -103,7 +120,7 @@ jobs:
           instance_name: ${{ steps.resolve.outputs.instance_name }}
           volume_name: ${{ steps.resolve.outputs.volume_name }}
           instance_ip: ${{ steps.resolve.outputs.instance_ip }}
-          progress_comment_id: ""
+          progress_comment_id: ${{ steps.progress.outputs.comment-id }}
           storage_mode: ${{ steps.resolve.outputs.storage_mode }}
           github_id: ${{ steps.resolve.outputs.github_id }}
           github_login: ${{ steps.resolve.outputs.github_login }}
