@@ -108,6 +108,14 @@ jobs:
               echo "  $inst is $status; waiting"
               return
             fi
+            # A setup job that already finished wrote exoSetup=complete on the
+            # server (and rebooted it, so the console no longer shows the
+            # instance's own "complete" line): nothing to resume, drop the marker.
+            if echo "$j" | jq -r '(.properties | if type == "object" then (.exoSetup // "") else tostring end)' 2>/dev/null | grep -q '"complete"'; then
+              echo "$inst (issue #$n): setup already finished (exoSetup complete); dropping the marker"
+              clear_markers "$n"
+              return
+            fi
             log=$(openstack console log show "$inst" 2>/dev/null || true)
             line=$(printf '%s\n' "$log" | grep -E '^\{"status":"' | tail -n1 || true)
             sstatus=$(printf '%s\n' "${line:-{\"status\":\"pending\"}}" | jq -r '.status // "pending"' 2>/dev/null || echo pending)
