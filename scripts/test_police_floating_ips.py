@@ -192,6 +192,17 @@ def test_over_the_hold_releases_idle_spares_oldest_first_down_to_running_plus_on
     }
 
 
+def test_two_spares_with_the_same_age_release_without_crashing():
+    # Test, 2026-11-05: equal timestamps made sorted() compare the address
+    # dicts and raise; eleven ticks died silently.
+    fips = [fip("149.165.1.1"), fip("149.165.1.2"), fip("149.165.1.3")]
+    actions, counts = run_plan(
+        fips, hold=1, ages={"149.165.1.1": 900, "149.165.1.2": 900, "149.165.1.3": 900}
+    )
+    assert [a[0] for a in actions] == ["delete", "delete"]
+    assert counts["held"] == len(fips)
+
+
 def test_shelved_instance_loses_its_address_and_it_counts_as_spare():
     fips = [fip("149.165.1.1", "p1", "10.0.0.1"), fip("149.165.1.2", "p2", "10.0.0.2")]
     actions, counts = run_plan(

@@ -51,6 +51,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 
 ROUTABLE_PREFIX = "149.165."
@@ -255,7 +256,13 @@ def plan(
         actions.append(("mint",))  # one per run, up to the rule
     elif held > target:
         idle = [(updated_at(f), f) for f, attached in routable if not attached]
-        idle = sorted((at, f) for at, f in idle if now - at >= IDLE_BEFORE_RELEASE)
+        # Sort on the age only: two addresses with the same timestamp would
+        # otherwise be compared as dicts, which raises (seen on Test
+        # 2026-11-05: eleven silent crashes before anyone noticed).
+        idle = sorted(
+            ((at, f) for at, f in idle if now - at >= IDLE_BEFORE_RELEASE),
+            key=lambda x: x[0],
+        )
         for _, f in idle[: held - target]:
             actions.append(
                 ("delete", str(f["ID"]), str(f["Floating IP Address"]), "over the hold")
@@ -475,6 +482,7 @@ def run(dry_run: bool) -> int:
         return cache[fid]
 
     actions, counts = plan(fips, by_fixed, HOLD, now, updated_at)
+    clear_alert(state, "crashed")  # a run that planned is a run that works again
     log(
         f"instances: held={counts['held']} running={counts['running']} spares={counts['spares']} "
         f"(infra={counts['infra']} unknown={counts['unknown']}) "
@@ -533,6 +541,22 @@ def main(argv: list[str]) -> int:
     ) as e:
         detail = (getattr(e, "stderr", "") or str(e)).strip()[-300:]
         log(f"run failed: {detail}")
+        return 1
+    except Exception as e:
+        log(f"run crashed: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        if "--dry-run" in argv:
+            return 1  # a dry run changes nothing, including the alert state
+        state = load_state()
+        alert_once(
+            state,
+            "crashed",
+            "Floating-IP policing is crashing on the runner",
+            f"police-floating-ips.py raised {type(e).__name__}: {e}\n\nEvery tick fails the same way "
+            "until the script is fixed; no address is minted, released or deleted meanwhile. The "
+            "traceback is in ~/fip-police.log on the runner.",
+        )
+        save_state(state)
         return 1
 
 
