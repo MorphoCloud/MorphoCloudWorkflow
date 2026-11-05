@@ -63,6 +63,7 @@ jobs:
           instance_basename="${instance_prefix}instance"
 
           grace_seconds=1800
+          repair_grace_seconds=300  # decision 34: the no-address repair acts sooner
           now_epoch=$(date +%s)
 
           # Newly-flagged violations accumulate here for the direct admin
@@ -95,7 +96,14 @@ jobs:
                 continue
               fi
               updated_epoch=$(date -d "$updated" +%s 2>/dev/null || echo 0)
-              if (( now_epoch - updated_epoch < grace_seconds )); then
+              # Decision 34: a running server with no address is repaired on
+              # a short grace — an address is bound within a couple of
+              # minutes of any legitimate change, and the unreachable-shelve
+              # (decision 23/26) would otherwise shelve the member's session
+              # before this sweep gets to repair it.
+              if [[ "$status" == "ACTIVE" ]] && (( now_epoch - updated_epoch >= repair_grace_seconds )); then
+                :
+              elif (( now_epoch - updated_epoch < grace_seconds )); then
                 echo "Updated within grace window; skipping."
                 continue
               fi
