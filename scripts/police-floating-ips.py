@@ -201,7 +201,7 @@ def classify(
     # attached implies owner is an instance (the return above), so owner is
     # a dict here; `settled` last, so an in-flight server costs no API call.
     if attached and status in SHELVED and not owner.get("task") and settled(f):
-        acts.append(("unset", fid, ip, status))
+        acts.append(("unset", fid, ip, status, owner["name"]))
         attached = False
     if not routable:
         acts.append(
@@ -278,6 +278,49 @@ def save_state(state: dict) -> None:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     with STATE_FILE.open("w", encoding="utf-8") as fh:
         json.dump(state, fh)
+
+
+ISSUE_RE = re.compile(r"instance-([0-9]+)$")
+
+
+def note_issue(server_name: str, note: str) -> None:
+    """Decision 35: an automatic change to a member's instance is said on
+    the member's issue, through admin-alert.yml (the runner cannot post);
+    fire and forget — the runner log is the fallback record."""
+    m = ISSUE_RE.search(server_name)
+    try:
+        with TOKEN_FILE.open(encoding="utf-8") as fh:
+            token = fh.read().strip()
+    except OSError:
+        token = ""
+    if not m or not REPO or not token:
+        log(f"NOTE (not posted): {server_name}: {note}")
+        return
+    r = subprocess.run(
+        [
+            "gh",
+            "workflow",
+            "run",
+            "admin-alert.yml",
+            "--repo",
+            REPO,
+            "--ref",
+            "main",
+            "-f",
+            f"issue={m.group(1)}",
+            "-f",
+            f"note={note}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "GH_TOKEN": token},
+    )
+    if r.returncode != 0:
+        log(
+            f"NOTE could not be dispatched ({r.stderr.strip()[-200:]}): {server_name}: {note}"
+        )
 
 
 def send_alert(subject: str, body: str) -> bool:
@@ -451,10 +494,15 @@ def apply(action: tuple, state: dict, dry_run: bool) -> None:
     kind = action[0]
     if kind == "unset":
         log(
-            f"{'would release' if dry_run else 'releasing'} {action[2]} from a {action[3]} server"
+            f"{'would release' if dry_run else 'releasing'} {action[2]} from a {action[3]} server ({action[4]})"
         )
         if not dry_run:
             os_run("floating", "ip", "unset", "--port", action[1])
+            note_issue(
+                action[4],
+                f"The public address {action[2]} was released from your shelved instance: an address"
+                " never stays on a shelved server. The next unshelve attaches a fresh one.",
+            )
     elif kind == "delete":
         log(f"{'would delete' if dry_run else 'deleting'} {action[2]} ({action[3]})")
         if not dry_run:

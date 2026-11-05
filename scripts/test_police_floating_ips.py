@@ -202,6 +202,9 @@ def test_shelved_instance_loses_its_address_and_it_counts_as_spare():
     assert kinds(actions) == [("unset", "149.165.1.2"), ("mint",)]
     assert counts["running"] == 1
     assert counts["spares"] == 1
+    # Decision 35: the release names the instance, so the member can be told.
+    unset = next(a for a in actions if a[0] == "unset")
+    assert unset[4] == "morpho-cloud_instance-7"
 
 
 def test_an_in_flight_task_blocks_the_release_even_of_an_old_binding():
