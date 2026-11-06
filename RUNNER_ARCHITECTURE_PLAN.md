@@ -155,6 +155,15 @@ reliability** problem during any busy period.
 
 ## 3. Why the naïve "two runners: `/create` vs everything else" is unsafe
 
+> **Correction 2026-11-06 (see §7.1 and AUTOMATION_AUDIT_2026-11.md, class 1):**
+> the acquire-lane serialization described in this section was never built —
+> unshelve jobs run `runs-on: self-hosted` on either runner — so the floating-IP
+> race below was open in production. It is now closed without a lane: every
+> attach is a compare-and-swap on the address's Neutron revision
+> (`.github/actions/fip/fip.py`), every detach is by the server's own port, and
+> `create-ip` is gone. The "✓ Verified" and "must serialize" lines below are
+> kept as the history of the design, not as a description of the code.
+
 The reason the system assumes serial execution is the **floating-IP pool +
 compute-quota** hazard. `/create` is not the only op that hits it:
 
@@ -197,10 +206,10 @@ with an acquire.)
 
 ### The correct dividing line is **hazard class, not command duration**
 
-| Lane                              | Ops                                                                                                | Why                                                                              |
-| --------------------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| **Acquire** (must serialize)      | `create`, `unshelve`                                                                               | allocate FIP from shared pool + consume quota (both call `create-ip`)            |
-| **Control** (safe to parallelize) | `shelve`, `delete`, volume-delete, status, uptime, backfill/reconciler _detection_, command intake | read-only or resource-_freeing_; only one side ever _allocates_, and it's serial |
+| Lane                              | Ops                                                                                                | Why                                                                                                          |
+| --------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| **Acquire** (must serialize)      | `create`, `unshelve`                                                                               | allocate FIP from shared pool + consume quota (both called `create-ip`; see the 2026-11-06 correction above) |
+| **Control** (safe to parallelize) | `shelve`, `delete`, volume-delete, status, uptime, backfill/reconciler _detection_, command intake | read-only or resource-_freeing_; only one side ever _allocates_, and it's serial                             |
 
 A `delete` (releases a FIP) running alongside a `create` (allocates one) is fine
 — releasing returns to the pool; only allocation is racy, and allocation stays
@@ -330,7 +339,8 @@ These get added to `labels.yml`.
 ### 9.2 The split
 
 - **Acquire job** (acquire runner, `acquire-lane` group): preamble + `create-ip`
-  (FIP allocation — the racy part that must serialize) + create volume +
+  (FIP allocation — the racy part that must serialize; since 2026-11-06 a
+  compare-and-swap in fip.py, see §7.1) + create volume +
   `openstack server create`, set `phase:creating`, **exit**. Holds the runner
   ~1–3 min instead of ~13.
 - **Reconciler** (control runner, singleton cron, ~every 2–3 min + dispatch):

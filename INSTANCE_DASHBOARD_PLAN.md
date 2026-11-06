@@ -206,8 +206,10 @@ unattached non-routable ones on sight, and when it has to mint, refuses a
 non-routable result (two tries) and fails fast with "no routable floating IP
 available on Jetstream2". Having taken the last spare, it mints one in the same
 run, so the next create or unshelve finds one in hand — this is what makes N a
-quiet-time floor rather than a burst buffer: creates and unshelves are
-serialized on the acquire lane, and each leaves a spare behind. (2)
+quiet-time floor rather than a burst buffer: each create and unshelve leaves a
+spare behind. (Creates and unshelves were said to be serialized on an acquire
+lane; that lane was never built, and since 2026-11-06 concurrent takers are safe
+because fip.py attaches with a compare-and-swap.) (2)
 `scripts/police-floating-ips.py` runs from the runner's crontab every five
 minutes (decision 21): it releases an address bound to a shelved server
 (Jetstream2's policy; a failed unshelve leaves one) — amended 2026-11-04 after
