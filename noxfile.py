@@ -44,6 +44,11 @@ def _collect_files_to_copy(
                 continue
             session.log(f"Analysing directory {src_path}")
             for file_path in src_path.rglob("*"):
+                # Compiled Python caches are local build output (a test run
+                # writes .github/actions/fip/__pycache__), never source: one
+                # was vendorized into Test-Instances on 2026-11-06.
+                if "__pycache__" in file_path.parts or file_path.suffix == ".pyc":
+                    continue
                 if file_path.is_file():
                     if str(file_path.resolve()) in exclude_paths_set:
                         session.log(f"Ignoring {file_path}")
