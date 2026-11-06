@@ -105,8 +105,11 @@ scripts/restore-instances-dispatcher.sh exouser@<ACQUIRE_RUNNER>
 ```
 
 It copies the two dispatcher scripts + the two token files (from your `~/.ssh`
-backups), installs `instances-runner.crontab`, and verifies each token
-authenticates. **Do not run this against the control runner.**
+backups), installs `instances-runner.crontab` (rendered from the workflows'
+`# dispatch:` markers; the script refuses a stale one), and verifies each token
+authenticates. **Do not run this against the control runner.** The
+Test-Instances runner takes the same script with `MWF_CRONTAB`, `MWF_WF_TOKEN`
+and `MWF_ANALYTICS_TOKEN=` — see `scripts/runner-cron-dispatcher.md`.
 
 If the PAT backups are missing, regenerate the fine-grained PATs (Actions:
 read/write — workflow-dispatcher on `Instances`, analytics-dispatcher on
@@ -118,9 +121,12 @@ read/write — workflow-dispatcher on `Instances`, analytics-dispatcher on
 - `ssh exouser@<RUNNER> 'systemctl --type=service | grep actions.runner'` →
   service active; runner shows **online** in the GitHub Runners list.
 - **Acquire only:**
-  `ssh exouser@<ACQUIRE> 'crontab -l | grep -c morphocloud-dispatch'` → 7 lines;
-  after the next `*/5`, `~/morphocloud-dispatch.log` shows `dispatched` (not
-  `FAILED`), and `workflow_dispatch` runs appear in the Actions tab.
+  `ssh exouser@<ACQUIRE> 'crontab -l | grep -c morphocloud-dispatch'` → the
+  number of dispatch lines in `scripts/instances-runner.crontab` (rendered from
+  the workflows' `# dispatch:` markers — see
+  `scripts/runner-cron-dispatcher.md`); after the next `*/5`,
+  `~/morphocloud-dispatch.log` shows `dispatched` (not `FAILED`), and
+  `workflow_dispatch` runs appear in the Actions tab.
 - A test instance `/create` succeeds (acquire lane + OpenStack creds working).
 
 ## Recovery time & safety net

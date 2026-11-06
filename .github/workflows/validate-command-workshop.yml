@@ -14,8 +14,8 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     if:
-      ${{ !github.event.issue.pull_request &&
-      contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
+      ${{ !github.event.issue.pull_request && vars.MORPHOCLOUD_MAINTENANCE == ''
+      && contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
       startsWith(github.event.comment.body, '/') }}
     steps:
       - uses: actions/checkout@v7
@@ -75,3 +75,21 @@ jobs:
 
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
           edit-mode: append
+
+  # Decision 31: while MORPHOCLOUD_MAINTENANCE holds the reopening date, the
+  # member gets one sentence and nothing runs (every job above is gated on
+  # the same variable). Posted with GITHUB_TOKEN: it triggers nothing.
+  maintenance-notice:
+    runs-on: ubuntu-latest
+    if:
+      ${{ !github.event.issue.pull_request && vars.MORPHOCLOUD_MAINTENANCE != ''
+      && contains(github.event.issue.labels.*.name, 'request-type:workshop') &&
+      startsWith(github.event.comment.body, '/') }}
+    steps:
+      - uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### MorphoCloud is closed for the storage migration until ${{ vars.MORPHOCLOUD_MAINTENANCE }}
+
+            Your workshop request and any instances it already has are kept; nothing is lost. This command was not run.

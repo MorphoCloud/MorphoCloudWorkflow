@@ -62,9 +62,9 @@ jobs:
   authorize:
     runs-on: ubuntu-latest
     if:
-      ${{ !github.event.issue.pull_request &&
-      contains(github.event.issue.labels.*.name, 'request-type:instance') && (
-      contains(github.event.comment.body, '/create') ) }}
+      ${{ !github.event.issue.pull_request && vars.MORPHOCLOUD_MAINTENANCE == ''
+      && contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      ( contains(github.event.comment.body, '/create') ) }}
     outputs:
       continue: ${{ steps.create_command.outputs.continue }}
       admins: ${{ steps.admins.outputs.members }}
@@ -102,8 +102,15 @@ jobs:
           permissions: "read,triage,write,maintain,admin"
           allowlist:
             "${{ steps.admins.outputs.members }},${{
-            github.event.issue.user.login }},${{
-            join(github.event.issue.assignees.*.login, ',') }}"
+            (vars.MORPHOCLOUD_PORTAL_ONLY != 'true' ||
+            !contains(github.event.issue.labels.*.name, 'request-type:instance')
+            || github.event.comment.performed_via_github_app.slug ==
+            vars.MORPHOCLOUD_PORTAL_APP_SLUG) && github.event.issue.user.login
+            || '' }},${{ (vars.MORPHOCLOUD_PORTAL_ONLY != 'true' ||
+            !contains(github.event.issue.labels.*.name, 'request-type:instance')
+            || github.event.comment.performed_via_github_app.slug ==
+            vars.MORPHOCLOUD_PORTAL_APP_SLUG) &&
+            join(github.event.issue.assignees.*.login, ',') || '' }}"
 
       # Refuse /create on a closed request. A closed request was already
       # rejected or retired (e.g. the request-opened handler closed it as
@@ -265,7 +272,7 @@ jobs:
 
           @${SUBJECT} is not a registered MorphoCloud user, so \`/create\` cannot proceed.
 
-          You have to onboard yourself with MorphoCloud as a regular user first. Please go to [join.morphocloud.org](https://join.morphocloud.org), submit your intake form, and accept the GitHub organization invitation. Then comment \`/create\` again."
+          You have to onboard yourself with MorphoCloud as a regular user first. Please go to [join.morphocloud.org](https://join.morphocloud.org), submit your intake form, and accept the GitHub organization invitation. $(if [[ -n "$PORTAL_URL" ]]; then echo "Then create the instance from the portal: $PORTAL_URL"; else echo 'Then comment `/create` again.'; fi)"
             echo "::error ::User $SUBJECT is not an active member of $USERS_TEAM_SLUG"
             exit 1
           fi
@@ -273,6 +280,7 @@ jobs:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           ORG: ${{ github.repository_owner }}
           USERS_TEAM_SLUG: ${{ vars.MORPHOCLOUD_USERS_TEAM_SLUG }}
+          PORTAL_URL: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
           ISSUE_CREATOR: ${{ github.event.issue.user.login }}
           IS_WORKSHOP:
             ${{ contains(github.event.issue.labels.*.name,
@@ -371,7 +379,7 @@ jobs:
 
           Only **${MAX_PER_USER}** instance requests per user may hold resources at a time, and @${ISSUE_CREATOR} already has **${USER_COUNT}** — see ${OCCUPIED_ISSUES}.
 
-          Comment \`/delete_all\` on one of those issues to release it, then open a new request.
+          $(if [[ -n "$PORTAL_URL" ]]; then echo "Delete one of those instances from the portal, then create again: $PORTAL_URL"; else echo 'Comment `/delete_all` on one of those issues to release it, then open a new request.'; fi)
 
           > @MorphoCloud/morphocloud-admins — FYI, @${ISSUE_CREATOR} has reached the per-user instance limit ($USER_COUNT/$MAX_PER_USER)."
             gh issue close "$ISSUE_NUMBER"
@@ -389,6 +397,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ADMINS: ${{ needs.authorize.outputs.admins }}
           MAX_PER_USER: ${{ vars.MORPHOCLOUD_MAX_INSTANCES_PER_USER }}
+          PORTAL_URL: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
           MAX_TOTAL: ${{ vars.MORPHOCLOUD_MAX_TOTAL_INSTANCES }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -411,6 +420,17 @@ jobs:
           volume_size_gb: ${{ vars.VOLUME_SIZE_GB || '100' }}
           default_session_timeout_hrs: ${{ vars.INSTANCE_SHELVING_TIMEOUT_HRS }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Per-user share instead of a volume: only when the repo opts in
+          # (Test-Instances) and only for a user's own request, never a
+          # workshop sub-issue. STORAGE_REDESIGN_PLAN.md, phase 2 prototype.
+          storage_mode:
+            ${{ contains(github.event.issue.labels.*.name,
+            'request-creator:user') && vars.MORPHOCLOUD_STORAGE_MODE || '' }}
+          github_id: ${{ github.event.issue.user.id }}
+          portal_url: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
+          image_vgpu: ${{ vars.MORPHOCLOUD_IMAGE_VGPU }}
+          image_regular: ${{ vars.MORPHOCLOUD_IMAGE_REGULAR }}
+          vgpu_flavors: ${{ vars.MORPHOCLOUD_VGPU_FLAVORS || 'g3.large' }}
 
       # Individual creates stay one job (acquire + setup back-to-back on the
       # acquire runner) — same behaviour as before the split; only the workshop
@@ -427,12 +447,28 @@ jobs:
           instance_ip: ${{ steps.provision.outputs.floating_ip_address }}
           progress_comment_id:
             ${{ steps.provision.outputs.progress_comment_id }}
+          storage_mode:
+            ${{ contains(github.event.issue.labels.*.name,
+            'request-creator:user') && vars.MORPHOCLOUD_STORAGE_MODE || '' }}
+          # The share belongs to the issue creator (the instance owner), keyed
+          # on the numeric ID, which never changes.
+          github_id: ${{ github.event.issue.user.id }}
+          github_login: ${{ github.event.issue.user.login }}
+          # Decision 33: an individual request's slow setup is handed to the
+          # follow-through sweep; a workshop sub-issue created from here by
+          # an organizer's /create keeps the plain report (the backfill's).
+          follow_through:
+            ${{ contains(github.event.issue.labels.*.name,
+            'request-creator:workshop') && 'false' || 'true' }}
 
       - name: Send email
         id: send_email
         if: ${{ steps.setup.outputs.setup_status == 'complete' }}
         uses: ./.github/actions/send-email
         with:
+          storage_mode:
+            ${{ contains(github.event.issue.labels.*.name,
+            'request-creator:user') && vars.MORPHOCLOUD_STORAGE_MODE || '' }}
           os_cloud: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           token: ${{ secrets.GITHUB_TOKEN }}
           email_lookup_url: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
@@ -443,6 +479,8 @@ jobs:
           instance_name: ${{ steps.provision.outputs.instance_name }}
           instance_issue_number: ${{ github.event.issue.number }}
           expect_upload_page: "true"
+          template_ref: ${{ vars.MORPHOCLOUD_TEMPLATE_REF || 'main' }}
+          portal_url: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
 
       - name: comment (failed to send email)
         if: ${{ steps.send_email.outcome == 'failure' && failure() }}
@@ -460,6 +498,9 @@ jobs:
         if: ${{ steps.send_email.outcome == 'success' }}
         uses: ./.github/actions/comment-progress
         with:
+          storage_mode:
+            ${{ contains(github.event.issue.labels.*.name,
+            'request-creator:user') && vars.MORPHOCLOUD_STORAGE_MODE || '' }}
           comment-id: ${{ steps.provision.outputs.progress_comment_id }}
           create_ip: ✅
           create_volume: ✅
@@ -474,27 +515,107 @@ jobs:
       # provisioning, and /delete_all would take the user's data volume with it
       # (Instances#168). The action sets CREATE_ALREADY_EXISTS in that case and
       # posts its own targeted guidance instead.
-      - name: comment (retry guidance on provisioning failure)
+      # Two shapes. When the create action already removed the server (a build
+      # Jetstream2 could not start), "delete it first" is wrong: the user's
+      # delete then fails with "does not exist" (Test-Instances#492).
+      - name: comment (retry guidance after the instance was removed)
         if:
           ${{ failure() && steps.provision.outcome == 'failure' &&
-          env.CREATE_ALREADY_EXISTS != 'true' }}
+          env.CREATE_INSTANCE_REMOVED == 'true' && env.CREATE_ALREADY_EXISTS !=
+          'true' && env.CREATE_NO_STORAGE != 'true' }}
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}
           body: |
             #### ⚠️ What to do next
 
-            Instance creation did not complete. This is sometimes caused by a transient cloud error. To retry from a clean state, comment the following on this issue, one at a time:
-
-            1. `/delete_all` — removes the partially-created instance, volume, and floating IP
-            2. `/create` — provisions again from scratch
+            The incomplete instance has already been removed, so there is nothing to delete. ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL != '' && format('To try again, create it again on the portal ({0}).', vars.MORPHOCLOUD_DATA_PORTAL_URL) || 'To try again, comment `/create`.' }}
 
             If it fails again after retrying, please tag `@MorphoCloud/morphocloud-admins` for help.
 
+      - name: comment (retry guidance on provisioning failure)
+        if:
+          ${{ failure() && steps.provision.outcome == 'failure' &&
+          env.CREATE_INSTANCE_REMOVED != 'true' && env.CREATE_ALREADY_EXISTS !=
+          'true' && env.CREATE_NO_STORAGE != 'true' }}
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            #### ⚠️ What to do next
+
+            Instance creation did not complete. This is sometimes caused by a transient cloud error. ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL != '' && format('To retry from a clean state, on the portal ({0}):', vars.MORPHOCLOUD_DATA_PORTAL_URL) || 'To retry from a clean state, comment the following on this issue, one at a time:' }}
+
+            1. ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL != '' && 'Delete the instance' || '`/delete_all` — removes the partially-created instance, volume, and floating IP' }}
+            2. ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL != '' && 'Create it again' || '`/create` — provisions again from scratch' }}
+
+            If it fails again after retrying, please tag `@MorphoCloud/morphocloud-admins` for help.
+
+      # Decision 27: a failed create emails the admins with the diagnosis.
+      # Until now it emailed nobody: its comments are posted with
+      # GITHUB_TOKEN, which raises no issue_comment event, so the admin
+      # mentions in them reached no one. Not for what the member caused
+      # (no storage, an instance already there) nor a plain capacity
+      # shortage (the instance was removed; the member retries).
+      # Decision 33: a setup timeout handed to the follow-through sweep is
+      # not a failure — no admin email (the sweep emails when it gives up).
+      - name: Describe the failure for the admins
+        id: describe_failure
+        if:
+          ${{ failure() && env.CREATE_NO_STORAGE != 'true' &&
+          env.CREATE_ALREADY_EXISTS != 'true' && env.CREATE_INSTANCE_REMOVED !=
+          'true' && !(steps.setup.outputs.outcome == 'timeout' &&
+          !contains(github.event.issue.labels.*.name,
+          'request-creator:workshop')) }}
+        run: |
+          what=""; todo=""
+          if [[ "$PROVISION" == "failure" ]]; then
+            what="Provisioning failed before the instance was usable (floating IP, volume, build, or attaching the address); the issue's comments name the step, and the server, if any, is still there."
+            todo="The member was told to delete and create again. If the same step fails for others too, it is Jetstream2: open a ticket with the diagnostics comment."
+          elif [[ "$SETUP" == "failure" || "$SETUP_STATUS" != "complete" ]]; then
+            what="The server is up but its setup did not finish (status: ${SETUP_STATUS:-unknown}); the setup comment on the issue says which step. A setup that could not reach GitHub or PyPI is a network orphan: the address is dead."
+            todo="The member was told to delete and create again. A fresh placement fixes an orphan; if setup fails the same way twice, look at the image or Jetstream2."
+          elif [[ "$SEND_EMAIL" == "failure" ]]; then
+            what="The instance is ready but the credentials email to the member failed; the issue carries the details."
+            todo="Make sure the member has the access details (the portal shows them); check the mail account if it repeats."
+          else
+            what="An unhandled failure; the run log has the step."
+            todo="Read the run log."
+          fi
+          printf 'Command:  create\nInstance: %s\n\nWhat happened: %s\n\nWhat to do: %s\n' \
+            "${INSTANCE_NAME:-not created}" "$what" "$todo" > "$RUNNER_TEMP/admin-mail-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.md"
+        env:
+          INSTANCE_NAME: ${{ steps.provision.outputs.instance_name }}
+          PROVISION: ${{ steps.provision.outcome }}
+          SETUP: ${{ steps.setup.outcome }}
+          SETUP_STATUS: ${{ steps.setup.outputs.setup_status }}
+          SEND_EMAIL: ${{ steps.send_email.outcome }}
+
+      - name: Notify admins by email (create failed)
+        if: ${{ failure() && steps.describe_failure.outcome == 'success' }}
+        uses: ./.github/actions/notify-admins
+        with:
+          admin_emails: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          mail_server_username: ${{ secrets.MAIL_USERNAME }}
+          mail_server_password: ${{ secrets.MAIL_PASSWORD }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue_number: ${{ github.event.issue.number }}
+          subject:
+            "create failed for ${{ steps.provision.outputs.instance_name || 'the
+            requested instance' }} (issue #${{ github.event.issue.number }})"
+          body_file:
+            ${{ runner.temp }}/admin-mail-${{ github.run_id }}-${{
+            github.run_attempt }}.md
+
       # Last step in the job: 🚀 has been on the comment for the whole
-      # provisioning run and only now becomes 👍/👎.
+      # provisioning run and only now becomes 👍/👎. A setup still running
+      # under the follow-through sweep (decision 33) keeps 🚀: the command
+      # is neither done nor failed.
       - name: Report command outcome on the comment
-        if: ${{ always() }}
+        if:
+          ${{ always() && !(steps.setup.outputs.outcome == 'timeout' &&
+          !contains(github.event.issue.labels.*.name,
+          'request-creator:workshop')) }}
         uses: ./.github/actions/report-command-outcome
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

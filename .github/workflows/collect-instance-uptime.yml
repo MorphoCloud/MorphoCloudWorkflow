@@ -1,7 +1,9 @@
 name: Collect Instance Uptime
 on:
+  # dispatch: */15 * * * *
+  # The runner's crontab is the clock (scripts/runner-cron-dispatcher.md). The
+  # schedule below is only a backstop: GitHub fires it a few times a day.
   schedule:
-    # Run every 15 mins
     - cron: "*/15 * * * *"
   workflow_dispatch:
 

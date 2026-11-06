@@ -1,5 +1,8 @@
 name: Automatic Instance Shelving
 on:
+  # dispatch: */5 * * * *
+  # The runner's crontab is the clock (scripts/runner-cron-dispatcher.md). The
+  # schedule below is only a backstop: GitHub fires it a few times a day.
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
@@ -30,6 +33,56 @@ jobs:
 
           instance_prefix=${PREFIX:+${PREFIX}_}
           instance_basename="${instance_prefix}instance"
+
+          # INSTANCE_DASHBOARD_PLAN.md decision 26: an instance this job cannot
+          # reach is never skipped. Up for 30 minutes or more and not answering
+          # (three tries, 20 s apart), it is shelved on the wall clock through
+          # the same dispatch workshops use; younger, it is left to finish
+          # booting and looked at again next tick. Skipping it (the old
+          # `continue`) let a network-orphaned GPU instance run for days.
+          unreachable_after_min=30
+          # Returns 255 only when SSH itself could not connect (ssh's own code),
+          # three tries 20 s apart; a command that ran and failed returns its
+          # own code at once: the instance answered, it is not unreachable.
+          ssh_out() {  # $1 address, $2 command
+            local i rc
+            for i in 1 2 3; do
+              ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                  -o LogLevel=ERROR -o ConnectTimeout=15 "exouser@$1" "$2" < /dev/null
+              rc=$?
+              (( rc == 0 )) && return 0
+              (( rc != 255 )) && return "$rc"
+              [[ $i -lt 3 ]] && sleep 20
+            done
+            return 255
+          }
+          shelve_if_unreachable() {  # $1 instance name, $2 issue number, $3 what failed
+            local since age_min
+            since=$(openstack server event list "$1" -f json \
+              | jq -r '[.[] | select(.Action == "create" or .Action == "unshelve" or .Action == "start" or .Action == "reboot") | ."Start Time"] | max // empty')
+            if [[ -z "$since" ]]; then
+              echo "::warning ::$1 (issue #$2): $3, and when it started is unknown; left for the next tick"
+              return
+            fi
+            local start_epoch
+            if ! start_epoch=$(date -u -d "${since%%.*}" +%s 2>/dev/null); then
+              echo "::warning ::$1 (issue #$2): $3, and its start time '$since' could not be read; left for the next tick"
+              return
+            fi
+            age_min=$(( ( $(date -u +%s) - start_epoch ) / 60 ))
+            if (( age_min < unreachable_after_min )); then
+              echo "$1 (issue #$2): $3; up for ${age_min} min (< ${unreachable_after_min}): waiting"
+              return
+            fi
+            echo "$1 (issue #$2): $3 after ${age_min} min up. Shelving on the wall clock."
+            gh issue comment "$2" --body "Your instance has not answered on the network for ${age_min} minutes since it started, so it is being shelved. Unshelve places it afresh." \
+              || echo "::warning ::Could not post the shelve note on issue #$2"
+            if ! gh workflow run control-instance-from-workflow.yml \
+              -f issue_number="$2" \
+              -f command_name=shelve; then
+              echo "::error ::Failed to trigger the shelve workflow for unreachable $1 (issue #$2)"
+            fi
+          }
 
           openstack server list --name "^${instance_basename}-\d+" -f json | \
           jq -r '.[] | [.Name, .Status, ."OS-EXT-STS:task_state"] | @tsv' | \
@@ -119,9 +172,9 @@ jobs:
 
               # Retrieve the public address of the instance from Neutron (the
               # address bound to its port; Nova's `addresses` view is a cache
-              # that can stay stale, decision 29). No address reads as "null".
-              # A failed read (an OpenStack hiccup) must not end the run
-              # under -e: say so and look at this instance again next tick.
+              # that can stay stale, decision 29). A failed read (an OpenStack
+              # hiccup) must not end the run under -e: say so and look at this
+              # instance again next tick. No address reads as "null" below.
               if ! port_id=$(openstack port list --server "$instance_name" -f value -c ID | head -n1); then
                 echo "::warning ::Could not read the port of $instance_name; left for the next tick"
                 continue
@@ -136,9 +189,10 @@ jobs:
               [[ -z "$instance_ip" ]] && instance_ip="null"
               echo "instance_ip [$instance_ip]"
 
-              # Skip the instance if the IP address could not be retrieved
+              # No public address on an active instance: nobody can reach it
+              # (decision 25 shelves such an unshelve itself; this is the backstop).
               if [[ "$instance_ip" == "null" ]]; then
-                echo "::warning ::Failed to retrieve $instance_name IP"
+                shelve_if_unreachable "$instance_name" "$issue_number" "has no public address" || true
                 continue
               fi
 
@@ -147,35 +201,41 @@ jobs:
               #   an issue where SSH breaks out of the while loop in Bash.
               #   Reference: https://stackoverflow.com/questions/9393038/ssh-breaks-out-of-while-loop-in-bash
 
-              if ! has_check_instance_shelve_script=$(ssh \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
-                -o LogLevel=ERROR \
-                exouser@$instance_ip \
-                  'bash -c "[[ -f /opt/instance-config-support/dist/check-instance-shelve.sh ]] && echo yes || echo no"' < /dev/null); then
-                echo "::warning ::Failed to check if 'check-instance-shelve.sh' was found on $instance_name using IP $instance_ip"
+              # The `|| rc=$?` form matters: the job shell runs with -e, and a
+              # bare failing assignment would end the whole run (seen on the
+              # first test, exit 255 after the three tries).
+              rc=0
+              has_check_instance_shelve_script=$(ssh_out "$instance_ip" \
+                  'bash -c "[[ -f /opt/instance-config-support/dist/check-instance-shelve.sh ]] && echo yes || echo no"') || rc=$?
+              if (( rc == 255 )); then
+                shelve_if_unreachable "$instance_name" "$issue_number" "does not answer on $instance_ip" || true
+                continue
+              elif (( rc != 0 )); then
+                echo "::warning ::Could not check for 'check-instance-shelve.sh' on $instance_name ($instance_ip): exit $rc"
                 continue
               fi
 
               if [[ "$has_check_instance_shelve_script" == "yes" ]]; then
-                if ! uptime_hours=$(ssh \
-                -o StrictHostKeyChecking=no \
-                -o UserKnownHostsFile=/dev/null \
-                -o LogLevel=ERROR \
-                exouser@$instance_ip \
-                  '/opt/instance-config-support/dist/check-instance-shelve.sh -d' < /dev/null); then
-                  echo "::warning ::Failed to retrieve uptime for $instance_name using IP $instance_ip"
+                rc=0
+                uptime_hours=$(ssh_out "$instance_ip" \
+                    '/opt/instance-config-support/dist/check-instance-shelve.sh -d') || rc=$?
+                if (( rc == 255 )); then
+                  shelve_if_unreachable "$instance_name" "$issue_number" "stopped answering on $instance_ip" || true
+                  continue
+                elif (( rc != 0 )); then
+                  echo "::warning ::check-instance-shelve.sh failed on $instance_name ($instance_ip): exit $rc; it answers, so it is left alone"
                   continue
                 fi
               else
                 # Retrieve the instance uptime using SSH
-                if ! uptime_seconds=$(ssh \
-                  -o StrictHostKeyChecking=no \
-                  -o UserKnownHostsFile=/dev/null \
-                  -o LogLevel=ERROR \
-                  exouser@$instance_ip \
-                    'cat /proc/uptime | awk  "{print \$1}"' < /dev/null); then
-                  echo "::warning ::Failed to retrieve uptime for $instance_name using IP $instance_ip"
+                rc=0
+                uptime_seconds=$(ssh_out "$instance_ip" \
+                    'cat /proc/uptime | awk  "{print \$1}"') || rc=$?
+                if (( rc == 255 )); then
+                  shelve_if_unreachable "$instance_name" "$issue_number" "stopped answering on $instance_ip" || true
+                  continue
+                elif (( rc != 0 )); then
+                  echo "::warning ::Could not read the uptime of $instance_name ($instance_ip): exit $rc; it answers, so it is left alone"
                   continue
                 fi
                 # $uptime_seconds also comes from the instance. bc cannot execute
@@ -198,6 +258,17 @@ jobs:
               if ! [[ "$uptime_hours" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
                 echo "::warning ::Non-numeric uptime ('$uptime_hours') reported by $instance_name using IP $instance_ip; skipping"
                 continue
+              fi
+
+              # Data portal (share mode): report the session age so its
+              # countdown also reflects extends made on the desktop. Only a
+              # runner set up for the portal has ~/mc-data/portal_target; a
+              # failure here never affects shelving.
+              if [[ -s "$HOME/mc-data/portal_target" ]]; then
+                printf '{"issue": %d, "elapsed_hours": %s}' "$issue_number" "$uptime_hours" \
+                  | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
+                      "$(cat "$HOME/mc-data/portal_target")" session "$issue_number" >/dev/null 2>&1 \
+                  || echo "::warning ::Could not report the session age of #$issue_number to the data portal"
               fi
 
               # Derive timeout_hrs from labels like "timeout:24hrs", reusing the

@@ -82,13 +82,13 @@ runs:
 
         orcid=$(
           printf '%s\n' "$DATA" |
-          jq -r ".orcid.text"
+          jq -r '.orcid.text // ""'
         )
         echo "orcid=$orcid" >> $GITHUB_OUTPUT
 
         description=$(
           printf '%s\n' "$DATA" |
-          jq -r '.description.text'
+          jq -r '.description.text // ""'
         )
         echo "description<<EOF" >> $GITHUB_OUTPUT
         printf '%s\n' "$description" >> $GITHUB_OUTPUT
