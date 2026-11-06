@@ -246,6 +246,9 @@ def vendorize(session: nox.Session) -> None:
             ".github/workflows/delete-volume-from-workflow.yml",
             ".github/workflows/automatic-volume-deleting.yml",
             ".github/actions/delete-volume/action.yml",
+            # Replaced by .github/actions/fip/fip.py (AUTOMATION_AUDIT_2026-11.md,
+            # class 1: compare-and-swap attach); excluded so the copies go too.
+            ".github/actions/create-ip/action.yml",
             # Claude PR reviewer — MWF-only (needs the CLAUDE_CODE_OAUTH_TOKEN
             # secret, which only exists here; downstream repos take direct
             # pushes, not PRs)
