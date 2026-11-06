@@ -133,11 +133,52 @@ def addresses(nets) -> list[str]:
     return out
 
 
-def inventory() -> tuple[list[dict], dict[str, dict]]:
-    """Every floating IP of the project, and fixed address -> its server:
+# Nova task states of a server on its way up; with BUILD, and ACTIVE with no
+# address yet, such an instance is about to take a spare (2026-11-06,
+# Test-Instances#523: a create picked the spare, minted its replacement, and
+# this script deleted the picked one as over the hold before it was attached).
+STARTING_TASKS = (
+    "scheduling",
+    "block_device_mapping",
+    "networking",
+    "spawning",
+    "unshelving",
+)
+# An over-the-hold surplus must still be there this long after it was first
+# seen before an address is deleted: the next tick, not this one.
+SURPLUS_SETTLE = 240
+
+
+def starting_instances(servers: list[dict], fips: list[dict]) -> list[str]:
+    """MorphoCloud instances on their way up that hold no address yet: each
+    will take a spare in the next minutes, so each counts as running."""
+    bound = {
+        str(f.get("Fixed IP Address") or "") for f in fips if f.get("Port") is not None
+    }
+    out = []
+    for s in servers:
+        name = str(s.get("Name") or "")
+        if INSTANCE_RE.search(name) is None:
+            continue
+        if any(a in bound for a in addresses(s.get("Networks"))):
+            continue
+        status = str(s.get("Status") or "")
+        task = str(s.get("Task State") or "")
+        task = "" if task in ("None", "null") else task
+        if (
+            status == "BUILD"
+            or task in STARTING_TASKS
+            or (status == "ACTIVE" and not task)
+        ):
+            out.append(name)
+    return out
+
+
+def inventory() -> tuple[list[dict], dict[str, dict], list[str]]:
+    """Every floating IP of the project; fixed address -> its server:
     {"status", "task" (the action in flight, "" when none), "instance" (a
     MorphoCloud instance, as opposed to a runner, the portal or any other
-    server of the project), "name"}."""
+    server of the project), "name"}; and the instances still starting."""
     fips = os_json("floating", "ip", "list")
     servers = os_json("server", "list", "--long")
     by_fixed: dict[str, dict] = {}
@@ -159,7 +200,7 @@ def inventory() -> tuple[list[dict], dict[str, dict]]:
         log(
             "WARNING: no server addresses parsed; shelved-server releases and reports are off this run"
         )
-    return fips, by_fixed
+    return fips, by_fixed, starting_instances(servers, fips)
 
 
 def nonroutable_alert(ip: str, f: dict, owner: dict | None, status: str) -> tuple:
@@ -214,12 +255,19 @@ def classify(
     return ("running" if attached else "spare"), acts
 
 
-def plan(
-    fips: list[dict], by_fixed: dict[str, dict], hold: int, now: float, updated_at
+def plan(  # noqa: PLR0913 — one pure function over the whole inventory
+    fips: list[dict],
+    by_fixed: dict[str, dict],
+    hold: int,
+    now: float,
+    updated_at,
+    starting: int = 0,
 ) -> tuple[list, dict]:
     """The actions for this run (pure; `updated_at(fip)` is read lazily and
     only for release candidates, including an address on a shelved
-    instance). Returns (actions, counts).
+    instance). Returns (actions, counts). `starting`: instances on their way
+    up without an address yet; each counts as running, so the spare it is
+    about to take is never surplus.
 
     Only MorphoCloud instances count. An address bound to a runner, the
     portal or any other server of the project is infrastructure: outside the
@@ -243,10 +291,11 @@ def plan(
     held = len(routable)
     running = sum(1 for _, a in routable if a)
     spares = held - running
-    target = max(hold, running + 1)
+    target = max(hold, running + starting + 1)
     counts = {
         "held": held,
         "running": running,
+        "starting": starting,
         "spares": spares,
         "target": target,
         "hold": hold,
@@ -526,6 +575,23 @@ def probe(state: dict, now: float) -> None:
     all_clear(state, ip)
 
 
+def settle_surplus(actions: list, state: dict, now: float) -> list:
+    """An over-the-hold delete waits for the next tick: the surplus must have
+    been seen SURPLUS_SETTLE ago and still be there. A create that picked a
+    spare and minted its replacement shows a surplus for a minute or two,
+    until it attaches the picked one."""
+    surplus = [a for a in actions if a[0] == "delete" and a[3] == "over the hold"]
+    if not surplus:
+        state.pop("surplus-since", None)
+        return actions
+    since = state.setdefault("surplus-since", now)
+    if now - since >= SURPLUS_SETTLE:
+        return actions
+    for a in surplus:
+        log(f"{a[2]} is over the hold; deleted next tick if still so")
+    return [a for a in actions if a not in surplus]
+
+
 def run(dry_run: bool) -> int:
     # One run at a time: a slow one must not overlap the next tick's.
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -535,7 +601,7 @@ def run(dry_run: bool) -> int:
     except BlockingIOError:
         log("another run is still going; skipping this tick")
         return 0
-    fips, by_fixed = inventory()
+    fips, by_fixed, starting = inventory()
     state = load_state()
     now = time.time()
     cache: dict[str, float] = {}
@@ -546,12 +612,15 @@ def run(dry_run: bool) -> int:
             cache[fid] = epoch(os_json("floating", "ip", "show", fid).get("updated_at"))
         return cache[fid]
 
-    actions, counts = plan(fips, by_fixed, HOLD, now, updated_at)
+    actions, counts = plan(fips, by_fixed, HOLD, now, updated_at, len(starting))
     clear_alert(state, "crashed")  # a run that planned is a run that works again
+    actions = settle_surplus(actions, state, now)
     log(
-        f"instances: held={counts['held']} running={counts['running']} spares={counts['spares']} "
+        f"instances: held={counts['held']} running={counts['running']} "
+        f"starting={counts['starting']} spares={counts['spares']} "
         f"(infra={counts['infra']} unknown={counts['unknown']}) "
         f"target={counts['target']} (hold {counts['hold']}) actions={len(actions)}"
+        + (f" starting: {', '.join(starting)}" if starting else "")
     )
     seen = {a[1] for a in actions if a[0] == "alert"}
     for a in actions:

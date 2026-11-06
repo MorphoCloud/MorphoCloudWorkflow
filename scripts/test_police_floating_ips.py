@@ -17,6 +17,7 @@ NOV_4_2026 = 1793750400.0  # 2026-11-04T00:00:00Z
 QUIET = {
     "held": 5,
     "running": 1,
+    "starting": 0,
     "spares": 4,
     "target": 5,
     "hold": 5,
@@ -136,6 +137,7 @@ def test_below_the_hold_mints_one_per_run():
     assert counts == {
         "held": 2,
         "running": 1,
+        "starting": 0,
         "spares": 1,
         "target": 5,
         "hold": 5,
@@ -151,6 +153,7 @@ def test_all_in_use_mints_one_ahead():
     assert counts == {
         "held": 6,
         "running": 6,
+        "starting": 0,
         "spares": 0,
         "target": 7,
         "hold": 5,
@@ -184,6 +187,7 @@ def test_over_the_hold_releases_idle_spares_oldest_first_down_to_running_plus_on
     assert counts == {
         "held": 7,
         "running": 3,
+        "starting": 0,
         "spares": 4,
         "target": 5,
         "hold": 5,
@@ -303,6 +307,7 @@ def test_infrastructure_is_never_touched_even_when_shelved_or_unknown():
     assert counts == {
         "held": 0,
         "running": 0,
+        "starting": 0,
         "spares": 0,
         "target": 1,
         "hold": 0,
@@ -339,6 +344,7 @@ def test_non_routable_addresses_are_deleted_or_reported():
     assert counts == {
         "held": 1,
         "running": 0,
+        "starting": 0,
         "spares": 1,
         "target": 1,
         "hold": 1,
@@ -424,3 +430,67 @@ def test_an_all_clear_that_cannot_be_sent_keeps_the_drought_open(monkeypatch):
     state = {"mint-failed": NOV_4_2026, "mint-probe-at": NOW - 7200}
     police.probe(state, NOW)
     assert state == {"mint-failed": NOV_4_2026, "mint-probe-at": NOW}
+
+
+def server(name, status, task=None, ip=None):
+    return {
+        "Name": name,
+        "Status": status,
+        "Task State": task,
+        "Networks": {"auto_allocated_network": [ip]} if ip else {},
+    }
+
+
+def test_instances_on_their_way_up_without_an_address_are_starting():
+    fips = [fip("149.165.1.1", "p1", "10.0.0.1")]
+    servers = [
+        server("morpho-cloud-test_instance-1", "BUILD", "spawning", "10.0.0.9"),
+        server("morpho-cloud-test_instance-2", "BUILD"),  # no port yet
+        server(
+            "morpho-cloud-test_instance-3", "ACTIVE", None, "10.0.0.3"
+        ),  # not attached yet
+        server("morpho-cloud-test_instance-4", "SHELVED_OFFLOADED", "unshelving"),
+        server(
+            "morpho-cloud-test_instance-5", "ACTIVE", None, "10.0.0.1"
+        ),  # has its address
+        server("morpho-cloud-test_instance-6", "ACTIVE", "shelving", "10.0.0.6"),
+        server("morpho-cloud-test_instance-7", "SHELVED_OFFLOADED", "None"),
+        server("morpho-cloud-test_instance-8", "ERROR"),
+        server("morphocloud-instances-runner", "BUILD"),  # not an instance
+    ]
+    assert police.starting_instances(servers, fips) == [
+        "morpho-cloud-test_instance-1",
+        "morpho-cloud-test_instance-2",
+        "morpho-cloud-test_instance-3",
+        "morpho-cloud-test_instance-4",
+    ]
+
+
+def test_the_spare_a_create_picked_is_not_surplus_test_instances_523():
+    # 17:05:07: the create had picked the old spare and minted its
+    # replacement; the server was up but not yet holding an address.
+    fips = [fip("149.165.151.153", fid="picked"), fip("149.165.151.200", fid="minted")]
+    actions, counts = run_plan(
+        fips, hold=1, ages={"149.165.151.153": 86400, "149.165.151.200": 15}
+    )
+    assert kinds(actions) == [("delete", "149.165.151.153")]  # the old bug
+    actions, counts = police.plan(
+        fips, {}, 1, NOW, lambda f: NOW - (86400 if f["ID"] == "picked" else 15), 1
+    )
+    assert actions == []
+    assert (counts["starting"], counts["target"]) == (1, 2)
+
+
+def test_an_over_the_hold_delete_waits_for_the_next_tick(monkeypatch):
+    monkeypatch.setattr(police, "log", lambda _m: None)
+    delete = ("delete", "id-1", "149.165.1.1", "over the hold")
+    other = ("delete", "id-2", "172.17.20.1", "non-routable")
+    state = {}
+    assert police.settle_surplus([delete, other], state, NOW) == [other]
+    assert state == {"surplus-since": NOW}
+    assert police.settle_surplus([delete], state, NOW + 120) == []
+    assert police.settle_surplus([delete], state, NOW + 300) == [delete]
+    # Gone before the next tick: forgotten, and the next one waits again.
+    assert police.settle_surplus([], state, NOW + 600) == []
+    assert state == {}
+    assert police.settle_surplus([delete], state, NOW + 900) == []
