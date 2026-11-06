@@ -406,3 +406,54 @@ def test_main_verify_prints_the_proven_address_and_exit_codes(monkeypatch, capsy
         fip.main(["verify", "--server", "a", "--ip", "149.165.5.5"])
         == fip.EXIT_UNVERIFIED
     )
+
+
+def test_verify_waits_out_a_network_that_lags_behind_neutron():
+    # Review of #381: the address is on our port (Neutron), but for a moment
+    # the previous holder still answers. That is propagation, not a race:
+    # wait, never write, and pass once the right server answers.
+    n = FakeNeutron(servers=["a", "b"])
+    n.add_fip("149.165.1.1", port=n.port_of("a"))
+    replies = iter(["srv-b", "srv-b", "srv-a"])
+
+    def run(*_a, **_kw):
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"uuid": next(replies)}))
+
+    assert (
+        fip.verify(
+            n, "a", "149.165.1.1", wait=300, reattach=True, run=run, sleep=no_sleep
+        )
+        == "149.165.1.1"
+    )
+    assert n.fips["id-149.165.1.1"]["port_id"] == n.port_of("a")  # nothing swapped
+
+
+def test_verify_gives_up_on_a_lag_that_never_ends(monkeypatch):
+    n = FakeNeutron(servers=["a", "b"])
+    n.add_fip("149.165.1.1", port=n.port_of("a"))
+    clock = iter([0, 0, 100, 400])
+    monkeypatch.setattr(fip.time, "monotonic", lambda: next(clock))
+    with pytest.raises(fip.WrongServerError):
+        fip.verify(
+            n,
+            "a",
+            "149.165.1.1",
+            wait=300,
+            run=answers({"149.165.1.1": "srv-b"}),
+            sleep=no_sleep,
+        )
+
+
+def test_main_reports_attach_timeouts_and_the_mint_cap_cleanly(monkeypatch):
+    monkeypatch.setenv("OS_CLOUD", "test")
+    monkeypatch.setattr(fip, "connect", lambda: FakeNeutron(servers=["a"]))
+    for exc in (
+        TimeoutError("no address attached"),
+        RuntimeError("2 new addresses would not attach"),
+    ):
+
+        def boom(*_a, exc=exc, **_kw):
+            raise exc
+
+        monkeypatch.setattr(fip, "attach", boom)
+        assert fip.main(["attach", "--server", "a"]) == 1
