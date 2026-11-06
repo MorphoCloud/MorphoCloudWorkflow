@@ -423,42 +423,107 @@ def clear_alert(state: dict, key: str) -> None:
 # --- the run --------------------------------------------------------------
 
 
-def mint(state: dict) -> None:
-    """One routable address ahead; a drought is the admins' business, once."""
+PROBE_EVERY = 3600  # while a drought is open, ask Jetstream2 once an hour
+
+
+def drought_body(lead: str, counts: dict) -> str:
+    """The drought email: what failed, what is in hand, what that means."""
+    spares, running = counts["spares"], counts["running"]
+    if spares == 0:
+        impact = "The next create or unshelve fails for want of an address"
+    elif spares == 1:
+        impact = "The next create or unshelve takes the spare; the one after that fails"
+    else:
+        impact = (
+            f"The next {spares} creates or unshelves take the spares; the one after "
+            "that fails"
+        )
+    return (
+        f"{lead}\n\nIn hand now: {spares} spare address{'es' if spares != 1 else ''} beside "
+        f"{running} running instance{'s' if running != 1 else ''}. {impact}, until a member "
+        "shelves (a shelve returns its address to the spares) or Jetstream2 frees addresses. "
+        "You get another email when Jetstream2 has addresses again.\n\nNothing to do on our "
+        "side but wait, or ask Jetstream2."
+    )
+
+
+def request_address() -> tuple[str, str, str]:
+    """One address from Jetstream2: (ip, id, error). A non-routable answer is
+    deleted on the spot and returned with an empty id."""
     try:
         created = os_json(
             "floating", "ip", "create", "public", "--description", MINT_DESCRIPTION
         )
     except (subprocess.CalledProcessError, ValueError) as e:
-        detail = (getattr(e, "stderr", "") or str(e)).strip()[-300:]
-        log(f"mint failed: {detail}")
-        alert_once(
-            state,
-            "mint-failed",
-            "Floating-IP mint failed on Jetstream2",
-            f"openstack floating ip create failed: {detail}\n\nNo spare address is in hand; "
-            f"each create or unshelve from now on fails for want of one until Jetstream2 "
-            "has addresses again. Nothing to do on our side but wait, or ask Jetstream2.",
-        )
-        return
+        return "", "", (getattr(e, "stderr", "") or str(e)).strip()[-300:]
     ip, fid = (
         str(created.get("floating_ip_address") or ""),
         str(created.get("id") or ""),
     )
     if not ip.startswith(ROUTABLE_PREFIX):
-        log(f"mint returned non-routable {ip}: deleting it")
+        log(f"Jetstream2 returned non-routable {ip}: deleting it")
         os_run("floating", "ip", "delete", fid)
+        return ip, "", ""
+    return ip, fid, ""
+
+
+def all_clear(state: dict, ip: str) -> None:
+    """The drought is over: say so once, then forget it. If the email cannot
+    be sent, the drought stays open and the next probe tries again."""
+    if "mint-failed" not in state:
+        return
+    began = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(state["mint-failed"]))
+    if send_alert(
+        "Jetstream2 has public addresses again",
+        f"Jetstream2 handed out {ip}, a routable address. Creates and unshelves get "
+        f"addresses again. The shortage was first seen {began}.",
+    ):
+        clear_alert(state, "mint-failed")
+        clear_alert(state, "mint-probe-at")
+
+
+def mint(state: dict, counts: dict) -> None:
+    """One routable address ahead; a drought is the admins' business, once."""
+    ip, fid, error = request_address()
+    if error:
+        log(f"mint failed: {error}")
+        alert_once(
+            state,
+            "mint-failed",
+            "Floating-IP mint failed on Jetstream2",
+            drought_body(f"openstack floating ip create failed: {error}", counts),
+        )
+        return
+    if not fid:
         alert_once(
             state,
             "mint-failed",
             "Floating-IP mint failed on Jetstream2 (non-routable address)",
-            f"Jetstream2 handed out {ip}, which does not route; it was deleted. Its public pool "
-            "is dry. No spare address is in hand; each create or unshelve from now on fails "
-            "for want of one until Jetstream2 has addresses again.",
+            drought_body(
+                f"Jetstream2 handed out {ip}, which does not route; it was deleted. Its "
+                "public pool is dry.",
+                counts,
+            ),
         )
         return
     log(f"minted {ip} (one in hand)")
-    clear_alert(state, "mint-failed")
+    all_clear(state, ip)
+
+
+def probe(state: dict, now: float) -> None:
+    """While a drought is open and no mint is due, ask Jetstream2 for one
+    address once an hour and hand it straight back: the only way to learn the
+    drought is over while shelves keep the spares up."""
+    if "mint-failed" not in state or now - state.get("mint-probe-at", 0) < PROBE_EVERY:
+        return
+    state["mint-probe-at"] = now
+    ip, fid, error = request_address()
+    if error or not fid:
+        log(f"probe: Jetstream2 still has no public address ({error or ip})")
+        return
+    os_run("floating", "ip", "delete", fid)
+    log(f"probe: Jetstream2 handed out {ip}; returned it (not needed)")
+    all_clear(state, ip)
 
 
 def run(dry_run: bool) -> int:
@@ -490,15 +555,17 @@ def run(dry_run: bool) -> int:
     )
     seen = {a[1] for a in actions if a[0] == "alert"}
     for a in actions:
-        apply(a, state, dry_run)
+        apply(a, state, dry_run, counts)
     for key in [k for k in state if k.startswith("nonroutable:") and k not in seen]:
         clear_alert(state, key)  # gone: the next one alerts again
     if not dry_run:
+        if not any(a[0] == "mint" for a in actions):
+            probe(state, now)
         save_state(state)
     return 0
 
 
-def apply(action: tuple, state: dict, dry_run: bool) -> None:
+def apply(action: tuple, state: dict, dry_run: bool, counts: dict) -> None:
     """One planned action, done or (dry run) described."""
     kind = action[0]
     if kind == "unset":
@@ -519,7 +586,7 @@ def apply(action: tuple, state: dict, dry_run: bool) -> None:
     elif kind == "mint":
         log("below the rule: " + ("would mint one" if dry_run else "minting one"))
         if not dry_run:
-            mint(state)
+            mint(state, counts)
     elif kind == "alert":
         if dry_run:
             log(f"would alert: {action[2]}")

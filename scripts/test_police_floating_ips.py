@@ -345,3 +345,82 @@ def test_non_routable_addresses_are_deleted_or_reported():
         "infra": 1,  # the runner on the dead address
         "unknown": 0,
     }
+
+
+def test_the_drought_email_says_what_is_in_hand():
+    zero = police.drought_body("Dry.", {"spares": 0, "running": 3})
+    assert "In hand now: 0 spare addresses beside 3 running instances." in zero
+    assert "The next create or unshelve fails for want of an address" in zero
+    one = police.drought_body("Dry.", {"spares": 1, "running": 1})
+    assert "1 spare address beside 1 running instance." in one
+    assert "takes the spare; the one after that fails" in one
+    two = police.drought_body("Dry.", {"spares": 2, "running": 3})
+    assert "The next 2 creates or unshelves take the spares" in two
+    for body in (zero, one, two):
+        assert "a shelve returns its address to the spares" in body
+        assert "You get another email when Jetstream2 has addresses again." in body
+        assert "from now on" not in body
+
+
+class FakeJS2:
+    """Jetstream2 handing out `answers` in turn; records deletes and emails."""
+
+    def __init__(self, monkeypatch, answers, send_ok=True):
+        self.answers = list(answers)
+        self.deleted, self.sent = [], []
+        monkeypatch.setattr(police, "os_json", self.create)
+        monkeypatch.setattr(police, "os_run", lambda *a: self.deleted.append(a[-1]))
+        monkeypatch.setattr(
+            police, "send_alert", lambda s, b: (self.sent.append((s, b)), send_ok)[1]
+        )
+
+    def create(self, *_args):
+        ip = self.answers.pop(0)
+        return {"floating_ip_address": ip, "id": f"id-{ip}"}
+
+
+def test_a_non_routable_mint_alerts_once_with_the_counts(monkeypatch):
+    js2 = FakeJS2(monkeypatch, ["172.17.21.165", "172.17.21.166"])
+    state = {}
+    police.mint(state, {"spares": 0, "running": 1})
+    police.mint(state, {"spares": 0, "running": 1})
+    assert js2.deleted == ["id-172.17.21.165", "id-172.17.21.166"]
+    assert len(js2.sent) == 1
+    assert js2.sent[0][0].endswith("(non-routable address)")
+    assert "0 spare addresses beside 1 running instance" in js2.sent[0][1]
+    assert "mint-failed" in state
+
+
+def test_a_good_mint_after_a_drought_sends_the_all_clear(monkeypatch):
+    js2 = FakeJS2(monkeypatch, ["149.165.1.9"])
+    state = {"mint-failed": NOV_4_2026}
+    police.mint(state, {"spares": 0, "running": 1})
+    assert js2.deleted == []  # kept: it is the spare that was due
+    assert [s for s, _ in js2.sent] == ["Jetstream2 has public addresses again"]
+    assert "first seen 2026-11-04 00:00 UTC" in js2.sent[0][1]
+    assert state == {}
+
+
+def test_the_probe_runs_hourly_only_during_a_drought_and_returns_what_it_gets(
+    monkeypatch,
+):
+    js2 = FakeJS2(monkeypatch, ["172.17.21.1", "149.165.1.9"])
+    police.probe({}, NOW)  # no drought: nothing asked
+    assert js2.answers == ["172.17.21.1", "149.165.1.9"]
+    state = {"mint-failed": NOV_4_2026}
+    police.probe(state, NOW)  # still dry
+    assert js2.deleted == ["id-172.17.21.1"]
+    assert js2.sent == []
+    police.probe(state, NOW + 600)  # within the hour: not asked again
+    assert js2.answers == ["149.165.1.9"]
+    police.probe(state, NOW + 3600)  # addresses again: handed back, all clear
+    assert js2.deleted == ["id-172.17.21.1", "id-149.165.1.9"]
+    assert [s for s, _ in js2.sent] == ["Jetstream2 has public addresses again"]
+    assert state == {}
+
+
+def test_an_all_clear_that_cannot_be_sent_keeps_the_drought_open(monkeypatch):
+    FakeJS2(monkeypatch, ["149.165.1.9"], send_ok=False)
+    state = {"mint-failed": NOV_4_2026, "mint-probe-at": NOW - 7200}
+    police.probe(state, NOW)
+    assert state == {"mint-failed": NOV_4_2026, "mint-probe-at": NOW}
