@@ -81,7 +81,20 @@ jobs:
             gh issue comment "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/extend.md"
             exit 1
           fi
-          ip=$(jq -r '.addresses | to_entries[].value[] | select(test("^10\\.") | not)' <<<"$server" | head -1)
+          # AUTOMATION_AUDIT_2026-11.md: the address from Neutron (the one on
+          # the server's port), not Nova's cached `addresses` (decision 29), and
+          # the timer is reset only once the instance there proves it is this
+          # server: a stale or moved address would reset another member's
+          # session and report its hours.
+          port_id=$(openstack port list --server "$INSTANCE_NAME" -f value -c ID | head -n1) || port_id=""
+          ip=""
+          [[ -n "$port_id" ]] && ip=$(openstack floating ip list --port "$port_id" -f value -c 'Floating IP Address' | head -n1)
+          if [[ -z "$ip" ]] || ! python "$GITHUB_WORKSPACE/.github/actions/fip/fip.py" verify \
+              --server "$INSTANCE_NAME" --ip "$ip" --wait 30 >/dev/null; then
+            printf 'The session could not be extended: the instance could not be reached at its public address. Try again in a few minutes.\n' > "$RUNNER_TEMP/extend.md"
+            gh issue comment "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/extend.md"
+            exit 1
+          fi
           ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
                     -o ConnectTimeout=15 -o LogLevel=ERROR)
           script=/opt/instance-config-support/dist/check-instance-shelve.sh

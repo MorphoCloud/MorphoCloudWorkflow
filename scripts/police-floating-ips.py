@@ -25,7 +25,7 @@ What one run does, in this order:
    running server is reported, since that server is unreachable.
 3. With fewer held than max(N, running + 1), one is minted per run until the
    rule is met, so a create or unshelve always finds an address in hand
-   (create-ip also mints one the moment it takes the last spare). A mint
+   (fip.py attach also mints one the moment it takes the last spare). A mint
    that fails, or returns a non-routable address, is the start of a
    drought: the admins hear once.
 4. With more held than max(N, running + 1), unattached routable addresses
@@ -243,7 +243,7 @@ def classify(
     # attached implies owner is an instance (the return above), so owner is
     # a dict here; `settled` last, so an in-flight server costs no API call.
     if attached and status in SHELVED and not owner.get("task") and settled(f):
-        acts.append(("unset", fid, ip, status, owner["name"]))
+        acts.append(("unset", fid, ip, status, owner["name"], str(port)))
         attached = False
     if not routable:
         acts.append(
@@ -570,8 +570,12 @@ def probe(state: dict, now: float) -> None:
     if error or not fid:
         log(f"probe: Jetstream2 still has no public address ({error or ip})")
         return
-    os_run("floating", "ip", "delete", fid)
-    log(f"probe: Jetstream2 handed out {ip}; returned it (not needed)")
+    # Guarded: a create or unshelve may attach it in the seconds it is
+    # unattached; then it is in use and stays.
+    if guarded_delete(fid, ip):
+        log(f"probe: Jetstream2 handed out {ip}; returned it (not needed)")
+    else:
+        log(f"probe: Jetstream2 handed out {ip}; it was taken meanwhile and stays")
     all_clear(state, ip)
 
 
@@ -637,6 +641,70 @@ def run(dry_run: bool) -> int:
     return 0
 
 
+# --- acting only on what is still true -------------------------------------
+# AUTOMATION_AUDIT_2026-11.md, class 1: the plan is made from a snapshot that
+# can be minutes old by the time an action runs (alerts wait on GitHub). Each
+# unset and delete re-reads the address and acts with Neutron's revision
+# number from that read (`revision-if-match`), by id (a reused sdk object
+# drops If-Match; see fip.py): an address another actor has
+# attached, moved or changed meanwhile is left alone this tick.
+
+HTTP_NOT_FOUND = 404
+HTTP_PRECONDITION_FAILED = 412
+_NET = {}
+
+
+def net():
+    if "net" not in _NET:
+        import openstack  # noqa: PLC0415 — the runner's venv; tests set _NET
+
+        _NET["net"] = openstack.connect(cloud=os.environ["OS_CLOUD"]).network
+    return _NET["net"]
+
+
+def fresh_ip(fid: str):
+    try:
+        return net().get_ip(fid)
+    except Exception as e:
+        if getattr(e, "status_code", None) == HTTP_NOT_FOUND:
+            return None
+        raise
+
+
+def guarded_unset(fid: str, port: str, ip: str) -> bool:
+    """Release `ip` only while it is still on `port`. True when released."""
+    f = fresh_ip(fid)
+    if f is None or f.port_id != port:
+        log(f"{ip} is no longer on the port it was planned for; left alone")
+        return False
+    try:
+        net().update_ip(f.id, if_revision=f.revision_number, port_id=None)
+    except Exception as e:
+        if getattr(e, "status_code", None) == HTTP_PRECONDITION_FAILED:
+            log(f"{ip} changed while being released; left alone")
+            return False
+        raise
+    return True
+
+
+def guarded_delete(fid: str, ip: str) -> bool:
+    """Delete `ip` only while it is still unattached. True when deleted."""
+    f = fresh_ip(fid)
+    if f is None:
+        return False
+    if f.port_id is not None:
+        log(f"{ip} was attached meanwhile; not deleted")
+        return False
+    try:
+        net().delete_ip(f.id, ignore_missing=True, if_revision=f.revision_number)
+    except Exception as e:
+        if getattr(e, "status_code", None) == HTTP_PRECONDITION_FAILED:
+            log(f"{ip} changed while being deleted; left alone")
+            return False
+        raise
+    return True
+
+
 def apply(action: tuple, state: dict, dry_run: bool, counts: dict) -> None:
     """One planned action, done or (dry run) described."""
     kind = action[0]
@@ -644,8 +712,7 @@ def apply(action: tuple, state: dict, dry_run: bool, counts: dict) -> None:
         log(
             f"{'would release' if dry_run else 'releasing'} {action[2]} from a {action[3]} server ({action[4]})"
         )
-        if not dry_run:
-            os_run("floating", "ip", "unset", "--port", action[1])
+        if not dry_run and guarded_unset(action[1], action[5], action[2]):
             note_issue(
                 action[4],
                 f"The public address {action[2]} was released from your shelved instance: an address"
@@ -654,7 +721,7 @@ def apply(action: tuple, state: dict, dry_run: bool, counts: dict) -> None:
     elif kind == "delete":
         log(f"{'would delete' if dry_run else 'deleting'} {action[2]} ({action[3]})")
         if not dry_run:
-            os_run("floating", "ip", "delete", action[1])
+            guarded_delete(action[1], action[2])
     elif kind == "mint":
         log("below the rule: " + ("would mint one" if dry_run else "minting one"))
         if not dry_run:

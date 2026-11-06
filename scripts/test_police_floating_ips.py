@@ -4,6 +4,9 @@ Run: python -m pytest scripts/test_police_floating_ips.py"""
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 spec = importlib.util.spec_from_file_location(
     "police", Path(__file__).resolve().parent / "police-floating-ips.py"
@@ -377,6 +380,11 @@ class FakeJS2:
         monkeypatch.setattr(police, "os_json", self.create)
         monkeypatch.setattr(police, "os_run", lambda *a: self.deleted.append(a[-1]))
         monkeypatch.setattr(
+            police,
+            "guarded_delete",
+            lambda fid, _ip: (self.deleted.append(fid), True)[1],
+        )
+        monkeypatch.setattr(
             police, "send_alert", lambda s, b: (self.sent.append((s, b)), send_ok)[1]
         )
 
@@ -501,3 +509,112 @@ def test_an_over_the_hold_delete_waits_for_the_next_tick(monkeypatch):
     assert police.settle_surplus([one], state, NOW + 1200) == []
     # A state file from the first version (one number) is read as empty.
     assert police.settle_surplus([one], {"surplus-since": NOW}, NOW + 1500) == []
+
+
+class Rev(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.status_code = code
+
+
+class FakeNet:
+    """Neutron's floating IPs with revisions (revision-if-match)."""
+
+    def __init__(self, **fips):  # id -> port (None: unattached)
+        self.fips = {fid: {"port_id": port, "rev": 1} for fid, port in fips.items()}
+        self.before_write = []  # run once before the next write: another actor
+
+    def get_ip(self, fid):
+        if fid not in self.fips:
+            raise Rev(404)
+        f = self.fips[fid]
+        return SimpleNamespace(id=fid, port_id=f["port_id"], revision_number=f["rev"])
+
+    def _check(self, fid, if_revision):
+        # The sdk drops If-Match on a reused resource object (Jetstream2,
+        # 2026-11-06): policing must pass ids, and the fake refuses objects.
+        assert isinstance(fid, str), "pass the address id, not an sdk object"
+        while self.before_write:
+            self.before_write.pop(0)()
+        if fid not in self.fips:
+            raise Rev(404)
+        if if_revision != self.fips[fid]["rev"]:
+            raise Rev(412)
+
+    def update_ip(self, fid, if_revision=None, **attrs):
+        self._check(fid, if_revision)
+        self.fips[fid]["port_id"] = attrs["port_id"]
+        self.fips[fid]["rev"] += 1
+
+    def delete_ip(self, fid, ignore_missing=True, if_revision=None):  # noqa: ARG002
+        self._check(fid, if_revision)
+        del self.fips[fid]
+
+
+@pytest.fixture
+def fake_net(monkeypatch):
+    monkeypatch.setattr(police, "log", lambda _m: None)
+
+    def make(**fips):
+        n = FakeNet(**fips)
+        monkeypatch.setitem(police._NET, "net", n)
+        return n
+
+    return make
+
+
+def test_policing_deletes_only_what_is_still_unattached_1g(fake_net):
+    n = fake_net(a=None, b="port-x")
+    assert police.guarded_delete("a", "149.165.1.1") is True
+    assert "a" not in n.fips
+    assert police.guarded_delete("b", "149.165.1.2") is False  # attached: kept
+    assert police.guarded_delete("gone", "149.165.1.3") is False
+
+
+def test_an_attach_between_the_read_and_the_delete_wins_1g(fake_net):
+    # Another actor attaches the spare after policing re-read it: the stale
+    # revision makes Neutron refuse the delete (412), and the address stays.
+    n = fake_net(a=None)
+
+    def attach():
+        n.fips["a"] = {"port_id": "port-create", "rev": 2}
+
+    n.before_write.append(attach)
+    assert police.guarded_delete("a", "149.165.1.1") is False
+    assert n.fips["a"]["port_id"] == "port-create"
+
+
+def test_policing_releases_only_from_the_planned_port_1f(fake_net):
+    n = fake_net(a="port-shelved", b="port-other")
+    assert police.guarded_unset("a", "port-shelved", "149.165.1.1") is True
+    assert n.fips["a"]["port_id"] is None
+    # Moved to another server since the snapshot: not released from it.
+    assert police.guarded_unset("b", "port-shelved", "149.165.1.2") is False
+    assert n.fips["b"]["port_id"] == "port-other"
+
+
+def test_a_release_note_is_posted_only_when_released(fake_net, monkeypatch):
+    fake_net(a="port-other")
+    notes = []
+    monkeypatch.setattr(police, "note_issue", lambda name, _note: notes.append(name))
+    action = (
+        "unset",
+        "a",
+        "149.165.1.1",
+        "SHELVED_OFFLOADED",
+        "inst-7",
+        "port-shelved",
+    )
+    police.apply(action, {}, False, {})
+    assert notes == []
+
+
+def test_the_probe_leaves_an_address_taken_meanwhile(fake_net, monkeypatch):
+    n = fake_net()
+    monkeypatch.setattr(police, "request_address", lambda: ("149.165.1.9", "p", ""))
+    n.fips["p"] = {"port_id": "port-create", "rev": 2}  # a create took it already
+    monkeypatch.setattr(police, "send_alert", lambda _s, _b: True)
+    state = {"mint-failed": NOV_4_2026}
+    police.probe(state, NOW)
+    assert n.fips["p"]["port_id"] == "port-create"
+    assert state == {}  # the pool has addresses again all the same

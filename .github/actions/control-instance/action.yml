@@ -520,31 +520,11 @@ runs:
 
         # SHELVED_OFFLOADED instances have empty addresses in 'openstack server show',
         # but their Neutron port persists. A previously failed unshelve can leave a
-        # floating IP stuck on that port, causing the subsequent 'associate_ip' step
-        # to fail. Release any such stuck IP before proceeding.
-
-        port_id=$(openstack port list --server "$INSTANCE_NAME" -f json | jq -r '.[0].ID // ""')
-        echo "port_id [$port_id]"
-
-        if [[ -z "$port_id" ]]; then
-          echo "No port found for instance, skipping."
-          exit 0
-        fi
-
-        floating_ip_uuid=$(
-          openstack floating ip list -f json | \
-          jq -r --arg port "$port_id" \
-          'map(select(.Port == $port)) | if length > 0 then .[0].ID else "" end'
-        )
-        echo "floating_ip_uuid [$floating_ip_uuid]"
-
-        if [[ -z "$floating_ip_uuid" ]]; then
-          echo "No floating IP attached to port, nothing to release."
-          exit 0
-        fi
-
-        echo "Releasing stuck floating IP $floating_ip_uuid from port $port_id"
-        openstack floating ip unset --port "$floating_ip_uuid"
+        # floating IP stuck on that port, causing the subsequent attach to fail.
+        # Release it: fip.py detaches only addresses still on THIS server's port,
+        # with a compare-and-swap, so it can never strip an address another actor
+        # has meanwhile attached elsewhere (AUTOMATION_AUDIT_2026-11.md, class 1).
+        python "$GITHUB_ACTION_PATH/../fip/fip.py" detach --server "$INSTANCE_NAME"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
@@ -1214,11 +1194,15 @@ runs:
         inputs.command_name == 'unshelve' &&
         steps.check_instance_has_ip.outputs.has_ip_assigned == 'false' }}
       id: ip_create
-      uses: ./.github/actions/create-ip
-      with:
-        os_cloud: ${{ inputs.os_cloud }}
-        preferred_ip_address:
-          ${{ steps.check_instance_has_ip.outputs.instance_ip }}
+      # Class 1 of AUTOMATION_AUDIT_2026-11.md: picks nothing, only makes sure
+      # an address exists (a dry pool fails here, with its own message); the
+      # attach below takes one atomically.
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+        python "$GITHUB_ACTION_PATH/../fip/fip.py" ensure-spare
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
 
     - name: comment (failed to retrieve or create floating IP)
       id: comment_ip_create_failed
@@ -1244,45 +1228,19 @@ runs:
       run: |
         source ~/venv/bin/activate
 
-        # Mirror the create path: JS2's Neutron API sometimes returns HTTP 500
-        # from 'add floating ip' even though the association actually applied,
-        # and Nova's cached 'server show -c addresses' view lags the real
-        # binding. Verify against the Neutron floating-IP object (its port
-        # binding), tolerate the spurious 500, and retry before failing — so an
-        # /unshelve doesn't fall over on the same transient that /create handles.
-        has_ip() {
-          local pid
-          pid=$(openstack floating ip show "$FLOATING_IP_UUID" -c port_id -f value 2>/dev/null) \
-            || return 1
-          [[ -n "$pid" && "$pid" != "None" && "$pid" != "null" ]]
-        }
-
-        if has_ip; then
-          echo "Floating IP already associated."
-        else
-          max_wait=300   # JS2 floating-IP association can lag under load
-          interval=10
-          start=$SECONDS
-          associated=false
-          while :; do
-            openstack server add floating ip "$INSTANCE_NAME" "$FLOATING_IP_ADDRESS" \
-              || echo "add floating ip returned non-zero (possible spurious JS2 500); verifying..."
-            sleep 5
-            if has_ip; then associated=true; break; fi
-            if (( SECONDS - start >= max_wait )); then break; fi
-            echo "IP not associated yet (waited $((SECONDS - start))s of ${max_wait}s); retrying in ${interval}s..."
-            sleep "$interval"
-          done
-          if [[ "$associated" != "true" ]]; then
-            echo "::error ::Failed to associate $FLOATING_IP_ADDRESS with $INSTANCE_NAME after ${max_wait}s"
-            exit 1
-          fi
-          echo "Floating IP associated."
-        fi
+        # Class 1 of AUTOMATION_AUDIT_2026-11.md: a compare-and-swap attach on
+        # the address's Neutron revision, the old address first (decision 25
+        # prefers it), success only when a fresh read shows it on THIS server's
+        # port. fip.py retries Jetstream2's spurious 500 by reading back what
+        # applied, for up to 300 s (association can lag under load).
+        out=$(python "$GITHUB_ACTION_PATH/../fip/fip.py" attach --server "$INSTANCE_NAME" \
+          --prefer "$PREFERRED_IP" --deadline 300)
+        echo "$out"
+        echo "$out" >> "$GITHUB_OUTPUT"
+        echo "Floating IP associated."
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        FLOATING_IP_ADDRESS: ${{ steps.ip_create.outputs.floating_ip_address }}
-        FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
+        PREFERRED_IP: ${{ steps.check_instance_has_ip.outputs.instance_ip }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (failed to associate floating IP with unshelved instance)
@@ -1314,33 +1272,32 @@ runs:
       shell: bash
       run: |
         source ~/venv/bin/activate
-        if [[ -n "$FLOATING_IP_UUID" ]]; then
-          # An association that never took leaves no port on the address, and
-          # unset then answers "Floating IP has no port": that is fine.
-          openstack floating ip unset --port "$FLOATING_IP_UUID" || true
-        fi
+        # Only what is on THIS server's port (class 1 of the audit): the old
+        # 'floating ip unset' of the picked address detached it from wherever
+        # it was, another member's instance included (finding 1i).
+        python "$GITHUB_ACTION_PATH/../fip/fip.py" detach --server "$INSTANCE_NAME" || true
         openstack server shelve "$INSTANCE_NAME"
         echo "Shelved $INSTANCE_NAME again after the address step failed."
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
-        FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
 
     - name: Disassociate floating IP from shelved instance
+      # Class 1 of the audit: detach whatever is on THIS server's port, by
+      # port, never by address. 'server remove floating ip <server> <ip>'
+      # ignores the server and strips the address from wherever it is bound
+      # (finding 1f). Whatever is on the port goes, so the end-state check
+      # (no address on the port) holds even for a non-routable one.
       if:
         ${{ steps.check_instance.outputs.exists == 'true' && inputs.command_name
-        == 'shelve' && steps.check_instance_has_ip.outputs.has_ip == 'true' &&
-        steps.check_instance_has_ip.outputs.has_ip_assigned == 'true' }}
+        == 'shelve' }}
       id: disassociate_ip
       shell: bash
       run: |
         source ~/venv/bin/activate
-
-        openstack server remove floating ip "$INSTANCE_NAME" "$FLOATING_IP_ADDRESS"
+        python "$GITHUB_ACTION_PATH/../fip/fip.py" detach --server "$INSTANCE_NAME"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        FLOATING_IP_ADDRESS:
-          ${{ steps.check_instance_has_ip.outputs.instance_ip }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (failed to disassociate floating IP from unshelved instance)
