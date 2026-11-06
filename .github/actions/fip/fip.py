@@ -30,6 +30,10 @@ import sys
 import time
 
 ROUTABLE_PREFIX = "149.165."
+# Every conditional call passes the address's id, never a resource object:
+# openstacksdk sends only changed headers, so a reused object with the same
+# revision silently drops If-Match and Neutron accepts a stale write (seen on
+# Jetstream2, 2026-11-06). A string id builds a fresh request every time.
 MINT_DESCRIPTION = "MorphoCloud"
 EXTERNAL_NETWORK = "public"
 EXIT_NO_ADDRESS = 2
@@ -103,7 +107,7 @@ def mint(conn, tries: int = 2):
             return ip
         log(f"Jetstream2 handed out non-routable {ip.floating_ip_address}; deleting it")
         try:
-            conn.network.delete_ip(ip, ignore_missing=True)
+            conn.network.delete_ip(ip.id, ignore_missing=True)
         except Exception as e:
             log(f"could not delete {ip.floating_ip_address}: {e}")
     return None
@@ -124,7 +128,7 @@ def try_bind(conn, ip, port_id: str) -> str:
     someone else changed or removed it; move on. "retry": the call failed and
     nothing changed (Jetstream2's transient errors); try it again."""
     try:
-        conn.network.update_ip(ip, if_revision=ip.revision_number, port_id=port_id)
+        conn.network.update_ip(ip.id, if_revision=ip.revision_number, port_id=port_id)
     except Exception as e:
         code = status_of(e)
         if code in (HTTP_NOT_FOUND, HTTP_CONFLICT, HTTP_PRECONDITION_FAILED):
@@ -251,7 +255,7 @@ def release(conn, ip, port_id: str, name: str, sleep=time.sleep) -> bool:
             return False  # gone, or no longer ours: nothing of ours to detach
         try:
             conn.network.update_ip(
-                fresh, if_revision=fresh.revision_number, port_id=None
+                fresh.id, if_revision=fresh.revision_number, port_id=None
             )
         except Exception as e:
             log(

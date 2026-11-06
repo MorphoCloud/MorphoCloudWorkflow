@@ -105,27 +105,31 @@ class FakeNeutron:
         return self.view(fid)
 
     def update_ip(self, ip, if_revision=None, **attrs):
+        # Jetstream2, 2026-11-06: the sdk drops If-Match when a resource object
+        # is reused, so fip.py must pass ids. The fake refuses objects.
+        assert isinstance(ip, str), "pass the address id, not an sdk object"
         self._hook("update_ip")
-        f = self.fips.get(ip.id)
+        f = self.fips.get(ip)
         if f is None:
             raise HttpError(404)
         if if_revision is not None and if_revision != f["rev"]:
             raise HttpError(412)
         f["port_id"] = attrs["port_id"]
         f["rev"] += 1
-        if ip.id in self.spurious_500:
-            self.spurious_500.discard(ip.id)
+        if ip in self.spurious_500:
+            self.spurious_500.discard(ip)
             raise HttpError(500)  # applied, but Jetstream2 says otherwise
 
     def delete_ip(self, ip, ignore_missing=True, if_revision=None):
-        f = self.fips.get(ip.id)
+        assert isinstance(ip, str), "pass the address id, not an sdk object"
+        f = self.fips.get(ip)
         if f is None:
             if ignore_missing:
                 return
             raise HttpError(404)
         if if_revision is not None and if_revision != f["rev"]:
             raise HttpError(412)
-        del self.fips[ip.id]
+        del self.fips[ip]
 
     def create_ip(self, **_kw):
         self._hook("create_ip")

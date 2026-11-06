@@ -530,22 +530,25 @@ class FakeNet:
         f = self.fips[fid]
         return SimpleNamespace(id=fid, port_id=f["port_id"], revision_number=f["rev"])
 
-    def _check(self, ip, if_revision):
+    def _check(self, fid, if_revision):
+        # The sdk drops If-Match on a reused resource object (Jetstream2,
+        # 2026-11-06): policing must pass ids, and the fake refuses objects.
+        assert isinstance(fid, str), "pass the address id, not an sdk object"
         while self.before_write:
             self.before_write.pop(0)()
-        if ip.id not in self.fips:
+        if fid not in self.fips:
             raise Rev(404)
-        if if_revision != self.fips[ip.id]["rev"]:
+        if if_revision != self.fips[fid]["rev"]:
             raise Rev(412)
 
-    def update_ip(self, ip, if_revision=None, **attrs):
-        self._check(ip, if_revision)
-        self.fips[ip.id]["port_id"] = attrs["port_id"]
-        self.fips[ip.id]["rev"] += 1
+    def update_ip(self, fid, if_revision=None, **attrs):
+        self._check(fid, if_revision)
+        self.fips[fid]["port_id"] = attrs["port_id"]
+        self.fips[fid]["rev"] += 1
 
-    def delete_ip(self, ip, ignore_missing=True, if_revision=None):  # noqa: ARG002
-        self._check(ip, if_revision)
-        del self.fips[ip.id]
+    def delete_ip(self, fid, ignore_missing=True, if_revision=None):  # noqa: ARG002
+        self._check(fid, if_revision)
+        del self.fips[fid]
 
 
 @pytest.fixture

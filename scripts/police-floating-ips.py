@@ -645,7 +645,8 @@ def run(dry_run: bool) -> int:
 # AUTOMATION_AUDIT_2026-11.md, class 1: the plan is made from a snapshot that
 # can be minutes old by the time an action runs (alerts wait on GitHub). Each
 # unset and delete re-reads the address and acts with Neutron's revision
-# number from that read (`revision-if-match`): an address another actor has
+# number from that read (`revision-if-match`), by id (a reused sdk object
+# drops If-Match; see fip.py): an address another actor has
 # attached, moved or changed meanwhile is left alone this tick.
 
 HTTP_NOT_FOUND = 404
@@ -677,7 +678,7 @@ def guarded_unset(fid: str, port: str, ip: str) -> bool:
         log(f"{ip} is no longer on the port it was planned for; left alone")
         return False
     try:
-        net().update_ip(f, if_revision=f.revision_number, port_id=None)
+        net().update_ip(f.id, if_revision=f.revision_number, port_id=None)
     except Exception as e:
         if getattr(e, "status_code", None) == HTTP_PRECONDITION_FAILED:
             log(f"{ip} changed while being released; left alone")
@@ -695,7 +696,7 @@ def guarded_delete(fid: str, ip: str) -> bool:
         log(f"{ip} was attached meanwhile; not deleted")
         return False
     try:
-        net().delete_ip(f, ignore_missing=True, if_revision=f.revision_number)
+        net().delete_ip(f.id, ignore_missing=True, if_revision=f.revision_number)
     except Exception as e:
         if getattr(e, "status_code", None) == HTTP_PRECONDITION_FAILED:
             log(f"{ip} changed while being deleted; left alone")
