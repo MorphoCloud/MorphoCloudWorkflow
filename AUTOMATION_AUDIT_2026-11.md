@@ -119,6 +119,31 @@ amm554 request started while an unshelve runs on another, both picking from a
 single spare, expecting both instances to end with distinct addresses and the
 logs to show one 412.
 
+**Revised 2026-11-06 after testing on Jetstream2 (approved by the maintainer).**
+Throwaway addresses and ports on BIO240357, all deleted: (1) openstacksdk drops
+`If-Match` when the same resource object is reused with the same revision (it
+sends only changed headers), and Neutron then accepts a stale write; with the
+address's id it always refuses (412). fip.py and policing pass ids, and both
+test fakes refuse objects. (2) In sequence, every stale attach, detach, update
+and delete is refused. (3) Two attaches of one address to two ports at the same
+instant: in 4 of 6 rounds both succeeded and the last writer kept it (likely
+Neutron retrying the conflicting write internally without re-checking the
+condition). So the compare-and-swap closes every stale-snapshot case (policing,
+shelve, stuck release, 1e-1i) but not two takers in the same second. Production
+history (2026-10-01 to 11-06, 199 jobs) shows two overlapping jobs on different
+runners, both shelves; no two address takers ever overlapped. The residual case
+is therefore contained, not raced: **nothing logs in to an instance by address
+until the instance proves it is the server meant** (`fip.py verify`: the
+metadata service's `uuid`, which the guest cannot change, equals the server id).
+Setup verifies before its first login and replaces an address that answers as
+another server; the access email verifies before mailing the address or reading
+the password; /extend reads its address from Neutron (it read Nova's cache:
+another instance of class 5) and verifies before resetting the timer.
+Auto-shelve and uptime read Neutron right before a read-only login and are left
+as they are. A 15-second re-check after each attach was considered and dropped:
+it would slow every start for a case never observed, and the identity check
+already contains the harm.
+
 **Production:** production's control action still binds before the unshelve
 (decision 25 is not there), so its hotfix is a separate, smaller diff on the
 `prod-hotfix` baseline: the same `fip.py attach`/`detach` in the create's
