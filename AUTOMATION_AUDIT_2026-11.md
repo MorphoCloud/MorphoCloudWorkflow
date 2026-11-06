@@ -60,16 +60,70 @@ Each class gets one fix, in one PR, with a test that replays the interleaving.
 | 1f  | Policing unsets the address of a shelve that just reached SHELVED_OFFLOADED and posts "released" on the issue; `server remove floating ip <server> <ip>` ignores the server (openstackclient 10.4.0), so if another taker attached that address meanwhile, the shelve strips it from the other instance. | Another member's running instance loses its address.                                                                                                                                                                                                                                                               | T (client behavior verified in source by the audit, not on the runner's version) |
 | 1g  | Policing acts on IDs from a snapshot up to ~3 min old (alert waits) without re-reading `Port`.                                                                                                                                                                                                           | Deletes an address just attached.                                                                                                                                                                                                                                                                                  | P                                                                                |
 | 1h  | create-ip's non-routable sweep deletes policing's fresh mint; policing's own delete then raises, the run aborts and loses its state.                                                                                                                                                                     | A lost drought alert.                                                                                                                                                                                                                                                                                              | P                                                                                |
+| 1i  | Found in review: after a failed unshelve, "Shelve again" runs `floating ip unset --port <picked id>` (control-instance:1321) on the address it picked, wherever that address is now bound.                                                                                                               | In the 1d collision, it detaches the address from the **other member's running instance**.                                                                                                                                                                                                                         | V                                                                                |
 
-**Fix (one PR):** one address lane. All address work (create-ip pick, associate,
-policing's unset/delete/mint) runs on the acquire runner under one host lock
-(`flock ~/.config/morphocloud/fip.lock`), held from pick to verified attach. The
-unshelve's address steps move to the acquire runner (as the runner plan said).
-The associate check becomes "bound to **this** server's port", and a mismatch
-fails before setup touches anything. Shelve detaches by its own port, never by
-address. Policing re-reads each address under the lock before acting. Before
-writing it: confirm on Test (a plan with real resources, presented first) what
-Neutron does when an already-attached address is attached to a second port.
+**Fix (one PR) — design, 2026-11-06.** Jetstream2's Neutron has the
+`revision-if-match` extension, and openstacksdk on all three runners (4.11 on
+Test, 4.14 on production) passes it as `if_revision` on `update_ip` and
+`delete_ip`. That gives a compare-and-swap at the source of truth: "attach this
+address to my port only if it is still at the revision I read (unattached)". Two
+takers on two runners cannot both win; the loser gets HTTP 412 and moves on. No
+lock, no lane, no job routing, nothing that queues an unshelve behind a
+20-minute create. This replaces the flock design above it was approved as.
+
+1. **No early pick.** Nothing holds an address between steps. The create's early
+   `create-ip` becomes `fip.py ensure-spare`: make sure one routable unattached
+   address exists (mint if not), so an exhausted pool still fails before a
+   volume and a server are built. It reserves nothing.
+2. **`fip.py attach --server NAME [--prefer IP]`**, the only way an address is
+   attached (create associate; unshelve, decision 25; the reconcile repair,
+   which is the unshelve no-op path). Under a deadline:
+   - read the server's port;
+   - if a routable address already has `port_id ==` that port: done
+     (idempotent);
+   - else for each unattached routable address (the preferred one first):
+     `update_ip(port_id=mine, if_revision=r)`; 412 or 404 → next address; any
+     other error (Jetstream2's spurious 500) → re-read it: mine → done,
+     unattached → retry, someone else's → next;
+   - none left → mint one (non-routable → delete, as decision 24) and attach it
+     the same way; the pool is dry → exit with "no address";
+   - success is decided only by a fresh read showing `port_id ==` my port.
+     Output: that address and its id, which setup and the email then use.
+   - keep one in hand afterwards (decision 24), best effort.
+3. **`fip.py detach --server NAME`**, the only way an address is detached
+   (shelve; the unshelve's stuck-address release; shelve-again after a failed
+   address step): for each address whose `port_id ==` this server's port,
+   `update_ip(port_id=None, if_revision=r)`; on 412 re-read: no longer mine →
+   done. It never names an address, so it cannot strip another instance's.
+4. **Policing** re-reads each address immediately before acting and acts with
+   `if_revision` from that read: delete only if still unattached; unset only if
+   still on the same port. A changed address is skipped this tick. create-ip's
+   own non-routable sweep is removed (policing owns it), closing 1h.
+5. The create sets `exoFloatingIpReuseOption` after the attach, to the id
+   actually attached.
+
+`fip.py` lives in `.github/actions/fip/` (vendorized with the actions) and
+imports openstacksdk from the runner's venv; policing imports the same module.
+
+**Tests before any run on Jetstream2:** a fake Neutron that enforces revisions,
+and tests replaying 1a–1h: two attachers on one spare; a create and an unshelve
+interleaved at every step; policing's delete and unset racing an attach; a
+shelve detaching while another server attaches its old address; the spurious 500
+that did apply; an exhausted pool.
+
+**Tests on Jetstream2 (Test), presented for approval before running:** (a) one
+fresh address on BIO240357: update its description with a stale revision →
+expect 412, delete with a stale revision → expect 412, then delete it; (b) as
+amm554: create, shelve, unshelve, delete on one request; then a create on one
+amm554 request started while an unshelve runs on another, both picking from a
+single spare, expecting both instances to end with distinct addresses and the
+logs to show one 412.
+
+**Production:** production's control action still binds before the unshelve
+(decision 25 is not there), so its hotfix is a separate, smaller diff on the
+`prod-hotfix` baseline: the same `fip.py attach`/`detach` in the create's
+associate, the pre-unshelve bind and the shelve. Shown to the maintainer as a
+diff against the last vendorized SHA before it is pushed.
 
 ### Class 2 — Automation decides from a stale read and nobody re-checks (high)
 
@@ -129,10 +183,28 @@ clears all; `exoSetup=complete` moves to after the reboot check.
 | 5b  | without an `exoPw` tag, `passphrase()` SSHes to that address with `accept-new` and caches what it reads as this server's password (runner:588-607). | **Another member's password and web link pushed to this member.**  | V (code), P (needs a recycled address) |
 | 5c  | `PRIVATE_IP` treats 172.16/12 as private, so a server on a non-routable 172.17 floating IP is never probed or auto-shelved.                         | A dead instance stays "Active".                                    | T                                      |
 
-**Fix:** the runner reads addresses from Neutron (as decision 29); the password
-comes only from the tag the workflow wrote, or from the instance after checking
-its metadata UUID matches the server; 172.17 floating addresses count as
-present-but-dead.
+**Fix — design, 2026-11-06 (portal repo, runner/mc_share_runner.py):**
+
+1. **Addresses from Neutron.** Each cycle reads `floating ip list` once (one
+   call) and keys attached addresses by their fixed IP; the fixed IP comes from
+   Nova's `Networks`, which is stable for the life of a port (only the floating
+   part of that cache goes stale). A server's address is the floating IP bound
+   to its fixed IP, or none. This is how the policing script already reads them.
+2. **A non-routable address is dead.** An attached address outside 149.165 is
+   reported with `reachable: false` and no probe, so the card shows Unreachable
+   and decision 23 shelves it; the next unshelve gets a routable one.
+3. **The password only from this server.** `passphrase()` keeps the `exoPw` tag
+   first. Without it, the same SSH session also reads the instance's
+   `meta_data.json` and the password is used and cached only when its `uuid` is
+   this server's id; a mismatch is logged and alerted (a recycled address), and
+   nothing is pushed. Host-key checking stays as it is: a changed key already
+   fails safe.
+
+**Tests:** a snapshot where Nova's cache shows an old address and Neutron shows
+none or another; a 172.17 attached address; a passphrase read where the metadata
+uuid differs (refused, alerted) and matches (cached). **On Test:** install on
+the Test runner, compare one cycle's snapshot against
+`openstack floating ip list` by hand, and watch the card for amm554's request.
 
 ### Class 6 — Portal state machine races (medium)
 
