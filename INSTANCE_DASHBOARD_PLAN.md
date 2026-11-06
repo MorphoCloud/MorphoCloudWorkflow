@@ -115,7 +115,11 @@ never clears access details pushed after the report was read: this takes
 precedence over the clearing described above, since those details are newer than
 what the report says. (4) A card that is active but still waiting for its access
 details keeps refreshing, since the runner's restore can deliver them minutes
-after the workflow finished. |
+after the workflow finished. **Amended 2026-11-06:** the portal accepts every
+Nova task state, hyphenated ones included (`powering-off`, which a delete passes
+through when it stops the server first). It refused the whole snapshot over one
+such state, so the dashboard missed that minute for every member
+(Test-Instances#523; #482 on 2026-10-26). |
 
 | 21 | **The runner is the clock; GitHub's schedule is not.** (maintainer,
 2026-11-03) GitHub's `on: schedule` fires a few times a day whatever the cron
@@ -249,7 +253,14 @@ shelve returns an address. While the drought is open and no mint is due, the
 script asks Jetstream2 for one address once an hour and hands it straight back;
 the first routable answer, from that probe or from a mint, sends one "Jetstream2
 has public addresses again" email. An all-clear that cannot be sent keeps the
-drought open for the next probe. |
+drought open for the next probe. **Amended 2026-11-06 (Test-Instances#523: a
+create picked the only spare and minted its replacement; at the next tick the
+script saw two idle spares over a hold of one and deleted the picked one, 13 s
+before the create attached it, and the create failed):** an instance on its way
+up with no address yet (BUILD, a starting task state such as spawning or
+unshelving, or ACTIVE with no address) counts as running, so the rule keeps a
+spare for it. And an over-the-hold delete waits for the next tick: the surplus
+must still be there four minutes after it was first seen. |
 
 | 25 | **An unshelve takes and binds its address only once the server is ACTIVE;
 no address, no running server.** (maintainer, 2026-11-04; step 5 of the
