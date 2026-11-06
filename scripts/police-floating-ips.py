@@ -25,7 +25,7 @@ What one run does, in this order:
    running server is reported, since that server is unreachable.
 3. With fewer held than max(N, running + 1), one is minted per run until the
    rule is met, so a create or unshelve always finds an address in hand
-   (create-ip also mints one the moment it takes the last spare). A mint
+   (fip.py attach also mints one the moment it takes the last spare). A mint
    that fails, or returns a non-routable address, is the start of a
    drought: the admins hear once.
 4. With more held than max(N, running + 1), unattached routable addresses

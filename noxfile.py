@@ -292,6 +292,9 @@ def vendorize_course(session: nox.Session) -> None:
             # automatic-volume-deleting, the delete-volume action) are NOT excluded
             # here on purpose: course repositories stay in volume mode and keep
             # their frozen copies. Do not add them for symmetry.
+            # Replaced by .github/actions/fip/fip.py, which create-instance (used by
+            # create-course-instance) now calls; excluded so the copies go too.
+            ".github/actions/create-ip/action.yml",
             # Claude PR reviewer — MWF-only (see vendorize session note)
             ".github/workflows/claude.yml",
             ".github/workflows/claude-code-review.yml",

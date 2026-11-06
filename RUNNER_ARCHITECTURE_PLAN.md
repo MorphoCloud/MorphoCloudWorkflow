@@ -283,7 +283,12 @@ fast.** So #2 and the hazard-class split are synergistic, not alternatives:
    compute quota), so concurrent execution can race on pool selection →
    **serialize create+unshelve.** FIP handling is policy-compliant (see §3:
    shelve disassociates the FIP back to the project pool, not stuck on the
-   shelved instance), so there's no separate fix needed.
+   shelved instance), so there's no separate fix needed. **Correction 2026-11-06
+   (AUTOMATION_AUDIT_2026-11.md, class 1):** the serialization was never built
+   (unshelve jobs run `runs-on: self-hosted`, on either runner), so the race was
+   open. It is now closed without serializing: every attach is a
+   compare-and-swap on the address's Neutron revision
+   (`.github/actions/fip/fip.py`), and `create-ip` is gone.
 2. **Reconciler is a real state machine** (BUILD/ACTIVE/ERROR/SHELVED/
    SHELVED_OFFLOADED/UNSHELVING) — needs careful design + tests.
 3. **Email/credential timing** moves from end-of-create-job to reconciler

@@ -198,14 +198,17 @@ public addresses routinely and, when dry, hands out 172.17.x, which does not
 route: Test-Instances #513 came up "Active" on one and was dead. Holding spares
 on top of what runs is what Jetstream2's admins dislike, so the rule counts
 attached addresses too: at quiet times N are held, at busy times exactly one
-more than is running. (1) `create-ip` takes only a routable (149.165/16)
-unattached address, deletes unattached non-routable ones on sight, and when it
-has to mint, refuses a non-routable result (two tries) and fails fast with "no
-routable floating IP available on Jetstream2". Having taken the last spare, it
-mints one in the same run, so the next create or unshelve finds one in hand —
-this is what makes N a quiet-time floor rather than a burst buffer: creates and
-unshelves are serialized on the acquire lane, and each leaves a spare behind.
-(2) `scripts/police-floating-ips.py` runs from the runner's crontab every five
+more than is running. (Since 2026-11-06 `create-ip` is replaced by
+`.github/actions/fip/fip.py`, which attaches with a compare-and-swap;
+AUTOMATION_AUDIT_2026-11.md, class 1. The rules below carry over.) (1)
+`create-ip` takes only a routable (149.165/16) unattached address, deletes
+unattached non-routable ones on sight, and when it has to mint, refuses a
+non-routable result (two tries) and fails fast with "no routable floating IP
+available on Jetstream2". Having taken the last spare, it mints one in the same
+run, so the next create or unshelve finds one in hand — this is what makes N a
+quiet-time floor rather than a burst buffer: creates and unshelves are
+serialized on the acquire lane, and each leaves a spare behind. (2)
+`scripts/police-floating-ips.py` runs from the runner's crontab every five
 minutes (decision 21): it releases an address bound to a shelved server
 (Jetstream2's policy; a failed unshelve leaves one) — amended 2026-11-04 after
 Instances #214: production binds the address before `server unshelve` (until
