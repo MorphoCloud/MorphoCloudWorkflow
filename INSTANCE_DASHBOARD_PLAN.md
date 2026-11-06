@@ -381,7 +381,14 @@ Try `/unshelve` again later", with the Grafana vacancy link; no admin email
 path's capacity branch, which deletes the server. A compute failure keeps the
 host-error path (one automatic retry, then the report). Not yet: queuing the
 unshelve until capacity returns — a candidate for the follow-through sweep, not
-decided. |
+decided. **Amended 2026-11-06 (Test-Instances#504: a member's unshelve found no
+g3.xl host, and the portal still emailed the admins "got a 👎 … The member was
+told the team has been notified"):** the portal records a 👎 for the admins only
+when the workflow's reply is not a no-host one. Both no-host replies count: this
+decision's unshelve reply ("Jetstream2 has no **…** host free right now") and
+the create's ("No instance of type **…** is available on JS2"). The member's
+card still shows the failure and its guidance. Every other 👎 is still emailed.
+|
 
 | 31 | **A maintenance switch closes MorphoCloud to members with one sentence,
 and is the rollback lever.** (maintainer, 2026-11-04, for the migration of
