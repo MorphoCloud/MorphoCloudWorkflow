@@ -339,10 +339,16 @@ def verify(  # noqa: PLR0913 — the knobs are what the callers vary
     sleep=time.sleep,
     run=None,
 ) -> str:
-    """The address proven to be this server. Waits up to `wait` seconds for
-    the instance to answer at all; an answer from another server is never
-    waited out: it fails at once, or with `reattach` the address is replaced
-    (once) and the new one verified."""
+    """The address proven to be this server, read only through the
+    instance's own answer. Never writes to anything that has not proven
+    itself. Within `wait` seconds:
+    - no answer yet: wait (the instance is booting);
+    - another server answers while Neutron says the address is on this
+      server's port: wait (the network has not caught up with a recent move;
+      re-attaching would change nothing, the address is already ours);
+    - another server answers and Neutron says the address is NOT ours: fail
+      at once, or with `reattach` take the address now on our port, or a
+      fresh one, and verify that (once)."""
     server, port = server_port(conn, name)
     start = time.monotonic()
     replaced = False
@@ -351,24 +357,29 @@ def verify(  # noqa: PLR0913 — the knobs are what the callers vary
         if who == server.id:
             log(f"{ip} is {name}")
             return ip
-        if who:
-            log(f"::warning ::{ip} answers as server {who}, not {name}")
+        have = mine(conn, port.id) if who else None
+        if who and not (have is not None and have.floating_ip_address == ip):
+            log(
+                f"::warning ::{ip} answers as server {who}, not {name}, and is not on its port"
+            )
             if not reattach or replaced:
                 msg = f"{ip} answers as another server, not {name}"
                 raise WrongServerError(msg)
             replaced = True
-            have = mine(conn, port.id)
-            ip = (
-                have.floating_ip_address
-                if have is not None and have.floating_ip_address != ip
-                else attach(conn, name, sleep=sleep).floating_ip_address
-            )
+            ip = (have or attach(conn, name, sleep=sleep)).floating_ip_address
             log(f"{name} now has {ip}; verifying it")
             start = time.monotonic()
             continue
         if time.monotonic() - start >= wait:
+            if who:
+                msg = (
+                    f"{ip} still answers as server {who}, not {name}, after {wait:.0f}s"
+                )
+                raise WrongServerError(msg)
             msg = f"{name} could not be asked who it is at {ip} within {wait:.0f}s"
             raise UnverifiedError(msg)
+        if who:
+            log(f"{ip} is on {name}'s port but {who} answers; waiting for the network")
         sleep(15)
 
 
@@ -400,6 +411,20 @@ def connect():
     if os.environ.get("OS_CLOUD"):
         return openstack.connect(cloud=os.environ["OS_CLOUD"])
     return openstack.connect()
+
+
+# Each failure the workflows act on, with its exit status (the docstring's
+# table). TimeoutError: an attach that ran out of time; RuntimeError: the mint
+# cap or a detach that kept failing; both are plain failures (1).
+EXIT_CODES = (
+    (WrongServerError, EXIT_WRONG_SERVER),
+    (UnverifiedError, EXIT_UNVERIFIED),
+    (NoAddressError, EXIT_NO_ADDRESS),
+    (NoServerError, EXIT_NO_SERVER),
+    (TimeoutError, 1),
+    (RuntimeError, 1),
+)
+FAILURES = tuple(kind for kind, _ in EXIT_CODES)
 
 
 def main(argv: list[str]) -> int:
@@ -435,18 +460,9 @@ def main(argv: list[str]) -> int:
             print(f"instance_ip={ip}")  # noqa: T201
         else:
             detach(conn, args.server)
-    except WrongServerError as e:
+    except FAILURES as e:
         log(f"::error ::{e}")
-        return EXIT_WRONG_SERVER
-    except UnverifiedError as e:
-        log(f"::error ::{e}")
-        return EXIT_UNVERIFIED
-    except NoAddressError as e:
-        log(f"::error ::{e}")
-        return EXIT_NO_ADDRESS
-    except NoServerError as e:
-        log(f"::error ::{e}")
-        return EXIT_NO_SERVER
+        return next(code for kind, code in EXIT_CODES if isinstance(e, kind))
     return 0
 
 
