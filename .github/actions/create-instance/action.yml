@@ -42,7 +42,7 @@ outputs:
   floating_ip_address:
     description:
       "Floating IP associated with the instance (for the setup phase)"
-    value: ${{ steps.ip_create.outputs.floating_ip_address }}
+    value: ${{ steps.associated_ip.outputs.floating_ip_address }}
 runs:
   using: "composite"
   steps:
@@ -181,11 +181,19 @@ runs:
         GH_REPO: ${{ github.repository }}
         ISSUE_NUMBER: ${{ inputs.issue_number }}
 
-    - name: Retrieve or create floating IP
+    # AUTOMATION_AUDIT_2026-11.md, class 1: nothing is picked here any more.
+    # An address picked now and attached minutes later belonged to nobody in
+    # between, and another taker could pick it too. This only makes sure one
+    # exists, so a dry pool still fails before a volume and a server are
+    # built; the attach below takes one with a compare-and-swap.
+    - name: Make sure a floating IP is available
       id: ip_create
-      uses: ./.github/actions/create-ip
-      with:
-        os_cloud: ${{ inputs.os_cloud }}
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+        python "$GITHUB_ACTION_PATH/../fip/fip.py" ensure-spare
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
 
     - name: comment (floating IP creation failed)
       if: ${{ steps.ip_create.outcome == 'failure' && failure() }}
@@ -333,7 +341,6 @@ runs:
           --property "exoServerVersion=$exoServerVersion" \
           --property "exoCreatorUsername=jfillionrobin@access-ci.org" \
           --property "exoFloatingIpOption=useFloatingIp" \
-          --property "exoFloatingIpReuseOption=$FLOATING_IP_UUID" \
           --property "exoSetup={\"status\":\"waiting\",\"epoch\":null}" \
           --user-data ./cloud-config \
           --column created \
@@ -346,7 +353,6 @@ runs:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
         INSTANCE_FLAVOR: ${{ steps.labels.outputs.instance_flavor }}
-        FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
         ISSUE_NUMBER: ${{ inputs.issue_number }}
         GH_TOKEN: ${{ inputs.token }}
         GH_REPO: ${{ github.repository }}
@@ -514,50 +520,23 @@ runs:
       run: |
         source ~/venv/bin/activate
 
-        # Verify the association against the Neutron floating-IP object (its
-        # port binding), NOT Nova's 'server show -c addresses'. After
-        # 'add floating ip', the FIP is bound at the Neutron level immediately,
-        # but Nova's cached server-addresses view can lag well past 120s — which
-        # previously made this step time out even though the IP *was* associated
-        # (the instance came up reachable). 'floating ip show' reflects the
-        # binding right away.
-        has_ip() {
-          local pid
-          pid=$(openstack floating ip show "$FLOATING_IP_UUID" -c port_id -f value 2>/dev/null) \
-            || return 1
-          [[ -n "$pid" && "$pid" != "None" && "$pid" != "null" ]]
-        }
-
-        if has_ip; then
-          echo "Floating IP already associated."
-        else
-          # JS2's Neutron API sometimes returns HTTP 500 from 'add floating ip'
-          # even though the association actually applied. So attempt it, then
-          # VERIFY via the floating-IP port binding — tolerating that spurious
-          # 500 — and retry briefly before treating it as a real failure.
-          max_wait=120
-          interval=10
-          start=$SECONDS
-          associated=false
-          while :; do
-            openstack server add floating ip "$INSTANCE_NAME" "$FLOATING_IP_ADDRESS" \
-              || echo "add floating ip returned non-zero (possible spurious JS2 500); verifying..."
-            sleep 5
-            if has_ip; then associated=true; break; fi
-            if (( SECONDS - start >= max_wait )); then break; fi
-            echo "IP not associated yet (waited $((SECONDS - start))s of ${max_wait}s); retrying in ${interval}s..."
-            sleep "$interval"
-          done
-          if [[ "$associated" != "true" ]]; then
-            echo "::error ::Failed to associate $FLOATING_IP_ADDRESS with $INSTANCE_NAME after ${max_wait}s"
-            exit 1
-          fi
-          echo "Floating IP associated."
-        fi
+        # AUTOMATION_AUDIT_2026-11.md, class 1: attached with a compare-and-
+        # swap on the address's Neutron revision, and success means a fresh
+        # read shows the address on THIS server's port. The old check ("the
+        # address has some port") could report another member's address as
+        # ours, and setup then logged in there. fip.py reads back Jetstream2's
+        # spurious 500 to see what applied. Its address is the one setup uses.
+        out=$(python "$GITHUB_ACTION_PATH/../fip/fip.py" attach --server "$INSTANCE_NAME" --deadline 120)
+        echo "$out"
+        echo "$out" >> "$GITHUB_OUTPUT"
+        uuid=$(echo "$out" | sed -n 's/^floating_ip_uuid=//p')
+        # Exosphere reads which address to reuse from this property; it names
+        # the address actually attached. Best effort.
+        openstack server set --property "exoFloatingIpReuseOption=$uuid" "$INSTANCE_NAME" \
+          || echo "::warning ::Could not record exoFloatingIpReuseOption on $INSTANCE_NAME"
+        echo "Floating IP associated."
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
-        FLOATING_IP_ADDRESS: ${{ steps.ip_create.outputs.floating_ip_address }}
-        FLOATING_IP_UUID: ${{ steps.ip_create.outputs.floating_ip_uuid }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
 
     - name: comment (failed to associate IP with instance)
