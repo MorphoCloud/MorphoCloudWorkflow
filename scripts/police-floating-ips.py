@@ -581,15 +581,18 @@ def settle_surplus(actions: list, state: dict, now: float) -> list:
     spare and minted its replacement shows a surplus for a minute or two,
     until it attaches the picked one."""
     surplus = [a for a in actions if a[0] == "delete" and a[3] == "over the hold"]
-    if not surplus:
+    # Per address: a new surplus never inherits an older one's head start.
+    seen = state.get("surplus-since")
+    seen = seen if isinstance(seen, dict) else {}
+    seen = {a[1]: seen.get(a[1], now) for a in surplus}  # forget the ones gone
+    if seen:
+        state["surplus-since"] = seen
+    else:
         state.pop("surplus-since", None)
-        return actions
-    since = state.setdefault("surplus-since", now)
-    if now - since >= SURPLUS_SETTLE:
-        return actions
-    for a in surplus:
+    waiting = [a for a in surplus if now - seen[a[1]] < SURPLUS_SETTLE]
+    for a in waiting:
         log(f"{a[2]} is over the hold; deleted next tick if still so")
-    return [a for a in actions if a not in surplus]
+    return [a for a in actions if a not in waiting]
 
 
 def run(dry_run: bool) -> int:

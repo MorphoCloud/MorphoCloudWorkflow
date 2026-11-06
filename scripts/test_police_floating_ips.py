@@ -483,14 +483,21 @@ def test_the_spare_a_create_picked_is_not_surplus_test_instances_523():
 
 def test_an_over_the_hold_delete_waits_for_the_next_tick(monkeypatch):
     monkeypatch.setattr(police, "log", lambda _m: None)
-    delete = ("delete", "id-1", "149.165.1.1", "over the hold")
-    other = ("delete", "id-2", "172.17.20.1", "non-routable")
+    one = ("delete", "id-1", "149.165.1.1", "over the hold")
+    two = ("delete", "id-2", "149.165.1.2", "over the hold")
+    dead = ("delete", "id-3", "172.17.20.1", "non-routable")
     state = {}
-    assert police.settle_surplus([delete, other], state, NOW) == [other]
-    assert state == {"surplus-since": NOW}
-    assert police.settle_surplus([delete], state, NOW + 120) == []
-    assert police.settle_surplus([delete], state, NOW + 300) == [delete]
-    # Gone before the next tick: forgotten, and the next one waits again.
-    assert police.settle_surplus([], state, NOW + 600) == []
+    assert police.settle_surplus([one, dead], state, NOW) == [dead]  # never delayed
+    assert state == {"surplus-since": {"id-1": NOW}}
+    assert police.settle_surplus([one], state, NOW + 120) == []
+    # A second surplus appears late: it waits on its own clock.
+    assert police.settle_surplus([one, two], state, NOW + 300) == [one]
+    assert state == {"surplus-since": {"id-1": NOW, "id-2": NOW + 300}}
+    assert police.settle_surplus([two], state, NOW + 600) == [two]
+    assert state == {"surplus-since": {"id-2": NOW + 300}}
+    # Gone: forgotten, and its next appearance waits again.
+    assert police.settle_surplus([], state, NOW + 900) == []
     assert state == {}
-    assert police.settle_surplus([delete], state, NOW + 900) == []
+    assert police.settle_surplus([one], state, NOW + 1200) == []
+    # A state file from the first version (one number) is read as empty.
+    assert police.settle_surplus([one], {"surplus-since": NOW}, NOW + 1500) == []
