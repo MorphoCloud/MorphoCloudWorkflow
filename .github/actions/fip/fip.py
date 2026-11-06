@@ -16,16 +16,30 @@ Usage (from a workflow step, with the runner's venv active and OS_CLOUD set):
     python fip.py ensure-spare
     python fip.py attach --server NAME [--prefer ADDRESS] [--deadline SECONDS]
     python fip.py detach --server NAME
+    python fip.py verify --server NAME --ip ADDRESS [--wait SECONDS] [--reattach]
 
 `attach` prints `floating_ip_address=...` and `floating_ip_uuid=...` lines for
-$GITHUB_OUTPUT. Exit status: 0 done, 2 Jetstream2 has no routable address,
-3 the server or its port does not exist, 1 anything else.
+$GITHUB_OUTPUT.
+
+`verify` is the rule that nothing logs in to an instance by address before
+the instance proves it is the server meant (AUTOMATION_AUDIT_2026-11.md,
+class 1): over SSH it reads the metadata service's `uuid`, which the
+hypervisor serves and the guest cannot change, and compares it with the
+server's id. With --reattach, an address that answers as another server is
+replaced by attaching a fresh one, which is verified in turn. Prints
+`instance_ip=...` (the address proven to be this server).
+
+Exit status: 0 done, 2 Jetstream2 has no routable address, 3 the server or its
+port does not exist, 4 the address answers as another server, 5 the instance
+could not be asked (no SSH or no metadata within --wait), 1 anything else.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import subprocess
 import sys
 import time
 
@@ -38,6 +52,16 @@ MINT_DESCRIPTION = "MorphoCloud"
 EXTERNAL_NETWORK = "public"
 EXIT_NO_ADDRESS = 2
 EXIT_NO_SERVER = 3
+EXIT_WRONG_SERVER = 4
+EXIT_UNVERIFIED = 5
+METADATA = "http://169.254.169.254/openstack/latest/meta_data.json"
+SSH_OPTS = [
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=no",
+    "-o", "UserKnownHostsFile=/dev/null",
+    "-o", "LogLevel=ERROR",
+    "-o", "ConnectTimeout=10",
+]  # fmt: skip
 MAX_MINTS_PER_ATTACH = 2
 HTTP_NOT_FOUND = 404
 HTTP_CONFLICT = 409
@@ -51,6 +75,14 @@ class NoAddressError(Exception):
 
 class NoServerError(Exception):
     """The server, or its port, does not exist."""
+
+
+class WrongServerError(Exception):
+    """The address answers as another server."""
+
+
+class UnverifiedError(Exception):
+    """The instance could not be asked who it is."""
 
 
 def log(msg: str) -> None:
@@ -269,6 +301,77 @@ def release(conn, ip, port_id: str, name: str, sleep=time.sleep) -> bool:
     raise RuntimeError(msg)
 
 
+def identity(ip: str, run=None) -> str:
+    """The server id the instance at `ip` reports from the metadata service;
+    "" when it cannot be asked (no SSH yet, no answer)."""
+    run = run or subprocess.run  # looked up at call time, so tests can stand in
+    try:
+        r = run(
+            [
+                "ssh",
+                *SSH_OPTS,
+                f"exouser@{ip}",
+                f"curl --silent --max-time 10 {METADATA}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except (subprocess.SubprocessError, OSError) as e:
+        log(f"could not ask {ip}: {e}")
+        return ""
+    if r.returncode != 0:
+        return ""
+    try:
+        return str(json.loads(r.stdout or "{}").get("uuid") or "")
+    except (ValueError, AttributeError):
+        return ""
+
+
+def verify(  # noqa: PLR0913 — the knobs are what the callers vary
+    conn,
+    name: str,
+    ip: str,
+    wait: float = 0,
+    reattach: bool = False,
+    sleep=time.sleep,
+    run=None,
+) -> str:
+    """The address proven to be this server. Waits up to `wait` seconds for
+    the instance to answer at all; an answer from another server is never
+    waited out: it fails at once, or with `reattach` the address is replaced
+    (once) and the new one verified."""
+    server, port = server_port(conn, name)
+    start = time.monotonic()
+    replaced = False
+    while True:
+        who = identity(ip, run=run)
+        if who == server.id:
+            log(f"{ip} is {name}")
+            return ip
+        if who:
+            log(f"::warning ::{ip} answers as server {who}, not {name}")
+            if not reattach or replaced:
+                msg = f"{ip} answers as another server, not {name}"
+                raise WrongServerError(msg)
+            replaced = True
+            have = mine(conn, port.id)
+            ip = (
+                have.floating_ip_address
+                if have is not None and have.floating_ip_address != ip
+                else attach(conn, name, sleep=sleep).floating_ip_address
+            )
+            log(f"{name} now has {ip}; verifying it")
+            start = time.monotonic()
+            continue
+        if time.monotonic() - start >= wait:
+            msg = f"{name} could not be asked who it is at {ip} within {wait:.0f}s"
+            raise UnverifiedError(msg)
+        sleep(15)
+
+
 def ensure_spare(conn) -> None:
     """At least one routable unattached address exists (decision 24), so a
     create fails fast on a dry pool. Reserves nothing."""
@@ -292,7 +395,11 @@ def keep_one_in_hand(conn) -> None:
 def connect():
     import openstack  # noqa: PLC0415 — the runner's venv; tests pass a fake
 
-    return openstack.connect(cloud=os.environ["OS_CLOUD"])
+    # A named cloud (clouds.yaml), or, for the course and workshop email
+    # paths, an application credential in the OS_* environment variables.
+    if os.environ.get("OS_CLOUD"):
+        return openstack.connect(cloud=os.environ["OS_CLOUD"])
+    return openstack.connect()
 
 
 def main(argv: list[str]) -> int:
@@ -305,9 +412,14 @@ def main(argv: list[str]) -> int:
     a.add_argument("--deadline", type=float, default=300)
     d = sub.add_parser("detach")
     d.add_argument("--server", required=True)
+    v = sub.add_parser("verify")
+    v.add_argument("--server", required=True)
+    v.add_argument("--ip", required=True)
+    v.add_argument("--wait", type=float, default=0)
+    v.add_argument("--reattach", action="store_true")
     args = parser.parse_args(argv)
-    if not os.environ.get("OS_CLOUD"):
-        log("OS_CLOUD is not set")
+    if not (os.environ.get("OS_CLOUD") or os.environ.get("OS_AUTH_URL")):
+        log("neither OS_CLOUD nor OS_AUTH_URL is set")
         return 1
     conn = connect()
     try:
@@ -318,8 +430,17 @@ def main(argv: list[str]) -> int:
             print(f"floating_ip_address={ip.floating_ip_address}")  # noqa: T201
             print(f"floating_ip_uuid={ip.id}")  # noqa: T201
             keep_one_in_hand(conn)
+        elif args.cmd == "verify":
+            ip = verify(conn, args.server, args.ip, args.wait, args.reattach)
+            print(f"instance_ip={ip}")  # noqa: T201
         else:
             detach(conn, args.server)
+    except WrongServerError as e:
+        log(f"::error ::{e}")
+        return EXIT_WRONG_SERVER
+    except UnverifiedError as e:
+        log(f"::error ::{e}")
+        return EXIT_UNVERIFIED
     except NoAddressError as e:
         log(f"::error ::{e}")
         return EXIT_NO_ADDRESS

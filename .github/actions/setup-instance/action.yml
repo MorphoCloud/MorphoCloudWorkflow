@@ -249,6 +249,40 @@ runs:
         attach_volume: ⏳
         send_email: ""
 
+    # AUTOMATION_AUDIT_2026-11.md, class 1: nothing below logs in to the
+    # instance until it proves, over SSH, that it is this server (the metadata
+    # service's uuid, which the guest cannot change, is the server's id). The
+    # steps below write the owner's share key, run scripts as root and reboot:
+    # done at an address that had become another member's instance, they would
+    # do all that to the other member. An address that answers as another
+    # server is replaced by a fresh one (verified in turn), never written to.
+    # Waits up to 300 s for the instance to answer, as the steps below did.
+    - name: Verify the instance is this server
+      id: identity
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+        out=$(python "$GITHUB_ACTION_PATH/../fip/fip.py" verify --server "$INSTANCE_NAME" \
+          --ip "$INSTANCE_IP" --wait 300 --reattach)
+        echo "$out"
+        echo "$out" >> "$GITHUB_OUTPUT"
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
+        INSTANCE_IP: ${{ inputs.instance_ip }}
+
+    - name: comment (instance could not be verified)
+      if: ${{ steps.identity.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Instance **${{ inputs.instance_name }}** could not be verified as this request's instance at its public address, so its setup was stopped before anything was written to it. @MorphoCloud/morphocloud-admins
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
     # Share mode (STORAGE_REDESIGN_PLAN.md, phase 2 prototype; Test-Instances
     # only): the owner's per-user share replaces the MyData volume. The
     # volume steps below are skipped; this mounts the share at
@@ -420,7 +454,8 @@ runs:
         EOF
         } | ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" 'sudo bash -s'
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
         GITHUB_ID: ${{ inputs.github_id }}
         GITHUB_LOGIN: ${{ inputs.github_login }}
         OS_CLOUD: ${{ inputs.os_cloud }}
@@ -519,7 +554,8 @@ runs:
           sleep "$interval"
         done
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
 
     - name: comment (failed to rename MyData)
       if: ${{ steps.rename_mydata.outcome == 'failure' && failure() }}
@@ -648,7 +684,8 @@ runs:
           exouser@$INSTANCE_IP \
           '[ ! -d /media/volume/MyData/Slicer ] && mv /media/volume/MyData-tmp/Slicer /media/volume/MyData/Slicer && rmdir /media/volume/MyData-tmp || rm -rf /media/volume/MyData-tmp'
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
 
     - name: comment (failed to copy installed files from MyData-tmp to MyData)
       if: ${{ steps.copy_installed_files.outcome == 'failure' && failure() }}
@@ -732,7 +769,8 @@ runs:
         sudo rm -rf /home/exouser.bak
         EOF
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
 
     - name: comment (failed to relocate home directory to persistent volume)
       if: ${{ steps.relocate_home_directory.outcome == 'failure' && failure() }}
@@ -761,7 +799,8 @@ runs:
           exouser@$INSTANCE_IP \
           'mkdir -p /media/volume/MyData/Uploads /home/exouser/Desktop && ln -sfn /media/volume/MyData/Uploads /home/exouser/Desktop/Uploads'
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
 
     - name: comment (failed to create Uploads folder)
       if: ${{ steps.create_uploads_folder.outcome == 'failure' && failure() }}
@@ -787,7 +826,8 @@ runs:
           exouser@$INSTANCE_IP \
           'echo -e "R_LIBS_SITE=/media/share/MorphoCloudCephShare/R/x86_64-pc-linux-gnu-library/4.4/\nR_LIBS_USER=/media/volume/MyData/R/x86_64-pc-linux-gnu-library/4.4/" > /home/exouser/.Renviron && mkdir -p /media/volume/MyData/R/x86_64-pc-linux-gnu-library/4.4/'
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
 
     - name: comment (failed to create /home/exouser/.Renviron)
       if: ${{ steps.create_renviron_file.outcome == 'failure' && failure() }}
@@ -843,7 +883,8 @@ runs:
         fi
         set -e
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
         INSTANCE_NAME: ${{ inputs.instance_name }}
 
     - name: comment (failed to reboot instance)
@@ -896,7 +937,8 @@ runs:
         echo "::error ::The data share or the desktop did not come up after the reboot"
         exit 1
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
 
     - name: comment (data share not up after reboot)
       if: ${{ steps.verify_share.outcome == 'failure' && failure() }}

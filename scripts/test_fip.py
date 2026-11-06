@@ -3,6 +3,7 @@ enforces revision numbers the way Jetstream2's `revision-if-match` does.
 Run: python -m pytest scripts/test_fip.py"""
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -318,3 +319,90 @@ def test_main_prints_outputs_and_exit_codes(monkeypatch, capsys):
     monkeypatch.setattr(fip, "connect", lambda: FakeNeutron(servers=["b"]))
     assert fip.main(["attach", "--server", "b"]) == fip.EXIT_NO_ADDRESS
     assert fip.main(["attach", "--server", "nope"]) == fip.EXIT_NO_SERVER
+
+
+# --- verify: nothing logs in to an instance before it proves who it is ----
+
+
+def answers(mapping):
+    """A fake `ssh exouser@IP curl meta_data.json`: address -> server id
+    ("" or missing: no answer)."""
+
+    def run(cmd, **_kw):
+        ip = cmd[-2].split("@")[1]  # [..., "exouser@IP", "curl ..."]
+        who = mapping.get(ip, "")
+        if not who:
+            return SimpleNamespace(returncode=255, stdout="")
+        return SimpleNamespace(
+            returncode=0, stdout=json.dumps({"uuid": who, "name": "x"})
+        )
+
+    return run
+
+
+def test_verify_passes_when_the_instance_is_this_server():
+    n = FakeNeutron(servers=["a"])
+    n.add_fip("149.165.1.1", port=n.port_of("a"))
+    ip = fip.verify(
+        n, "a", "149.165.1.1", run=answers({"149.165.1.1": "srv-a"}), sleep=no_sleep
+    )
+    assert ip == "149.165.1.1"
+
+
+def test_verify_never_accepts_another_server_1c():
+    # The address answers as another member's instance: refused at once,
+    # whatever the wait; setup and the password read never run there.
+    n = FakeNeutron(servers=["a", "b"])
+    with pytest.raises(fip.WrongServerError):
+        fip.verify(
+            n,
+            "a",
+            "149.165.1.1",
+            wait=300,
+            run=answers({"149.165.1.1": "srv-b"}),
+            sleep=no_sleep,
+        )
+
+
+def test_verify_with_reattach_moves_to_a_fresh_address_and_checks_it():
+    n = FakeNeutron(addresses=["149.165.2.2"], servers=["a", "b"])
+    n.add_fip("149.165.1.1", port=n.port_of("b"))  # the address went to b
+    run = answers({"149.165.1.1": "srv-b", "149.165.2.2": "srv-a"})
+    ip = fip.verify(n, "a", "149.165.1.1", reattach=True, run=run, sleep=no_sleep)
+    assert ip == "149.165.2.2"
+    assert n.fips["id-149.165.2.2"]["port_id"] == n.port_of("a")
+    assert n.fips["id-149.165.1.1"]["port_id"] == n.port_of("b")  # b keeps its own
+
+
+def test_verify_reattaches_only_once():
+    n = FakeNeutron(addresses=["149.165.2.2"], servers=["a", "b"])
+    run = answers({"149.165.1.1": "srv-b", "149.165.2.2": "srv-b"})
+    with pytest.raises(fip.WrongServerError):
+        fip.verify(n, "a", "149.165.1.1", reattach=True, run=run, sleep=no_sleep)
+
+
+def test_verify_waits_for_an_instance_that_does_not_answer_yet(monkeypatch):
+    n = FakeNeutron(servers=["a"])
+    clock = iter([0, 0, 100, 400])
+    monkeypatch.setattr(fip.time, "monotonic", lambda: next(clock))
+    with pytest.raises(fip.UnverifiedError):
+        fip.verify(n, "a", "149.165.1.1", wait=300, run=answers({}), sleep=no_sleep)
+
+
+def test_main_verify_prints_the_proven_address_and_exit_codes(monkeypatch, capsys):
+    n = FakeNeutron(servers=["a", "b"])
+    monkeypatch.setattr(fip, "connect", lambda: n)
+    monkeypatch.setenv("OS_CLOUD", "test")
+    monkeypatch.setattr(
+        fip.subprocess, "run", answers({"149.165.1.1": "srv-a", "149.165.9.9": "srv-b"})
+    )
+    assert fip.main(["verify", "--server", "a", "--ip", "149.165.1.1"]) == 0
+    assert capsys.readouterr().out.split() == ["instance_ip=149.165.1.1"]
+    assert (
+        fip.main(["verify", "--server", "a", "--ip", "149.165.9.9"])
+        == fip.EXIT_WRONG_SERVER
+    )
+    assert (
+        fip.main(["verify", "--server", "a", "--ip", "149.165.5.5"])
+        == fip.EXIT_UNVERIFIED
+    )
