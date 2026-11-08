@@ -16,6 +16,7 @@ jobs:
     env:
       LABELS_JSON: |
         [
+          {"name": "flavor:g3.medium", "color": "D93F0B", "description": "GPU instance (8 CPUs, 30 GB RAM, 25% A100 GPU)"},
           {"name": "flavor:g3.large", "color": "D93F0B", "description": "GPU instance (16 CPUs, 60 GB RAM, 50% A100 GPU)"},
           {"name": "flavor:g3.xl", "color": "D93F0B", "description": "GPU instance (32 CPUs, 120 GB RAM, A100 GPU)"},
           {"name": "flavor:g4.xl", "color": "D93F0B", "description": "GPU instance (12 CPUs, 120 GB RAM, L40S GPU)"},
