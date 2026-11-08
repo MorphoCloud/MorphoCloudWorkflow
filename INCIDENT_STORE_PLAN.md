@@ -10,6 +10,13 @@ from, the agent itself, and the gate that lets it act.
 `share-prototype` (c9711a2), which reaches production with the 2026-11-23
 migration. Supersedes the `main`-based draft on `ccr-028ab0f6-ximhmd`.
 
+**Under review now: data collection only.** That is decisions 1–6, 18 and 19,
+"Data collection", "Signatures", "Redaction and privacy", "Retention, size,
+cost" and Phase 1. Decisions 7–17 and every section about the agent (triage,
+playbooks, analysis, the agent among the other actors, Phases 2 onward) record
+the intended direction. They are **not** under review, and approving collection
+does not approve them.
+
 **The order is fixed: record first, judge later.** An agent that starts deciding
 on day one meets every case for the first time, and first encounters are where
 it gets things wrong. So for the first two months nothing but data is collected:
@@ -92,15 +99,22 @@ The prototype also has the right points to record from:
    completed run through the Actions API, along with the runner host's own logs
    and the portal's events, and is the store's only writer. Nothing is added to
    the per-issue lock, no workflow holds a store credential, and nothing races.
-   Every run is recorded even when its job died before its last step. The direct
-   admin-email senders (item 5 above) move onto `notify-admins`, so every admin
-   email's text is in the facts.
+   Every run is recorded even when its job died before its last step. Each
+   admin-email sender records the subject and body in its facts where it already
+   sends (B10). No sender is moved. Consolidating the senders onto
+   `notify-admins` changes production alerting and is a separate PR, outside
+   this plan.
 
 3. **The collector is deterministic, no LLM, and never masks the real failure**
    (`continue-on-error: true` on every facts step). Its gaps are visible, never
    silent: a run without facts is recorded as `facts: missing`; a harvester that
    falls behind alerts once; the crontab dispatcher's log records the sweeps
-   that never became a run.
+   that never became a run. Facts are **redacted inside the job, before the
+   upload**, and again by the harvester, because a run artifact can be
+   downloaded by anyone with read access to the source repository, members
+   included; GitHub's masking covers the rendered log, not artifacts. The
+   artifact is also encrypted to the harvester's public key and kept 7 days (see
+   "Redaction and privacy").
 
 4. **Successes are recorded, with the same depth where it matters.** Every
    command run is a row. Every create and unshelve keeps its Nova compute-host
@@ -121,6 +135,8 @@ The prototype also has the right points to record from:
    commands on the same issue within 24 h are recorded as implicit labels. The
    agent is measured against these records before it is trusted, and keeps being
    measured after.
+
+_Decisions 7–17 describe the agent: direction only, not under review now._
 
 7. **The agent proposes; a deterministic executor disposes.** The agent holds no
    credential that can change anything: it reads a case file prepared for it and
@@ -202,23 +218,32 @@ The prototype also has the right points to record from:
     The harvester is a crontab script on each allocation's runner host. The jobs
     write their facts where they already run. The portal VM gains one read-only
     gate command and one table, and holds no GitHub credential (decision 20 of
-    INSTANCE_DASHBOARD_PLAN.md). See "Where it runs".
+    INSTANCE_DASHBOARD_PLAN.md). See "Where it runs". **The runner's OpenStack
+    credential is not read-only:** its `clouds.yaml` is the allocation's
+    credential, and the floating-IP policing script creates and deletes
+    addresses with it. The harvester gets its own application credential,
+    restricted by Keystone access rules to read calls on compute and network, if
+    Jetstream2 allows it. Otherwise it uses the runner's credential through a
+    wrapper that permits only a fixed list of `show`, `list`, `event list` and
+    `console log show` calls, enforced by a test, and that risk stands recorded
+    here.
 
-19. **Collection does not slow what members see.** No new network call before
-    the 👍/👎. What can be read afterwards is read by the harvester. Failure
-    captures come after the failure comment. The only capture ahead of an action
-    is the evidence an automatic shelve would destroy. Every capture in a job is
-    capped. Measured on Test before merge: no measurable change in time to
-    👍/👎, and the extra lock time within the table in "What it costs member
-    operations".
+19. **Collection does not slow what members see.** On every success path, no new
+    network call before the 👍/👎. What can be read afterwards is read by the
+    harvester. Failure captures come after the failure comment. There is one
+    stated exception: the evidence a shelve would destroy (D1, D2) is taken
+    before the shelve, even when the shelve comes before the command's outcome.
+    Every capture in a job is capped. Measured on Test before merge: no
+    measurable change in time to 👍/👎, and the extra lock time within the table
+    in "What it costs member operations".
 
 ## Architecture
 
 ```
  Instances / Test-Instances (jobs)            runner host, one per allocation
  ┌─────────────────────────────────┐         ┌──────────────────────────────────┐
- │ every job: facts.sh set/add-file│         │ crontab (decision 21)            │
- │   → artifact mc-facts-<job>     │         │  harvest-incidents.py  */5       │
+ │ facts.sh: redact, then encrypt  │         │ crontab (decision 21)            │
+ │   → mc-facts-<job>-<attempt>    │         │  harvest-incidents.py */5, -w */1│
  │ (no store credential, no push)  │◀── API ─│   1 runs + jobs + facts + logs   │
  └─────────────────────────────────┘  read   │   2 runner logs (dispatch, fip,  │
                                              │     pickup, runner _diag)        │
@@ -244,11 +269,18 @@ The prototype also has the right points to record from:
 | **Envelope** | that a run happened: workflow, trigger, actor, attempt, timings, conclusion, jobs and steps, the first failed step, runner, log | Actions API, after the run completes                                                                       | every run, including crashed, cancelled and dropped ones                    |
 | **Facts**    | what the run was about and what it saw, including files (consoles, diagnostics, the admin email)                                | the job, through `.github/actions/record-facts` (`facts.sh set <key> <value>`, `facts.sh add-file <path>`) | every run of an instrumented workflow; uploaded in the last `always()` step |
 
-`record-facts` writes into `$RUNNER_TEMP/mc-facts/`. The upload (artifact
-`mc-facts-<job>`, 30-day retention, `continue-on-error`, `timeout-minutes: 1`)
-is done by `report-command-outcome` in the 7 command workflows, **after** it has
-set the 👍/👎, and by one added final step in the sweeps and alerts. Every
-`run-name:` gains the issue number:
+`record-facts` writes into `$RUNNER_TEMP/mc-facts/`, redacting every value and
+file as it is written (the same rules file the harvester uses). Before the
+upload the directory is encrypted to the harvester's public key
+(`openssl cms -encrypt`; the certificate is a repository variable, the private
+key stays on the runner host). The upload goes to artifact
+`mc-facts-<job>-<run_attempt>` with `overwrite: true` (a rerun reuses the run,
+and a repeated name would fail), 7-day retention, `continue-on-error` and
+`timeout-minutes: 1`. `report-command-outcome` does it in the 6 command
+workflows that call it (control-instance, create-instance,
+create-course-instance, delete-instance-and-volume, extend-session, send-email)
+and in `report-dropped-command`, **after** it has set the 👍/👎. One added final
+step does it in the sweeps and alerts. Every `run-name:` gains the issue number:
 `#${{ github.event.issue.number || inputs.issue_number }} ${{ github.workflow }}`.
 
 ### Where it runs
@@ -261,9 +293,9 @@ set the 👍/👎, and by one added final step in the sweeps and alerts. Every
 
 The runner host and not the portal VM because:
 
-- the runner host already has what the harvester needs: read-only OpenStack
-  access for its allocation, the logs it reads (F), the crontab clock
-  (decision 21) and the SSH path to the portal;
+- the runner host already has what the harvester needs: OpenStack access for its
+  allocation (not read-only; see decision 18), the logs it reads (F), the
+  crontab clock (decision 21) and the SSH path to the portal;
 - the portal VM is member-facing and by design holds no GitHub credential
   (decision 20), so a write credential and a batch job there would widen what
   the web app exposes;
@@ -279,7 +311,7 @@ installs nothing there.
 What the member sees is when the 👍/👎 reaches the portal card. What the next
 command waits on is the per-issue lock. The rules:
 
-1. **No new network call before the 👍/👎.** On the success path the job only
+1. **No new network call before the 👍/👎 on any success path.** The job only
    writes local files (milliseconds): the console `setup-instance` already reads
    every poll is kept rather than discarded, and `hostId` is parsed from the
    `server show` it already does. The artifact upload comes after the reaction,
@@ -293,10 +325,15 @@ command waits on is the per-issue lock. The rules:
    keeps the capacity read it already does.
 3. **Failure captures (C3, C4) come after the member's failure comment,** under
    one 30-second cap, so a failure is reported as fast as today.
-4. **Only one capture runs ahead of an action:** D1/D2 before the shelve, capped
-   at 30 seconds, because the shelve destroys that evidence. It delays an
-   automatic shelve of an instance that has been unreachable for 30 minutes by
-   about 10 seconds.
+4. **The one exception: evidence a shelve would destroy is taken before the
+   shelve**, capped at 30 seconds.
+   - In `control-instance`, the shelve-again of an unshelve or create that ended
+     without an address or unreachable (D2) runs before the command's outcome,
+     so the member's 👎 on that path comes a few seconds later.
+   - In an automatic shelve of an unreachable instance (D1), the shelve starts
+     about 10 seconds later, after 30 minutes of unreachability.
+   - Before the address repair of decision 34, `reconcile-instances` takes the
+     capture before it dispatches; no member command is waiting.
 5. **The portal is not slowed.**
    - `export-events` is its own SSH command, separate from the `state` and
      `connection` pushes.
@@ -308,13 +345,13 @@ command waits on is the per-issue lock. The rules:
    token, so it does not draw on the workflows' GitHub rate limit, and it makes
    about 4 OpenStack calls per incident.
 
-| Operation                                             | Before the 👍/👎 | Lock held longer                      |
-| ----------------------------------------------------- | ---------------- | ------------------------------------- |
-| create, unshelve, shelve, delete, email: success      | ~0               | ~2–5 s (upload)                       |
-| create fails in setup                                 | 0                | ~5–15 s, at most 30 s                 |
-| unshelve or create ends without address / unreachable | a few seconds    | ~10 s, at most 30 s                   |
-| automatic shelve of an unreachable instance           | n/a              | ~10 s before the shelve, at most 30 s |
-| portal card and buttons                               | 0                | none                                  |
+| Operation                                             | Before the 👍/👎       | Lock held longer                      |
+| ----------------------------------------------------- | ---------------------- | ------------------------------------- |
+| create, unshelve, shelve, delete, email: success      | ~0                     | ~2–5 s (upload)                       |
+| create fails in setup                                 | 0                      | ~5–15 s, at most 30 s                 |
+| unshelve or create ends without address / unreachable | a few seconds (rule 4) | ~10 s, at most 30 s                   |
+| automatic shelve of an unreachable instance           | n/a                    | ~10 s before the shelve, at most 30 s |
+| portal card and buttons                               | 0                      | none                                  |
 
 The estimates are measured on Test before anything merges (Phase 1 exit).
 
@@ -332,35 +369,35 @@ not taken. ✔ = captured by this plan, ✘ = deliberately not, with the reason.
 | A1  | run envelope: workflow, event, actor, triggering actor, attempt, created/started/updated, conclusion, issue | never (until runs deleted) | ✔ every run (no-op sweep ticks and skipped runs as daily counts) |
 | A2  | jobs: runner name, start/end, every step's name and conclusion, the first failed step                       | never                      | ✔ every command run; sweeps when they failed or acted            |
 | A3  | full job log, redacted, gzipped (~32 KB), and the failed step's last 200 lines                              | 90 days                    | ✔ every incident; ✔ every create (setup timing baseline)         |
-| A4  | the facts artifact                                                                                          | 30 days                    | ✔ every run that has one                                         |
+| A4  | the facts artifact                                                                                          | 7 days (encrypted)         | ✔ every run that has one                                         |
 
 **B. What the job knows** (facts; lost when the job ends)
 
-| #   | Evidence                                                                                                                                                                                                                                                                                  | When                                          |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| B1  | `command` as typed, `issue`, `instance`, `flavor`, `dispatch_reason` (`member`, `timeout`, `unreachable`, `retry:<cmd>`, `repair:no-address`), `workflow_version`                                                                                                                         | ✔ every command                               |
-| B2  | Nova `status` and `task_state` before and after; `failure_mode`; the failure class `notify-admins` uses; the failed Nova step (`schedule_instances` / `compute_unshelve_instance`)                                                                                                        | ✔ every command                               |
-| B3  | **`hostId`**, Nova's per-project hash of the compute host. Today read only inside the failure branch of `create-instance` and `control-instance` and thrown away. With it on successes too, failure rate per host becomes a query (the sick-host pattern behind the g3 unshelve failures) | ✔ every create and unshelve, success included |
-| B4  | address outcome: taken, attached, released, shelved again (decision 25)                                                                                                                                                                                                                   | ✔ every create and unshelve                   |
-| B5  | stage timestamps: requested, BUILD done, ACTIVE, address bound, SSH up, setup complete, share mounted, reboot verified, email sent                                                                                                                                                        | ✔ every create, unshelve, resume              |
-| B6  | capacity for the flavor at the time: on failures, the `morphocloud.org/api/availability` read `control-instance` already does; on successes, the harvester reads Jetstream2's Grafana vacancy history afterwards (no call in the job)                                                     | ✔ every create and unshelve                   |
-| B7  | labels on the issue at the time (`followup:*`, `followup-count:*`, `needs-admin`, `invariant-violation`, `admin-email-failed`, `status:*`): reconstructed by the harvester from the issue's timeline events (no call in the job)                                                          | ✔ every command                               |
-| B8  | refusal reason (not approved, does not exist, in flight, maintenance, unauthorized), written before the deliberate `exit 1`                                                                                                                                                               | ✔ every refusal                               |
-| B9  | `collect-instance-diagnostics`: Nova fault and recent actions with each step's result and host                                                                                                                                                                                            | ✔ when the workflow runs it                   |
-| B10 | the admin email: subject, class, body (`notify-admins`, `admin-alert.yml`)                                                                                                                                                                                                                | ✔ every admin email                           |
-| B11 | sweeps: what each tick did (`acted=[{issue, action, reason}]`); reconcile's violations; follow-through's attempts                                                                                                                                                                         | ✔ every tick that acted or failed             |
-| B12 | runner host at job time: free disk, load, uptime (`df`, `/proc/loadavg`)                                                                                                                                                                                                                  | ✔ every command on a self-hosted runner       |
+| #   | Evidence                                                                                                                                                                                                                                                                                                             | When                                          |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| B1  | `command` as typed, `issue`, `instance`, `flavor`, `dispatch_reason` (`member`, `timeout`, `unreachable`, `retry:<cmd>`, `repair:no-address`), `workflow_version`                                                                                                                                                    | ✔ every command                               |
+| B2  | Nova `status` and `task_state` before and after; `failure_mode`; the failure class `notify-admins` uses; the failed Nova step (`schedule_instances` / `compute_unshelve_instance`)                                                                                                                                   | ✔ every command                               |
+| B3  | **`hostId`**, Nova's per-project hash of the compute host. Today read only inside the failure branch of `create-instance` and `control-instance` and thrown away. With it on successes too, failure rate per host becomes a query (the sick-host pattern behind the g3 unshelve failures)                            | ✔ every create and unshelve, success included |
+| B4  | address outcome: taken, attached, released, shelved again (decision 25)                                                                                                                                                                                                                                              | ✔ every create and unshelve                   |
+| B5  | stage timestamps: requested, BUILD done, ACTIVE, address bound, SSH up, setup complete, share mounted, reboot verified, email sent                                                                                                                                                                                   | ✔ every create, unshelve, resume              |
+| B6  | capacity for the flavor at the time: on failures, the `morphocloud.org/api/availability` read `control-instance` already does; on successes, the harvester reads Jetstream2's Grafana vacancy history afterwards (no call in the job)                                                                                | ✔ every create and unshelve                   |
+| B7  | labels on the issue at the time (`followup:*`, `followup-count:*`, `needs-admin`, `invariant-violation`, `admin-email-failed`, `status:*`): reconstructed by the harvester from the issue's timeline events (no call in the job)                                                                                     | ✔ every command                               |
+| B8  | refusal reason (not approved, does not exist, in flight, maintenance, unauthorized), written before the deliberate `exit 1`                                                                                                                                                                                          | ✔ every refusal                               |
+| B9  | `collect-instance-diagnostics`: Nova fault and recent actions with each step's result and host                                                                                                                                                                                                                       | ✔ when the workflow runs it                   |
+| B10 | the admin email: subject, class, body, recorded by `record-facts` at each existing sender: `notify-admins`, `admin-alert.yml`, and the direct senders in `follow-through`, `reconcile-instances`, `delete-instance-and-volume`, `expire-shares`, `guard-issue-close`, `detect-dormant-workflows`, `on-admin-mention` | ✔ every admin email                           |
+| B11 | sweeps: what each tick did (`acted=[{item, issue, action, reason}]`); reconcile's violations and the dormant detector's findings, one item each; follow-through's attempts                                                                                                                                           | ✔ every tick that acted or failed             |
+| B12 | runner host at job time: free disk, load, uptime (`df`, `/proc/loadavg`)                                                                                                                                                                                                                                             | ✔ every command on a self-hosted runner       |
 
 **C. The instance's setup log** (lost when the server is shelved, deleted or
 recreated, so it is taken during the run, never later)
 
-| #   | Evidence                                                                                                                                                                                                                                                                                          | When                                              |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| C1  | **the full console log** (cloud-init and ansible output) that `setup-instance` already reads every poll as `$log_output` and today discards after extracting one line. Each poll's read is merged into a growing copy, because Nova returns only the tail of the console (to be measured on Test) | ✔ every create and resume-setup, success included |
-| C2  | the console at follow-through's hand-over (resume, error, or the stall/ceiling shelve of decision 33): follow-through reads it every tick and discards it today                                                                                                                                   | ✔ every hand-over                                 |
-| C3  | `/var/log/cloud-init-output.log` and `/var/log/cloud-init.log` from the instance, over the SSH session `setup-instance` already has                                                                                                                                                               | ✔ setup failure after SSH is up                   |
-| C4  | `journalctl -b` for the cloud-init units, last 2,000 lines                                                                                                                                                                                                                                        | ✔ same                                            |
-| C5  | derived: status, reason, last ansible task, failed item (computed today), time to first console line, time to `complete`, tasks seen → signature `setup.error:<task>`, `setup.stalled:<task>`, `setup.timeout:<task>`                                                                             | ✔ every create                                    |
+| #   | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                         | When                                              |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| C1  | **the full console log** (cloud-init and ansible output) that `setup-instance` already reads every poll as `$log_output` and today discards after extracting one line. Nova returns only the tail, so each poll's read is merged into a growing copy. Each merge records whether it found an overlap with the copy; where it did not, a `[gap]` marker goes into the copy and `console_complete: false` into the facts, so a gap never looks like a complete log | ✔ every create and resume-setup, success included |
+| C2  | the console at follow-through's hand-over (resume, error, or the stall/ceiling shelve of decision 33): follow-through reads it every tick and discards it today                                                                                                                                                                                                                                                                                                  | ✔ every hand-over                                 |
+| C3  | `/var/log/cloud-init-output.log` and `/var/log/cloud-init.log` from the instance, over the SSH session `setup-instance` already has                                                                                                                                                                                                                                                                                                                              | ✔ setup failure after SSH is up                   |
+| C4  | `journalctl -b` for the cloud-init units, last 2,000 lines                                                                                                                                                                                                                                                                                                                                                                                                       | ✔ same                                            |
+| C5  | derived: status, reason, last ansible task, failed item (computed today), time to first console line, time to `complete`, tasks seen → signature `setup.error:<task>`, `setup.stalled:<task>`, `setup.timeout:<task>`                                                                                                                                                                                                                                            | ✔ every create                                    |
 
 **D. An unreachable or address-less instance** (lost at the shelve that fixes
 it)
@@ -368,17 +405,17 @@ it)
 | #   | Evidence                                                                                                                                                                                                                                                                                          | When                                                                                                                                      |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | D1  | console log, `port show` for the server's port (status, fixed IP), the floating IP's status, `server event list`, the last SSH error text. Today auto-shelve (decisions 23 and 26) reads the port and the address, fails SSH, and shelves: the network-orphan evidence is destroyed by the repair | ✔ in `control-instance` when `dispatch_reason` is `unreachable`, before it shelves; in `automatic-instance-shelving` before it dispatches |
-| D2  | the same for an unshelve or create that ends ACTIVE without an address or unreachable (decision 25's shelve-again path, decision 34's repair)                                                                                                                                                     | ✔ before the shelve-again or the repair                                                                                                   |
+| D2  | the same for an unshelve or create that ends ACTIVE without an address or unreachable (decision 25's shelve-again path, inside `control-instance`) and before decision 34's repair (inside `reconcile-instances`, before it dispatches)                                                           | ✔ before the shelve-again or the repair dispatch                                                                                          |
 
 **E. Outside context at the moment** (read afterwards by the harvester; these
 sources keep their history)
 
-| #   | Evidence                                                                                                                  | When                                                    |
-| --- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| E1  | Jetstream2 availability for the flavor                                                                                    | ✔ (B6)                                                  |
-| E2  | Jetstream2 outages: the ACCESS outages feed `check-js2-status` reads, including its past outages, read by the harvester   | ✔ every incident on an OpenStack step                   |
-| E3  | GitHub incidents (githubstatus.com incident history), which tell a GitHub-wide outage from our bug; read by the harvester | ✔ every incident whose error line is a GitHub API error |
-| E4  | Jetstream2 Grafana vacancy history                                                                                        | ✔ the source of B6 on successes                         |
+| #   | Evidence                                                                                                                                                                                                                                            | When                                                    |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| E1  | Jetstream2 availability for the flavor                                                                                                                                                                                                              | ✔ (B6)                                                  |
+| E2  | Jetstream2 outages: the ACCESS outages feed `check-js2-status` reads, including its past outages, read by the harvester. How far back the past listing reaches is to be confirmed; outside its range the record says `unknown`, never `operational` | ✔ every incident on an OpenStack step                   |
+| E3  | GitHub incidents from githubstatus.com, read by the harvester; they tell a GitHub-wide outage from our bug. The public feed lists only recent incidents, so backfilled incidents outside its range get `unknown`                                    | ✔ every incident whose error line is a GitHub API error |
+| E4  | Jetstream2 Grafana vacancy history                                                                                                                                                                                                                  | ✔ the source of B6 on successes                         |
 
 **F. The runner host** (the harvester runs there and reads these in place, from
 its last offset)
@@ -425,22 +462,47 @@ migration)
 - Course repositories (`MC-*`): no harvester until they have a runner clock.
 - Runs older than 90 days: envelope only, no log. Backfilled runs never have
   facts (B, C, D).
+- A rerun of a run created more than 48 hours earlier that queues and finishes
+  between two one-minute watch passes (see "The harvester", step 1).
 
 ### The harvester
 
 `scripts/harvest-incidents.py`, installed by `restore-instances-dispatcher.sh`,
-one crontab line in `instances-runner.crontab.extra` (every 5 minutes). One per
-runner host: the Test runner harvests Test-Instances into `Incidents-test`,
-runner-1 harvests Instances into `Incidents`, each with read-only OpenStack
-access to its own allocation. Credential: a fine-grained PAT (Actions and
-artifacts read on the source repository; contents and issues write on the
-store), watched by `check-dispatch-tokens.sh`.
+two crontab lines in `instances-runner.crontab.extra`: the full cycle every 5
+minutes and a light `--watch` pass every minute. One per runner host: the Test
+runner harvests Test-Instances into `Incidents-test`, runner-1 harvests
+Instances into `Incidents`.
+
+Credentials:
+
+- **GitHub:** a fine-grained PAT watched by `check-dispatch-tokens.sh`. On the
+  source repository: Actions read (runs, jobs, logs, artifacts) and Issues read
+  (labels, timeline, comments). On the store: Contents and Issues write.
+- **OpenStack:** see decision 18 (a restricted application credential, or the
+  runner's credential behind a read-only wrapper).
+- **The facts private key** (to decrypt artifacts) and the email HMAC key, in
+  the harvester user's home, mode 600.
 
 Each cycle:
 
-1. **Runs.** List runs completed since the cursor, in narrow windows: the API
-   returns at most 1,000 runs per filtered query, and Instances produces about
-   1,100 a day. Deduplicate by run id and attempt.
+1. **Find runs.** The runs API filters by creation time, not completion time,
+   and a rerun keeps its original creation time. So creation time alone would
+   miss runs that queued or ran long, and every rerun of an older run. Three
+   mechanisms cover it:
+   - **Lookback window:** every cycle re-lists the runs created in the last 48
+     hours, in narrow windows (the API returns at most 1,000 runs per filtered
+     query, and Instances produces about 1,100 a day), and compares each run's
+     `status`, `run_attempt` and `updated_at` with what is recorded.
+   - **Watch list:** every run seen queued or in progress is kept and checked
+     every cycle until it completes, whatever its age.
+   - **Watch pass:** every minute, `--watch` lists the runs that are `queued` or
+     `in_progress` with no creation filter (two calls), so a rerun of a run of
+     any age joins the watch list. A new `run_attempt` on a recorded run is a
+     new outcome line, and a new incident when it fails.
+
+   The rerun playbook planned for the agent records each run it reruns. The
+   residual blind spot is stated under "Evidence inventory".
+
 2. **Jobs and facts.** For each command, alert, failed or acting run: fetch the
    jobs and the `mc-facts-*` artifacts.
 3. **Classify** (deterministic): `result` is `skipped`, `dropped`, `cancelled`,
@@ -454,7 +516,12 @@ Each cycle:
    - fetch the log;
    - redact;
    - take the late snapshot (F6) and read the outside context (E1–E4);
-   - open `incident:<id>` in the store labeled `needs-verdict`.
+   - **when the incident sent an admin email** (B10), open the issue
+     `incident:<id>` in the store, labeled `needs-verdict`. That is about 30–35
+     a month on production, about 8 a week. Other incidents are recorded without
+     an issue. Their verdicts come from a standing verdict per signature, which
+     the weekly numbers email prompts for: it lists each signature with no admin
+     email and no standing verdict, with its count.
 5. **Runner logs** (F1–F5) and **portal events** (G1–G8), each from its own
    cursor.
 6. **Follow-ups**: for open incidents younger than 24 h, append the issue's new
@@ -490,9 +557,15 @@ runner/YYYY/MM/DD/<host>.jsonl     F1–F5
 state/cursors.json
 ```
 
-**Incident id:** `<repo short>-<run_id>-<attempt>` (or `<source>-<row id>` for
-portal and runner events). The job knows its own id, so the admin email carries
-the link before the harvester has run.
+**Incident id:** `<repo short>-<run_id>-<attempt>-<item>`. `item` is `0` for a
+run-level incident. A run that finds several things (a reconcile tick flagging
+three instances, a dormant-workflow report with several findings) numbers them
+in its facts (B11), and each becomes its own incident with at most one instance.
+Portal and runner events use `<source>-<row id>`. The job knows its own id, but
+the store issue does not exist when the email is sent. So the email links to a
+search on the id, for example
+`https://github.com/MorphoCloud/Incidents/issues?q=in%3Atitle+instances-12345678901-1-0`,
+which finds the issue once the harvester has opened it, within 5 minutes.
 
 `incident.json`, with what the collector fills deterministically and nothing
 that needs judgment:
@@ -500,7 +573,7 @@ that needs judgment:
 ```json
 {
   "schema_version": 1,
-  "id": "instances-12345678901-1",
+  "id": "instances-12345678901-1-0",
   "source": {
     "repo": "MorphoCloud/Instances",
     "workflow_file": "control-instance.yml",
@@ -559,7 +632,7 @@ files.
 - **The facts upload fails:** the envelope still records the run, marked
   `facts: missing`, and the weekly numbers count them.
 - **The harvester fails or falls behind:** nothing is lost while the API holds
-  the runs (artifacts 30 days, logs 90). Lag over one hour dispatches
+  the runs (artifacts 7 days, logs 90). Lag over one hour dispatches
   `admin-alert.yml` once per episode, and the weekly email states the last
   harvest time.
 - **The portal export fails:** its cursor stays put. The tables keep their rows,
@@ -842,17 +915,31 @@ tested on Test as amm554, from a test plan the maintainer approves first.
 
 ## Redaction and privacy
 
-Applied by the harvester to every text it writes (job logs, consoles, cloud-init
-logs, issue comments, portal rows). The rules are in
-`scripts/incident-redact.sed`, versioned and stamped in the record:
+Applied twice with the same rules: by `record-facts` inside the job, to every
+value and file **before** the artifact is uploaded, and by the harvester to
+everything it writes (facts again, job logs, issue comments, portal rows). Two
+reasons it runs in the job:
+
+- a run artifact can be downloaded by anyone with read access to the source
+  repository, members included;
+- GitHub's masking covers the rendered log, not artifacts.
+
+The artifact is then encrypted to the harvester's public key and kept 7 days, so
+a rule that misses something is still unreadable to members. The harvester's
+one-hour lag alert fires long before the 7 days run out. The rules are in
+`.github/actions/record-facts/redact.sed`, vendorized with the action; the
+harvester reads the same file. They are versioned and stamped in the record:
 
 - GitHub tokens (`ghp_`, `ghs_`, `github_pat_`), private-key blocks, the SMTP
   password, OpenStack application-credential secrets, `OS_PASSWORD`;
 - the instance passphrase (`exoPw`) and VNC password lines;
-- email addresses, replaced by an HMAC with a secret key, so one member
-  correlates across incidents but the address cannot be recovered by hashing
-  guesses;
-- anything registered with `::add-mask::` in the run.
+- email addresses, replaced by an HMAC with a secret key (an Actions secret for
+  `record-facts`, the same key on the harvester host), so one member correlates
+  across incidents but the address cannot be recovered by hashing guesses.
+
+There is no rule for values a job registered with `::add-mask::`: nothing
+outside the job can learn them. Job logs the harvester downloads are already
+masked by GitHub. The facts carry only what the rules above remove.
 
 From inside an instance, only system setup logs are read (C1–C4), and only
 during create and resume-setup, before the member has ever logged in. The
@@ -878,17 +965,17 @@ public on the issues.
 Each phase is one feature: design approved, built whole, one review, tested on
 Test as amm554 from an approved test plan, then production.
 
-| Phase | Scope                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Exit                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1     | **Data collection, one feature.** Design note first (the evidence inventory plus what each capture adds inside the per-issue lock: the pre-shelve capture D1, the SSH reads C3–C4), approved by the maintainer. Then built whole: store repos, harvester and its PAT, `record-facts` and every facts site (A–H), redaction, signatures, the version file, direct admin senders onto `notify-admins`, and the portal's `export-events` and `reachability_events`. One review; one PR in MorphoCloudWorkflow and one in the portal repository. Tested whole on Test as amm554 from a test plan approved first, then the 90-day backfill. Production with the 2026-11-23 merge. | Every provoked failure (impossible flavor, setup forced to fail, setup stalled, unreachable instance, GitHub error by a bad token) and a normal create, unshelve and shelve, checked line by line against the inventory; every run in the Actions UI is in the store as a row or a count; every portal row since the cursor is in the store. Time to 👍/👎 and lock time for each command type, measured with and without collection on Test: no measurable change in time to 👍/👎, extra lock time within the table in "What it costs member operations". A gap found in testing is fixed as a class, before merge. |
-| 2     | **Baseline: recording only, no agent.** Every admin email opens an `incident:<id>` issue for the verdict; implicit labels; weekly base rates by plain SQL in one email. Signatures refined by hand as `unclassified` cases are labeled.                                                                                                                                                                                                                                                                                                                                                                                                                                      | At least 8 weeks on production **and** at least 100 incidents with a verdict (decision 16); harvester lag never over an hour unannounced.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 3     | Analysis agent, first run over the whole baseline: base rates, themes, rule candidates as issues. It reads the history; it decides no case. Weekly afterwards.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | A report the maintainer has reviewed; the list of signatures that are still novel.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| 4     | **Backtest:** the triage agent replayed over the baseline, each case file rebuilt as of the incident's time, graded against the verdicts. Nothing is sent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Zero missed pages on non-novel signatures; page precision ≥ 80%; every disagreement read by the maintainer and either the prompt or the verdict fixed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| 5     | Triage agent live in shadow: decisions recorded, today's emails unchanged; novel cases always paged (decision 17).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 3 weeks: zero missed pages; page precision ≥ 80%; `unclassified` < 10%.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 6     | Email switch: the maintainer's address gets pages and the digest; `notify-admins`' direct emails go to an alerts mailbox as the audit trail.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | 2 weeks, zero missed pages.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 7     | Audit classes 2 and 3 fixed (prerequisite); `incident-act.yml`; first playbook `rerun-github-5xx` through shadow → confirm → act.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Promotion criteria met; a week report-only on production.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 8     | Further playbooks, one at a time, each from an approved analysis proposal on a non-novel signature.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Per playbook.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 9     | Courses (`MC-*`), once they have a clock.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | One course cycle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Phase | Scope                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Exit                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | **Data collection, one feature.** Design note first (the evidence inventory plus what each capture adds inside the per-issue lock: the pre-shelve capture D1/D2, the SSH reads C3–C4), approved by the maintainer. Then built whole: store repos, harvester with its PAT, its OpenStack credential or wrapper (decision 18) and its decryption and HMAC keys, `record-facts` (redaction and encryption in the job) and every facts site (A–H), signatures, the version file, and the portal's `export-events` and `reachability_events`. Moving the admin-email senders onto `notify-admins` is **not** part of this phase. One review; one PR in MorphoCloudWorkflow and one in the portal repository. Tested whole on Test as amm554 from a test plan approved first, then the 90-day backfill. Production with the 2026-11-23 merge. | Every provoked failure (impossible flavor, setup forced to fail, setup stalled, unreachable instance, GitHub error by a bad token) and a normal create, unshelve and shelve, checked line by line against the inventory. Every run in the Actions UI is in the store as a row or a count, including a long-queued run, a rerun of a run more than 48 hours old, and a rerun's facts (attempt 2's artifact uploaded beside attempt 1's). A downloaded facts artifact is unreadable without the key, and its decrypted content passes the redaction test. Every portal row since the cursor is in the store. Time to 👍/👎 and lock time for each command type, measured with and without collection on Test: no measurable change in time to 👍/👎 on success paths, extra lock time within the table in "What it costs member operations". A gap found in testing is fixed as a class, before merge. |
+| 2     | **Baseline: recording only, no agent.** Every admin email opens an `incident:<id>` issue for the verdict; implicit labels; weekly base rates by plain SQL in one email. Signatures refined by hand as `unclassified` cases are labeled.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | At least 8 weeks on production **and** at least 100 incidents with a verdict (decision 16); harvester lag never over an hour unannounced.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 3     | Analysis agent, first run over the whole baseline: base rates, themes, rule candidates as issues. It reads the history; it decides no case. Weekly afterwards.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | A report the maintainer has reviewed; the list of signatures that are still novel.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 4     | **Backtest:** the triage agent replayed over the baseline, each case file rebuilt as of the incident's time, graded against the verdicts. Nothing is sent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Zero missed pages on non-novel signatures; page precision ≥ 80%; every disagreement read by the maintainer and either the prompt or the verdict fixed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 5     | Triage agent live in shadow: decisions recorded, today's emails unchanged; novel cases always paged (decision 17).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | 3 weeks: zero missed pages; page precision ≥ 80%; `unclassified` < 10%.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 6     | Email switch: the maintainer's address gets pages and the digest; `notify-admins`' direct emails go to an alerts mailbox as the audit trail.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | 2 weeks, zero missed pages.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 7     | Audit classes 2 and 3 fixed (prerequisite); `incident-act.yml`; first playbook `rerun-github-5xx` through shadow → confirm → act.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Promotion criteria met; a week report-only on production.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 8     | Further playbooks, one at a time, each from an approved analysis proposal on a non-novel signature.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Per playbook.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 9     | Courses (`MC-*`), once they have a clock.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | One course cycle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## How we know it works
 
@@ -912,6 +999,8 @@ Test as amm554 from an approved test plan, then production.
   app or a new `morphocloud-incidents` app.
 - Harvester credential: a PAT watched by `check-dispatch-tokens.sh` (as the
   dispatcher's), or the app's private key on the runners.
+- Whether Jetstream2 allows an application credential restricted to read calls
+  (decision 18); if not, the wrapper and the recorded risk.
 - Whether a sample of the 90-day backfill gets `needs-verdict` (about 40 from
   the top classes puts them past the novelty threshold on day one).
 - A standing verdict per signature for clearly harmless, high-volume classes
