@@ -1,0 +1,87 @@
+name: Admin alert
+# Decision 35: the runner cannot post on issues either, so an automatic
+# actor that touched a member's instance says so through `-f issue=<n>
+# -f note=…` — one line on the member's issue, no email unless a subject is
+# given too.
+
+# One email to the admins, on demand (INSTANCE_DASHBOARD_PLAN.md decision 24).
+# The runner cannot send mail, so what it has to say — a floating-IP mint
+# failing, a start refused for want of an address — comes here through
+# `gh workflow run admin-alert.yml -f subject=… -f body=…` with its
+# dispatcher token. Once per episode is the caller's job; this just sends.
+
+on:
+  # dispatch: manual
+  workflow_dispatch:
+    inputs:
+      subject:
+        description:
+          "Subject line (the repository is prefixed); empty = no email"
+        required: false
+        default: ""
+        type: string
+      body:
+        description: "Plain-text body"
+        required: false
+        default: ""
+        type: string
+      issue:
+        description: "Issue to post `note` on (decision 35); empty = no note"
+        required: false
+        default: ""
+        type: string
+      note:
+        description: "One line for the member, posted on `issue`"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Note on the issue
+        if: ${{ inputs.issue != '' && inputs.note != '' }}
+        shell: bash
+        run: |
+          # A failed note must not keep the email below from going out.
+          gh issue comment "$ISSUE" --body "$NOTE" \
+            || echo "::warning ::Could not post the note on issue #$ISSUE: $NOTE"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ inputs.issue }}
+          NOTE: ${{ inputs.note }}
+
+      - name: Send
+        if:
+          ${{ inputs.subject != '' && vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS != ''
+          }}
+        uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
+        with:
+          server_address: webhost.dynadot.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: MorphoCloudPortal <no-reply@morphocloud.org>
+          to: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          subject: "[${{ github.repository }}] ${{ inputs.subject }}"
+          body: |
+            ${{ inputs.body }}
+
+            Sent by admin-alert.yml, run https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: No admin address configured
+        if:
+          ${{ inputs.subject != '' && vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS == ''
+          }}
+        run: |
+          echo "::error ::MORPHOCLOUD_GITHUB_ADMIN_EMAILS is not set; the alert was not sent: ${SUBJECT}"
+          exit 1
+        env:
+          SUBJECT: ${{ inputs.subject }}
