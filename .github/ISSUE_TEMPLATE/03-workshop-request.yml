@@ -15,10 +15,10 @@ body:
     attributes:
       label: Cloud Computing Instance Flavor
       description:
-        Workshops run on g3.large only (16 CPUs, 60 GB RAM, half an A100 GPU) —
-        the only flavor available for workshop instances.
+        Workshops run on g3.medium only (8 CPUs, 30 GB RAM, a quarter of an A100
+        GPU) — the only flavor available for workshop instances.
       options:
-        - g3.large - GPU instance (16 CPUs, 60 GB RAM and 50% of A100 GPU)
+        - g3.medium - GPU instance (8 CPUs, 30 GB RAM and 25% of A100 GPU)
     validations:
       required: true
 
