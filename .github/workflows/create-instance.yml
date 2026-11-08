@@ -430,7 +430,8 @@ jobs:
           portal_url: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
           image_vgpu: ${{ vars.MORPHOCLOUD_IMAGE_VGPU }}
           image_regular: ${{ vars.MORPHOCLOUD_IMAGE_REGULAR }}
-          vgpu_flavors: ${{ vars.MORPHOCLOUD_VGPU_FLAVORS || 'g3.large' }}
+          vgpu_flavors:
+            ${{ vars.MORPHOCLOUD_VGPU_FLAVORS || 'g3.large,g3.medium' }}
 
       # Individual creates stay one job (acquire + setup back-to-back on the
       # acquire runner) — same behaviour as before the split; only the workshop

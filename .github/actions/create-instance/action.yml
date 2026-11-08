@@ -49,7 +49,7 @@ inputs:
   vgpu_flavors:
     description: "Share mode: comma-separated vGPU flavors"
     required: false
-    default: "g3.large"
+    default: "g3.large,g3.medium"
   github_id:
     description: "Share mode: numeric GitHub ID of the instance owner"
     required: false
