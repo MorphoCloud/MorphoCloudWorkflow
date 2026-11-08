@@ -975,16 +975,17 @@ low-effort inputs feed it:
 - **Implicit labels.** Outcomes with `actor_kind: admin` on the same issue
   within 24 h of an incident record what was done by hand, with no form.
 
-`verdicts/<id>.json` is written by a store workflow from these. During the
-baseline (Phase 2) there is no agent and no page: every admin email the system
-already sends opens an `incident:<id>` issue in the store, and the email links
-to it. Closing it with one label (`needed-me`, `could-have-waited`,
-`nothing-to-do`, or `test-induced` for a deliberate test the test-account mark
-did not catch, plus `/did <text>` when something was done by hand) is the whole
-cost to the maintainer. `test-induced` incidents, and every run marked
-`actor_kind: test`, stay in the store but are left out of the base rates and of
-what the agent is graded on. The implicit labels fill in what was done. This is
-the record the agent is graded against before it is trusted with anything.
+`verdicts/<id>.json` is written by the harvester from these, when it sees the
+issue closed. During the baseline (Phase 2) there is no agent and no page: every
+admin email the system already sends opens an `incident:<id>` issue in the
+store, and the email links to it. Closing it with one label (`needed-me`,
+`could-have-waited`, `nothing-to-do`, or `test-induced` for a deliberate test
+the test-account mark did not catch, plus `/did <text>` when something was done
+by hand) is the whole cost to the maintainer. `test-induced` incidents, and
+every run marked `actor_kind: test`, stay in the store but are left out of the
+base rates and of what the agent is graded on. The implicit labels fill in what
+was done. This is the record the agent is graded against before it is trusted
+with anything.
 
 ## The analysis agent
 
@@ -1090,8 +1091,28 @@ public on the issues.
 - **Git**: everything, about 16 MB a month on production (see "Volume"). Kept
   indefinitely; if the store ever nears 1 GB, logs older than two years move to
   a separate archive repository.
-- **Actions minutes**: none. The harvester is a crontab script, agents run on
-  self-hosted runners, and the facts are written inside jobs that already run.
+- **Actions minutes** (GitHub-hosted jobs in private repositories bill at about
+  $0.006 a minute, each job rounded up to a minute; self-hosted runners and the
+  runner crontab are free):
+
+  | Item                                                                                                                                                   | Billed minutes / month |
+  | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- |
+  | harvester, backfill (runner crontab)                                                                                                                   | 0                      |
+  | facts in self-hosted jobs (command workers, sweeps, setup)                                                                                             | 0                      |
+  | store watchdog, every 6 hours                                                                                                                          | ≤120                   |
+  | weekly numbers email (`Incidents`)                                                                                                                     | ~5–10                  |
+  | facts upload in the GitHub-hosted jobs that send admin email (`on-admin-mention`, `report-dropped-command`, `detect-dormant-workflows`, `admin-alert`) | ~20                    |
+  | **steady state**                                                                                                                                       | **~150 (~$1)**         |
+  | Phase 1 testing on Test-Instances, once                                                                                                                | ~150 (~$1)             |
+
+  Two rules keep it there:
+  1. **No facts upload from the GitHub-hosted authorize jobs.** They run on
+     every command (~300 a month), and an upload that pushes a job past a minute
+     boundary bills a whole extra minute. Their refusal reasons are read from
+     the job log by the harvester instead.
+  2. **Verdicts are recorded by the harvester when it sees a verdict issue
+     closed, not by a workflow in the store.**
+
 - **Model usage**: `CLAUDE_CODE_OAUTH_TOKEN` (subscription). Triage is capped at
   one run per episode and at most 40 a day; above that, triage pauses and one
   page says so. Analysis runs weekly.
