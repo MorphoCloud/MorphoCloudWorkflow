@@ -329,13 +329,17 @@ GitHub incident from holding the per-issue lock for minutes. It is the last
 **after** `report-command-outcome` where that is called, so the 👍/👎 comes
 first. That is not only the six workflows that call `report-command-outcome`
 (control-instance, create-instance, create-course-instance,
-delete-instance-and-volume, extend-session, send-email): the sweep found seven
-more that do instance work without it (`create-workshop`, `approve-workshop`,
-`update-renew-label`, `control-instance-from-workflow`,
-`create-instance-from-workflow`, `resume-setup`, `migrate-volume`). The CI check
-`scripts/check-facts-upload.py` (decision 20) fails when a self-hosted job lacks
-the step. Among the GitHub-hosted jobs only the admin-email senders upload (see
-"Where it runs"). Every `run-name:` gains the issue number:
+delete-instance-and-volume, extend-session, send-email): the sweep found four
+more self-hosted workflows that do instance work without it
+(`control-instance-from-workflow`, `create-instance-from-workflow`,
+`resume-setup`, `migrate-volume`). Three further command workflows
+(`create-workshop`, `approve-workshop`, `update-renew-label`) run on
+`ubuntu-latest`, only edit labels and comments or hand the work to
+`create-instance-from-workflow`, and upload nothing; their runs are recorded
+from the envelope. The CI check `scripts/check-facts-upload.py` (decision 20)
+fails when a self-hosted job lacks the step. Among the GitHub-hosted jobs only
+the admin-email senders upload (see "Where it runs"). Every `run-name:` gains
+the issue number:
 `#${{ github.event.issue.number || inputs.issue_number }} ${{ github.workflow }}`.
 
 ### Where it runs
