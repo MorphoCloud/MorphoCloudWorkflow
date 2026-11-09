@@ -398,6 +398,18 @@ to end on Test.
 
 ### Production install (before the merge; needs the maintainer's explicit go-ahead)
 
+**Done 2026-11-09** on the maintainer's "merged, proceed with your tests and
+installs; I want the collection to start now": steps 1–2 earlier that day, step
+3 with `install-harvester.sh exouser@149.165.152.104 --outside-block` (store
+cloned, both tokens verified, the crontab line added after the managed block),
+step 4 (dry run: 2,125 runs over 48 hours, 9 would-be incidents, about 3.5
+minutes), step 5 (the 90-day backfill, started 06:12 UTC), step 7
+(`check-dispatch-tokens.sh` copied). Step 6 (the watchdog) follows the backfill,
+since `state/harvester.json` is written at its end. The Test install the same
+morning went through `restore-instances-dispatcher.sh` with the Test variables
+and backfilled `Incidents-sandbox` in 24 minutes (21,326 runs, 189 incidents, 22
+MB).
+
 Production runs `main`; nothing in this PR touches a workflow, so installing the
 harvester there is a runner-host change only. Steps, each one visible:
 

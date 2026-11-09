@@ -95,6 +95,9 @@ LOOKBACK = 48 * 3600
 LOOKBACK_EVERY = 3600
 FOLLOWUP_FOR = 24 * 3600
 DISPATCH_JOIN = 60
+# How much of each runner log the DISPATCH join reads. Production's dispatch
+# log is 8 MB for five months, so 32 MB covers a 90-day backfill with room.
+DISPATCH_LOG_TAIL = 32_000_000
 TAIL_LINES = 200
 PAGE = 100
 MAX_PAGES = 10  # the API caps a filtered listing at 1,000 runs
@@ -750,7 +753,7 @@ class Dispatches:
                 continue
             try:
                 with p.open("rb") as fh:
-                    fh.seek(max(0, p.stat().st_size - 4_000_000))
+                    fh.seek(max(0, p.stat().st_size - DISPATCH_LOG_TAIL))
                     text = fh.read().decode("utf-8", "replace")
             except OSError:
                 continue
