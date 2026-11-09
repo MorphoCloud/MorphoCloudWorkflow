@@ -17,7 +17,12 @@ re-swept against the inventory, this one at `share-prototype` a159be7 and the
 portal at its `share-prototype` abbbd74. The sweep found twelve reads, logs and
 tables this repository's inventory had missed, six claims the code contradicts,
 and a section G that would have lost most of what it promised. The changes are
-marked **(amended)** below and summarized in decision 20.
+marked **(amended)** below and summarized in decision 20. The maintainer's third
+priority, named afterwards, is **cost** (Actions minutes and storage): not
+critical, kept in view in "Retention, size, cost". The amendment was merged
+2026-11-08 (#400), which approves the collection part. Phase 1 is designed PR by
+PR in `INCIDENT_STORE_PHASE1_DESIGN.md`, each PR's design approved before its
+code.
 
 **Under review now: data collection only.** That is decisions 1–6 and 18–20,
 "Data collection", "Signatures", "Redaction and privacy", "Retention, size,
