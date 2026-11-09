@@ -796,3 +796,18 @@ def test_remote_diag_parses_listing_and_forgets_rotated_files(tmp_path, monkeypa
     }
     shipped = (tmp_path / "store/runner/2026/11/09/control-host/diag.log").read_text()
     assert shipped == "# Worker_1.log\nERR two\n"
+
+
+def test_assemble_log_empty_archive_means_no_log():
+    """A run cancelled in the concurrency queue has an empty archive (seen on
+    Test: 61 of 189 backfilled incidents); no empty job.log.gz is written."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w"):
+        pass
+    assert hv.assemble_log(buf.getvalue(), None) == (None, "", None)
+    # an archive with only nested files is still kept
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("job/system.txt", "sys\n")
+    whole, _, _ = hv.assemble_log(buf.getvalue(), None)
+    assert whole == "===== job/system.txt =====\nsys\n"

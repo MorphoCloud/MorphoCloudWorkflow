@@ -653,12 +653,18 @@ def assemble_log(zip_bytes: bytes, failed: dict | None) -> tuple[str, str, str |
                 errors = ERROR_RE.findall(text)
                 if errors:
                     error_line = TS_PREFIX_RE.sub("", errors[-1]).strip()
+        if not job_files and names:  # no per-job file: keep whatever is there
+            for name in sorted(names):
+                parts.append(f"===== {name} =====\n")
+                parts.append(zf.read(name).decode("utf-8", "replace"))
     whole = "".join(parts)
     if error_line is None:
         errors = ERROR_RE.findall(whole)
         if errors:
             error_line = TS_PREFIX_RE.sub("", errors[-1]).strip()
-    return whole, step_tail, error_line
+    # A run cancelled before it started (the concurrency queue) has an EMPTY
+    # archive; None says "no log", so no empty job.log.gz is written.
+    return (whole or None), step_tail, error_line
 
 
 def classify(
@@ -1248,6 +1254,7 @@ class Harvester:
             "logtext": None,
             "step_tail": "",
             "error_line": None,
+            "log": "not_fetched",  # present | none | unreadable | not_fetched
         }
 
     def fetch_detail(self, run_id: int, attempt: int) -> dict:
@@ -1262,12 +1269,15 @@ class Harvester:
             f"/repos/{self.repo}/actions/runs/{run_id}/attempts/{attempt}/logs",
             raw=True,
         )
+        d["log"] = "none"
         if blob:
             try:
                 d["logtext"], d["step_tail"], d["error_line"] = assemble_log(
                     blob, d["failed"]
                 )
+                d["log"] = "present" if d["logtext"] is not None else "none"
             except zipfile.BadZipFile:
+                d["log"] = "unreadable"
                 log(f"run {run_id} attempt {attempt}: log archive unreadable")
         # The error line goes into incident.json and the outcome line, so it
         # is redacted here; the log and the step tail are redacted when written.
@@ -1310,6 +1320,7 @@ class Harvester:
             "error_line": d["error_line"],
             "html_url": run.get("html_url"),
             "facts": "missing",
+            "log": d["log"],
             "backfill": self.backfill,
         }
 
