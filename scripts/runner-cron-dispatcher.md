@@ -48,7 +48,21 @@ backstop is their only clock, which is why it stays in the workflows.
   The rendered crontab is a **managed block** (`# BEGIN morphocloud-dispatcher`
   … `# END morphocloud-dispatcher`): the installer replaces that block and keeps
   every other line of the runner's crontab — the Test runner's portal `pickup`
-  line lives there.
+  line lives there. Stray dispatcher and `harvest-incidents` lines outside the
+  block are dropped so nothing double-fires.
+- [`harvest-incidents.py`](harvest-incidents.py) — the incident harvester
+  (`INCIDENT_STORE_PLAN.md`), the second runner-side script on the clock: every
+  five minutes it records the repository's runs in the incident store
+  (`MorphoCloud/Incidents`; the Test runner writes to `Incidents-sandbox` while
+  Phase 1 is tested). Installed by
+  [`install-harvester.sh`](install-harvester.sh), which the restore script
+  calls; its two PATs are `harvest-source.pat` and `harvest-store.pat` in
+  `~/.config/morphocloud/`. A missing harvester token never blocks the restore:
+  the clock is installed without the harvester line and the store's watchdog
+  reports it.
+- [`check-dispatch-logging.py`](check-dispatch-logging.py) — pre-commit: every
+  runner-side `gh workflow run` call site must log a `DISPATCH` line (below),
+  which is how the harvester tells this clock's runs from a hand dispatch.
 
 ## Install on a runner (ACQUIRE runner only — never the control runner)
 
@@ -83,8 +97,16 @@ crontab, merge, then re-run the install for each runner.
 
 - Test one dispatch:
   `~/morphocloud-dispatch.sh automatic-instance-shelving.yml`, then check
-  `~/morphocloud-dispatch.log` for `dispatched` (not `FAILED`), and confirm a
-  `workflow_dispatch` run appears in the repo's Actions tab.
+  `~/morphocloud-dispatch.log` for a `DISPATCH … result=ok` line (not
+  `result=FAILED`), and confirm a `workflow_dispatch` run appears in the repo's
+  Actions tab.
 - `crontab -l | grep -c morphocloud-dispatch` equals the number of dispatch
   lines in the committed crontab.
-- Log: `~/morphocloud-dispatch.log` on the runner VM.
+- Log: `~/morphocloud-dispatch.log` on the runner VM. Every dispatch is one
+  line,
+  `<UTC> DISPATCH <workflow.yml> repo=<owner/repo> issue=<n|-> by=<script> result=ok|FAILED <gh stderr tail>`,
+  the same format `police-floating-ips.py` and `check-dispatch-tokens.sh` write
+  to their logs. The incident harvester joins a run to the line (same workflow,
+  same issue, within 60 s) to record it as `automation`.
+- Harvester: `~/harvest-incidents.log` on the runner, and the store's
+  `state/harvester.json` (last cycle, cursor, last error).

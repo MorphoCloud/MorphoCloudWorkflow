@@ -1,0 +1,127 @@
+# The controlled vocabulary of incident signatures (INCIDENT_STORE_PLAN.md,
+# "Signatures"). The harvester assigns the FIRST matching entry, in this order;
+# nothing matches -> `unclassified`. The agent may propose additions in its
+# decision record; only the maintainer adds them here.
+#
+# Each entry: signature, field (error_line | failed_step | workflow), match (a
+# Python regular expression, searched, case-sensitive unless (?i)). (The key is
+# `field`, not `on`: PyYAML reads an unquoted `on` as the boolean True.) Until PR B
+# ships the facts, only the failed step's last ##[error] line, the failed
+# step's name and the workflow file are available, so most entries key on the
+# error line and `unclassified` is expected to be the largest class for now.
+version: 1
+signatures:
+  # --- GitHub itself: a 5xx on the error line ONLY, never by grepping the log
+  - signature: github.api_5xx
+    field: error_line
+    match: 'HTTP 5\d\d|\b50[234]\b |Server Error|Bad Gateway|Gateway Time-?out'
+  - signature: github.command_dropped
+    field: workflow
+    match: '^report-dropped-command\.yml$'
+
+  # --- capacity and quota
+  - signature: capacity.project_cap
+    field: error_line
+    match: "system-capacity|MAX_TOTAL|instance cap|at capacity"
+  - signature: capacity.quota
+    field: error_line
+    match: "(?i)quota exceeded|VolumeLimitExceeded|Forbidden: Quota"
+  - signature: create.no_capacity
+    field: error_line
+    match: "No valid host|Exhausted all hosts|no_capacity|insufficient capacity"
+
+  # --- the Nova lifecycle
+  - signature: unshelve.host_failure
+    field: error_line
+    match: "compute_unshelve_instance|unshelve.*(host_error|host failure)"
+  - signature: create.host_failure
+    field: error_line
+    match:
+      "schedule_instances|build.*(host_error|host failure)|Exceeded maximum
+      number of retries"
+  - signature: unshelve.address_not_attached
+    field: error_line
+    match:
+      "address.*not attached|could not attach.*address|no floating ip was bound"
+  - signature: network.wrong_server_at_address
+    field: error_line
+    match:
+      'fip\.py verify.*exit(ed)? 4|answers as another server|wrong server at'
+  - signature: create.no_address
+    field: error_line
+    match:
+      "no (spare|floating) (ip|address)|address drought|could not
+      allocate.*address"
+  - signature: network.non_routable_address
+    field: error_line
+    match: 'non-routable|172\.17\.'
+  - signature: shelve.wrong_end_state
+    field: error_line
+    match: "expected SHELVED|wrong end state|ended in state"
+  - signature: unshelve.wrong_end_state
+    field: error_line
+    match: "expected ACTIVE|still SHELVED|did not reach ACTIVE"
+
+  # --- setup on the instance
+  - signature: setup.ssh_auth
+    field: error_line
+    match: 'Permission denied \(publickey|ssh.*authentication failed'
+  - signature: setup.ceiling
+    field: error_line
+    match: "setup ceiling|exceeded the setup ceiling"
+  - signature: setup.stalled
+    field: error_line
+    match: "setup (has )?stalled|no console progress"
+  - signature: setup.timeout
+    field: error_line
+    match:
+      "setup.*timed out|Timed out waiting for (setup|cloud-init|the instance)"
+  - signature: setup.error
+    field: failed_step
+    match: "(?i)setup instance|wait for setup|cloud-init"
+  - signature: share.mount_failed
+    field: error_line
+    match: "mount.*(failed|error)|ceph.*(mount|access)"
+
+  # --- email
+  - signature: email.credentials_failed
+    field: failed_step
+    match: "(?i)send (the )?(credentials|email)|email credentials"
+  - signature: email.admin_send_failed
+    field: error_line
+    match: "SMTP|smtp|Invalid login|could not send mail|action-send-mail"
+
+  # --- the sweeps
+  - signature: share.expire_failed
+    field: workflow
+    match: '^expire-shares\.yml$'
+  - signature: drift.repair_failed
+    field: error_line
+    match: "repair.*failed|could not repair"
+  - signature: followup.retries_spent
+    field: error_line
+    match: "retries (spent|exhausted)|gave up after"
+  - signature: monitor.dormant_workflow
+    field: workflow
+    match: '^detect-dormant-workflows\.yml$'
+  - signature: member.help_request
+    field: workflow
+    match: '^on-admin-mention\.yml$'
+
+  # --- generic timeouts last, so a more specific line wins above
+  - signature: unshelve.timeout
+    field: error_line
+    match: "(?i)timed out.*unshelv|unshelv.*timed out"
+  - signature: shelve.timeout
+    field: error_line
+    match: "(?i)timed out.*shelv|shelv.*timed out"
+  - signature: create.timeout
+    field: error_line
+    match:
+      "(?i)timed out.*(build|create|ACTIVE)|The job running on runner .* has
+      exceeded the maximum execution time"
+  - signature: create.api_error
+    field: error_line
+    match:
+      "openstack.*(Error|error)|Unable to establish
+      connection|HttpException|SDKException"

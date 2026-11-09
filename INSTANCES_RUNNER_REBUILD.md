@@ -27,15 +27,19 @@ Two runners back `Instances` (see `SYSTEM-OVERVIEW.md` → Runner Architecture):
 
 ## What's lost on a rebuild (restore checklist)
 
-| State                                                                                | On which runner  | Restore from                                                    |
-| ------------------------------------------------------------------------------------ | ---------------- | --------------------------------------------------------------- |
-| Actions runner registration + label                                                  | both             | re-register (fresh token)                                       |
-| `~/venv` + OpenStack client, `jq`, `gh`, docker group                                | both             | `provision-instances-runner-host.sh`                            |
-| `~/.config/openstack/clouds.yaml`                                                    | both             | Exosphere → allocation → Credentials → clouds.yaml              |
-| `~/.ssh/id_ed25519` (murat-key, instance SSH)                                        | both             | your key backup                                                 |
-| `morphocloud-dispatch.sh`, `check-dispatch-tokens.sh`                                | **acquire only** | this repo `scripts/`                                            |
-| `dispatch.pat`, `analytics-dispatch.pat` (PAT **values**, unrecoverable from GitHub) | **acquire only** | `~/.ssh/GH_MorphoCloud-{workflow,analytics}-dispatcher` backups |
-| crontab (the clock)                                                                  | **acquire only** | `scripts/instances-runner.crontab`                              |
+| State                                                                                                             | On which runner  | Restore from                                                                                     |
+| ----------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------ |
+| Actions runner registration + label                                                                               | both             | re-register (fresh token)                                                                        |
+| `~/venv` + OpenStack client, `jq`, `gh`, docker group                                                             | both             | `provision-instances-runner-host.sh`                                                             |
+| `~/.config/openstack/clouds.yaml`                                                                                 | both             | Exosphere → allocation → Credentials → clouds.yaml                                               |
+| `~/.ssh/id_ed25519` (murat-key, instance SSH)                                                                     | both             | your key backup                                                                                  |
+| `morphocloud-dispatch.sh`, `check-dispatch-tokens.sh`                                                             | **acquire only** | this repo `scripts/`                                                                             |
+| `dispatch.pat`, `analytics-dispatch.pat` (PAT **values**, unrecoverable from GitHub)                              | **acquire only** | `~/.ssh/GH_MorphoCloud-{workflow,analytics}-dispatcher` backups                                  |
+| crontab (the clock)                                                                                               | **acquire only** | `scripts/instances-runner.crontab`                                                               |
+| `harvest-incidents.py` + `incident-sources.yml`, `incident-signatures.yml`, `redact.sed`, `venv/bin/openstack-ro` | **acquire only** | this repo, via `scripts/install-harvester.sh` (the restore script calls it)                      |
+| `harvest-source.pat`, `harvest-store.pat` (PAT **values**)                                                        | **acquire only** | `~/.ssh/GH_MorphoCloud-incidents-{source,store}` backups                                         |
+| `~/incidents-store` (the store checkout), `~/.config/morphocloud/harvest-local.json`                              | **acquire only** | re-cloned by `install-harvester.sh`; the local state is a cache (the hourly lookback refills it) |
+| `hmac.key` (email HMAC; PR B)                                                                                     | **acquire only** | `~/.ssh/` backup; without it addresses are dropped, never leaked                                 |
 
 ## Rebuild steps
 
@@ -125,8 +129,11 @@ read/write — workflow-dispatcher on `Instances`, analytics-dispatcher on
   number of dispatch lines in `scripts/instances-runner.crontab` (rendered from
   the workflows' `# dispatch:` markers — see
   `scripts/runner-cron-dispatcher.md`); after the next `*/5`,
-  `~/morphocloud-dispatch.log` shows `dispatched` (not `FAILED`), and
-  `workflow_dispatch` runs appear in the Actions tab.
+  `~/morphocloud-dispatch.log` shows `DISPATCH … result=ok` (not
+  `result=FAILED`), and `workflow_dispatch` runs appear in the Actions tab.
+- **Acquire only:** after the next `*/5`, `~/harvest-incidents.log` shows a
+  cycle and `MorphoCloud/Incidents` gets a `harvest …` commit; the store's
+  `watchdog.yml` emails the admins if it stays quiet for two hours.
 - A test instance `/create` succeeds (acquire lane + OpenStack creds working).
 
 ## Recovery time & safety net

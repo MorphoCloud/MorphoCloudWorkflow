@@ -60,30 +60,43 @@ BLOCK_END = "# END morphocloud-dispatcher"
 
 # Rendered crontabs: committed path -> (repository the lines dispatch to, the
 # OpenStack cloud name on that runner, the floating-IP hold N of decision 24,
-# lines appended verbatim after the rendered ones, or None). Production holds
+# lines appended verbatim after the rendered ones, or None, and the incident
+# store the harvester writes to, or None for no harvester). Production holds
 # 5; the Test project keeps no reserve (hold 1: one spare ahead, no more),
-# by the maintainer's decision of 2026-11-03.
+# by the maintainer's decision of 2026-11-03. The Test runner harvests into
+# Incidents-sandbox only while INCIDENT_STORE_PLAN.md Phase 1 is tested.
 TARGETS = {
     "scripts/instances-runner.crontab": (
         "MorphoCloud/Instances",
         "BIO180006_IU",
         5,
         "scripts/instances-runner.crontab.extra",
+        "MorphoCloud/Incidents",
     ),
     "scripts/test-instances-runner.crontab": (
         "MorphoCloud/Test-Instances",
         "BIO240357_IU",
         1,
         None,
+        "MorphoCloud/Incidents-sandbox",
     ),
 }
 # Runner-side scripts on the same clock (not workflows): (cron, command).
-# Decision 24: the floating-IP policing every five minutes.
+# Decision 24: the floating-IP policing every five minutes. A command with
+# {store} is rendered only for a target that has a store.
 RUNNER_SCRIPTS = [
     (
         "*/5 * * * *",
         "OS_CLOUD={cloud} MORPHOCLOUD_FIP_HOLD={hold} MORPHOCLOUD_DISPATCH_REPO={repo} "
         "/home/exouser/venv/bin/python /home/exouser/police-floating-ips.py >> /home/exouser/fip-police.log 2>&1",
+    ),
+    # The incident harvester (INCIDENT_STORE_PLAN.md): the only writer of the
+    # store, every five minutes. install-harvester.sh writes this same line by
+    # hand on production before the merge; test_harvest_incidents.py keeps them equal.
+    (
+        "*/5 * * * *",
+        "OS_CLOUD={cloud} MORPHOCLOUD_SOURCE_REPO={repo} MORPHOCLOUD_STORE_REPO={store} "
+        "/home/exouser/venv/bin/python /home/exouser/harvest-incidents.py >> /home/exouser/harvest-incidents.log 2>&1",
     ),
 ]
 
@@ -159,8 +172,13 @@ def scan() -> tuple[dict[str, str], list[str]]:
     return clock, errors
 
 
-def render(
-    clock: dict[str, str], repo: str, cloud: str, hold: int, extra: Path | None
+def render(  # noqa: PLR0913 — one parameter per TARGETS field
+    clock: dict[str, str],
+    repo: str,
+    cloud: str,
+    hold: int,
+    extra: Path | None,
+    store: str | None = None,
 ) -> str:
     by_cron: dict[str, list[str]] = {}
     for name, cron in sorted(clock.items()):
@@ -178,7 +196,11 @@ def render(
         )
     lines.append("# --- runner-side scripts on the same clock ---")
     for cron, command in RUNNER_SCRIPTS:
-        lines.append(f"{cron} {command.format(cloud=cloud, repo=repo, hold=hold)}")
+        if "{store}" in command and store is None:
+            continue
+        lines.append(
+            f"{cron} {command.format(cloud=cloud, repo=repo, hold=hold, store=store)}"
+        )
     if extra is not None:
         lines.append("# --- appended verbatim from " + extra.name + " ---")
         lines.extend(extra.read_text(encoding="utf-8").rstrip("\n").splitlines())
@@ -188,15 +210,17 @@ def render(
 
 def crontab_errors(clock: dict[str, str], write: bool) -> list[str]:
     errors: list[str] = []
-    for rel, (repo, cloud, hold, extra_rel) in TARGETS.items():
+    for rel, (repo, cloud, hold, extra_rel, store) in TARGETS.items():
         path = ROOT / rel
         extra = ROOT / extra_rel if extra_rel else None
         if not path.exists():  # a vendorized copy: no crontabs to keep current
             continue
         if write:
-            path.write_text(render(clock, repo, cloud, hold, extra), encoding="utf-8")
+            path.write_text(
+                render(clock, repo, cloud, hold, extra, store), encoding="utf-8"
+            )
         elif path.read_text(encoding="utf-8") != render(
-            clock, repo, cloud, hold, extra
+            clock, repo, cloud, hold, extra, store
         ):
             errors.append(
                 f"{path}: stale. Run 'python scripts/check-workflow-clock.py render'."

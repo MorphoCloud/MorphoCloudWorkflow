@@ -1,0 +1,141 @@
+# What the incident harvester (scripts/harvest-incidents.py) knows about each
+# source repository and about the workflows it records. INCIDENT_STORE_PLAN.md
+# "Evidence inventory" and INCIDENT_STORE_PHASE1_DESIGN.md "The harvester".
+#
+# A workflow file not listed under `workflows` is kind `other`: counted in the
+# rollups and shown in the weekly numbers, never dropped. Add a workflow here
+# when it becomes a command, a sweep or an alert; the harvester does not guess.
+
+sources:
+  MorphoCloud/Instances:
+    short: instances # the store's per-repository file name and incident-id prefix
+    instance_prefix: "instance-" # production servers are instance-<issue>
+    control_host: null # exouser@<ip> of the second (control) runner, for its _diag logs over SSH
+  MorphoCloud/Test-Instances:
+    short: test-instances
+    instance_prefix: "morpho-cloud-test_instance-"
+    control_host: null
+
+# actor_kind rules (plan, "Classify"): rule 2 bots, rule 3 test accounts,
+# rule 4 admins (unless the admin opened the issue), rule 5 everyone else.
+# Rule 1 (automation) is a DISPATCH line in a runner log, whoever the actor is.
+bots:
+  - "morphocloud-workflow-app[bot]"
+  - "github-actions[bot]"
+test_accounts:
+  - amm554
+admins:
+  - muratmaga
+
+workflows:
+  # A command: one member action, one outcome line, jobs and the full log every time.
+  command:
+    - control-instance.yml
+    - create-instance.yml
+    - create-course-instance.yml
+    - delete-instance-and-volume.yml
+    - extend-session.yml
+    - send-email.yml
+    - control-instance-from-workflow.yml
+    - create-instance-from-workflow.yml
+    - resume-setup.yml
+    - migrate-volume.yml
+    - create-workshop.yml
+    - approve-workshop.yml
+    - update-renew-label.yml
+  # An alert: every run is an incident (something asked for the admins).
+  alert:
+    - admin-alert.yml
+    - report-dropped-command.yml
+    - on-admin-mention.yml
+  # A sweep: a successful tick is a rollup count; a failed one is an incident.
+  sweep:
+    - automatic-instance-shelving.yml
+    - close-expired-issues.yml
+    - collect-instance-uptime.yml
+    - detect-dormant-workflows.yml
+    - expire-shares.yml
+    - follow-through.yml
+    - guard-issue-close.yml
+    - reconcile-instances.yml
+    - send-renewal-email.yml
+    - test-workshop-deletion.yml
+    - update-request-status-label.yml
+    - update-workshop.yml
+    - workshop-backfill.yml
+
+# The commands a member can type (issue-commands.md and the workshop and course
+# variants). Until PR B records the command as a fact, the harvester reads the
+# job log for `command_name=<name>` (control-instance) or the first of these
+# words after a slash, and falls back to `command_by_workflow`.
+commands:
+  - create
+  - shelve
+  - unshelve
+  - extend
+  - renew
+  - email
+  - delete_instance
+  - delete_all
+  - delete_volume
+  - approve
+  - unapprove
+command_by_workflow:
+  create-instance.yml: /create
+  create-course-instance.yml: /create
+  create-instance-from-workflow.yml: /create
+  create-workshop.yml: /create
+  extend-session.yml: /extend
+  update-renew-label.yml: /renew
+  send-email.yml: /email
+  delete-instance-and-volume.yml: /delete_instance
+
+# A failed run whose failing job or step is one of these is `refused`, not
+# `failure`: the deliberate exit 1 of an authorize step (not approved, does not
+# exist, in flight, maintenance, unauthorized). PR B's `REFUSED reason=` line
+# makes the reason exact; these names are the fallback.
+refusal_jobs:
+  - authorize
+refusal_steps:
+  - "Check authorization"
+  - "Fail if not authorized"
+  - "Check workflow management approval"
+  - "Workflow management not approved (failure)"
+  - "Fail when the instance does not exist"
+  - "Check workshop organizer team membership"
+
+# Runner-side logs shipped in full (F1-F4), each from its last offset. A path
+# that does not exist on a runner is skipped (pickup.log exists on Test only).
+runner_logs:
+  - { name: morphocloud-dispatch, path: ~/morphocloud-dispatch.log }
+  - { name: fip-police, path: ~/fip-police.log }
+  - { name: token-expiry, path: ~/token-expiry.log }
+  - { name: pickup, path: ~/mc-data/pickup.log }
+  - { name: harvest-incidents, path: ~/harvest-incidents.log }
+# The Actions runner service's own logs (F5): only matching lines, from files
+# changed since the last cycle.
+diag_dir: ~/actions-runner/_diag
+diag_match: "ERR|Exception|Unhandled|lost connection|Terminated"
+
+# Outside context (E). Grafana: Jetstream2's public vacancy dashboard; a flavor
+# not listed is `not_tracked` (m3.* are not on the dashboard).
+grafana:
+  url: "https://grafana.jetstream-cloud.org/api/public/dashboards/b39f9f91452949389a4d333c3f451eac/panels/{panel}/query"
+  flavors:
+    g3.medium: { panel: 14, ref: H }
+    g3.large: { panel: 14, ref: A }
+    g3.xl: { panel: 14, ref: B }
+    g4.xl: { panel: 15, ref: B }
+    g4.2xl: { panel: 15, ref: C }
+    g4.4xl: { panel: 15, ref: D }
+    g5.xl: { panel: 16, ref: B }
+    g5.2xl: { panel: 16, ref: C }
+    g5.4xl: { panel: 16, ref: D }
+    m3.3xl: { panel: 13, ref: F }
+    r3.large: { panel: 13, ref: D }
+    r3.xl: { panel: 13, ref: E }
+access_outages:
+  current: "https://operations-api.access-ci.org/wh2/news/v1/affiliation/access-ci.org/current_outages/"
+  past: "https://operations-api.access-ci.org/wh2/news/v1/affiliation/access-ci.org/past_outages/"
+  resource_match: "jetstream" # substring of AffectedResources ResourceID, case-insensitive
+github_status: "https://www.githubstatus.com/api/v2/incidents.json"

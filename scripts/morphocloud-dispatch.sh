@@ -30,10 +30,15 @@ fi
 GH_TOKEN="$(tr -d '\r\n' <"$TOKEN_FILE")"
 export GH_TOKEN
 
+# One uniform line per dispatch, written the moment gh returns, so the incident
+# harvester can tell this clock's runs from a maintainer's hand dispatch
+# (INCIDENT_STORE_PLAN.md, actor_kind rule 1; scripts/check-dispatch-logging.py):
+#   <UTC> DISPATCH <wf> repo=<owner/repo> issue=- by=morphocloud-dispatch.sh result=ok|FAILED <stderr tail>
 for wf in "$@"; do
-  if gh workflow run "$wf" --repo "$REPO" --ref "$REF" >/dev/null 2>&1; then
-    echo "$ts dispatched $wf" >>"$LOG"
+  if err=$(gh workflow run "$wf" --repo "$REPO" --ref "$REF" 2>&1 >/dev/null); then
+    echo "$ts DISPATCH $wf repo=$REPO issue=- by=morphocloud-dispatch.sh result=ok" >>"$LOG"
   else
-    echo "$ts FAILED to dispatch $wf" >>"$LOG"
+    err=$(printf '%s' "$err" | tr '\n' ' ')
+    echo "$ts DISPATCH $wf repo=$REPO issue=- by=morphocloud-dispatch.sh result=FAILED ${err: -200}" >>"$LOG"
   fi
 done
