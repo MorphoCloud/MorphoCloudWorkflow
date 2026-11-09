@@ -653,10 +653,12 @@ def assemble_log(zip_bytes: bytes, failed: dict | None) -> tuple[str, str, str |
                 errors = ERROR_RE.findall(text)
                 if errors:
                     error_line = TS_PREFIX_RE.sub("", errors[-1]).strip()
-        if not job_files and names:  # no per-job file: keep whatever is there
-            for name in sorted(names):
+        if not job_files:  # no per-job file: keep whatever text files there are
+            for name in sorted(n for n in names if n.endswith(".txt")):
                 parts.append(f"===== {name} =====\n")
                 parts.append(zf.read(name).decode("utf-8", "replace"))
+                if not parts[-1].endswith("\n"):
+                    parts.append("\n")
     whole = "".join(parts)
     if error_line is None:
         errors = ERROR_RE.findall(whole)
