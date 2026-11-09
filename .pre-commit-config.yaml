@@ -73,3 +73,13 @@ repos:
         additional_dependencies: [pyyaml]
         pass_filenames: false
         files: ^(\.github/workflows/.*\.ya?ml|scripts/.*\.crontab(\.extra)?|scripts/check-workflow-clock\.py)$
+      # The incident harvester tells automation from a hand dispatch by a
+      # DISPATCH line in a runner-side log (INCIDENT_STORE_PLAN.md, actor_kind
+      # rule 1). Every runner-side `gh workflow run` call site must log one;
+      # see the script's docstring. PR B extends it to the workflows.
+      - id: check-dispatch-logging
+        name: Runner-side dispatch call sites log a DISPATCH line
+        entry: python scripts/check-dispatch-logging.py
+        language: python
+        files: ^scripts/.*\.(sh|py)$
+        exclude: ^scripts/(test_.*\.py|check-dispatch-logging\.py)$

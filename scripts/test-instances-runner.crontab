@@ -13,4 +13,5 @@
 */10 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/morphocloud-dispatch.sh workshop-backfill.yml
 # --- runner-side scripts on the same clock ---
 */5 * * * * OS_CLOUD=BIO240357_IU MORPHOCLOUD_FIP_HOLD=1 MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Test-Instances /home/exouser/venv/bin/python /home/exouser/police-floating-ips.py >> /home/exouser/fip-police.log 2>&1
+*/5 * * * * OS_CLOUD=BIO240357_IU MORPHOCLOUD_SOURCE_REPO=MorphoCloud/Test-Instances MORPHOCLOUD_STORE_REPO=MorphoCloud/Incidents-sandbox /home/exouser/venv/bin/python /home/exouser/harvest-incidents.py >> /home/exouser/harvest-incidents.log 2>&1
 # END morphocloud-dispatcher

@@ -5,9 +5,12 @@ collected and why; this note fixes _how_ Phase 1 is built, in enough detail that
 the code is a transcription of it. The plan's Phase 1 row asks for this note
 before any code, approved by the maintainer.
 
-**Status (2026-11-09):** PR A designed below, **not approved, nothing built.**
-PR B (the job side) and PR C (the portal) get their own sections in this file
-once PR A has shipped, each approved before its code (one thing at a time).
+**Status (2026-11-09):** PR A approved with #401 (merged 2026-11-09) and
+**built** on branch `incident-store-pr-a`; the store repositories, the four PATs
+and the mail secrets exist. Where the code departs from the design below, "As
+built" at the end of the PR A section says so. PR B (the job side) and PR C (the
+portal) get their own sections in this file once PR A has shipped, each approved
+before its code (one thing at a time).
 
 **Priorities, in order (maintainer, 2026-11-08):** robustness (nothing found
 missing from the record weeks later), simplicity (no machinery the record does
@@ -88,8 +91,9 @@ writes nothing. `--backfill <days>` is described below.
 */5 * * * * OS_CLOUD={cloud} MORPHOCLOUD_SOURCE_REPO={repo} MORPHOCLOUD_STORE_REPO={store} /home/exouser/venv/bin/python /home/exouser/harvest-incidents.py >> /home/exouser/harvest-incidents.log 2>&1
 ```
 
-plus `~/.config/morphocloud/harvest.pat` (the PAT, mode 600), the store checkout
-at `~/incidents-store`, and the three data files beside the script
+plus the two PATs in `~/.config/morphocloud/` (`harvest-source.pat`,
+`harvest-store.pat`, mode 600; see "Credentials"), the store checkout at
+`~/incidents-store`, and the three data files beside the script
 (`incident-signatures.yml`, `incident-sources.yml`, `redact.sed`).
 
 **`incident-sources.yml`** (per source repository): the instance-name prefix
@@ -288,26 +292,30 @@ is a `facts.sh` dispatch record.
   present exactly when the store is set and no other line changed. Both
   committed crontabs are re-rendered in the PR.
 - `scripts/install-harvester.sh <user@host> [--outside-block]`: copies the
-  script, the three data files and the wrapper; copies the PAT from
-  `MWF_HARVEST_TOKEN` (default `~/.ssh/GH_MorphoCloud-incidents-harvester`) to
-  `~/.config/morphocloud/harvest.pat`; clones the store into `~/incidents-store`
-  if absent, with the token passed through a credential helper so it is never
-  written into `.git/config`; verifies the token authenticates and prints its
-  expiry. With `--outside-block` (production before the merge) it appends the
-  crontab line after the managed block if no `harvest-incidents` line exists.
-  Without the flag it installs files only and leaves the crontab to the restore
-  script.
+  script, the three data files and the wrapper; copies the two PATs from
+  `MWF_HARVEST_SOURCE_TOKEN` and `MWF_HARVEST_STORE_TOKEN` (defaults
+  `~/.ssh/GH_MorphoCloud-incidents-source` and `…-store`) to
+  `~/.config/morphocloud/harvest-source.pat` and `harvest-store.pat`; clones the
+  store (`MWF_STORE_REPO`) into `~/incidents-store` if absent, with the token
+  read by a credential helper from the `.pat` file so it is never written into
+  `.git/config`, and sets the clone's identity to
+  `MorphoCloud harvester <no-reply@morphocloud.org>`; verifies both tokens
+  authenticate and prints their expiry. With `--outside-block` (production
+  before the merge) it appends the crontab line after the managed block if no
+  `harvest-incidents` line exists (`MWF_SOURCE_REPO`, `MWF_OS_CLOUD`). Without
+  the flag it installs files only and leaves the crontab to the restore script.
 - `restore-instances-dispatcher.sh`: calls `install-harvester.sh` (files and
-  token); if `MWF_HARVEST_TOKEN` is missing it prints a warning, strips the
+  tokens); if either harvester token is missing it prints a warning, strips the
   `harvest-incidents` line from the crontab it installs, and installs everything
   else (the plan: a missing harvester key never blocks the clock). Its "kept
   outside the block" filter gains `harvest-incidents`, so the hand-added
   production line is dropped at the merge and cannot double-fire.
-- `check-dispatch-tokens.sh`: one more `check` line for `harvest.pat`.
+- `check-dispatch-tokens.sh`: two more `check` lines, `harvest-source.pat` and
+  `harvest-store.pat`.
 - `INSTANCES_RUNNER_REBUILD.md`: the file table gains `harvest-incidents.py`
-  - data files (this repo), `harvest.pat` (backup
-    `~/.ssh/GH_MorphoCloud-incidents-harvester`), `~/incidents-store`
-    (re-clone), and later PR B's keys.
+  - data files (this repo), the two `.pat` files (backups
+    `~/.ssh/GH_MorphoCloud-incidents-{source,store}`), `~/incidents-store`
+    (re-clone), `harvest-local.json` (a cache), and later PR B's keys.
 
 ### The store repositories
 
@@ -336,16 +344,25 @@ The sandbox is identical and is deleted after Phase 1 (plan, decision 1).
 
 ### Credentials PR A needs (maintainer creates; values never in git)
 
-| Credential                                       | Permissions                                                                                               | Where                                                                                        |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `GH_MorphoCloud-incidents-harvester` (prod)      | fine-grained PAT, 1 year: `Instances` Actions:read, Issues:read; `Incidents` Contents:write, Issues:write | `~/.ssh/` backup on the maintainer's machine; `harvest.pat` on the production acquire runner |
-| `GH_MorphoCloud-test-incidents-harvester`        | same, on `Test-Instances` and `Incidents-sandbox`                                                         | `~/.ssh/`; `harvest.pat` on the Test acquire runner                                          |
-| `MAIL_USERNAME`, `MAIL_PASSWORD`, `ADMIN_EMAILS` | the same values `admin-alert.yml` uses                                                                    | secrets and variable on both store repositories                                              |
-| HMAC key (`hmac.key`)                            | 32 random bytes                                                                                           | PR B's concern; PR A fails closed without it (`[email]`)                                     |
+A fine-grained PAT applies **one** permission set to every repository it is
+granted, so "one PAT per environment" (the first draft of this table) is not
+possible: the source needs Actions:read + Issues:read and the store
+Contents:write + Issues:write. Two tokens per environment, created and verified
+2026-11-09 (each sees only its one repository; the source tokens cannot push;
+all expire 2027-11-10):
+
+| Credential                                       | Permissions                                                     | Where                                                                                     |
+| ------------------------------------------------ | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `GH_MorphoCloud-incidents-source` (prod)         | fine-grained PAT, 1 year: `Instances` Actions:read, Issues:read | `~/.ssh/` backup on the maintainer's machine; `harvest-source.pat` on the acquire runner  |
+| `GH_MorphoCloud-incidents-store` (prod)          | `Incidents` Contents:read/write, Issues:read/write              | `~/.ssh/`; `harvest-store.pat` on the acquire runner (read by git's credential helper)    |
+| `GH_MorphoCloud-test-incidents-source`           | same as the prod source, on `Test-Instances`                    | `~/.ssh/`; `harvest-source.pat` on the Test acquire runner                                |
+| `GH_MorphoCloud-test-incidents-store`            | same as the prod store, on `Incidents-sandbox`                  | `~/.ssh/`; `harvest-store.pat` on the Test acquire runner                                 |
+| `MAIL_USERNAME`, `MAIL_PASSWORD`, `ADMIN_EMAILS` | the same values `admin-alert.yml` uses (set 2026-11-09)         | secrets and variable on both store repositories; verified with one sandbox watchdog email |
+| HMAC key (`hmac.key`)                            | 32 random bytes                                                 | PR B's concern; PR A fails closed without it (`[email]`)                                  |
 
 Issues:write on the store is unused until Phase 2 (verdict issues) but is
-granted now so the PAT is not re-issued in two weeks. The PAT has no Actions
-write anywhere: it cannot start a workflow.
+granted now so the PAT is not re-issued in two weeks. No token has Actions write
+anywhere: the harvester cannot start a workflow.
 
 ### Test plan on Test-Instances (as amm554; a test plan the maintainer approves first)
 
@@ -411,11 +428,86 @@ crontab (harvester line inside the block) and drops the hand-added line.
 ### Decisions this note asks the maintainer to confirm
 
 1. The two store repositories are created now (PR A cannot be tested without the
-   sandbox).
-2. The two harvester PATs are created by the maintainer as specified.
+   sandbox). _Done 2026-11-09._
+2. The two harvester PATs are created by the maintainer as specified. _Done
+   2026-11-09, as four (see "Credentials")._
 3. The test plan T1–T14 as written, run as amm554 where a member acts.
 4. The production install is a **separate go-ahead**, asked for after PR A's
    exit criteria are met, not implied by approving this note.
+
+### As built (where the code departs from the text above, and why)
+
+- **The GitHub API is called with `urllib`, not the `gh` CLI.** The harvester
+  needs the response headers (rate-limit budget for the backfill's pacing, the
+  token's expiry) and the redirect of the log download, which are awkward
+  through `gh api`; stdlib `urllib` gives them directly and removes one process
+  per call. `gh` is still used by the installer to print each token's expiry.
+- **`incident-signatures.yml` keys the field as `field`, not `on`:** PyYAML
+  reads an unquoted `on` as the boolean `True` (the same trap
+  `check-workflow-clock.py` documents for workflow files).
+- **Runner-side state is one file, `~/.config/morphocloud/harvest-local.json`**
+  (the watch list, the log offsets, the hourly lookback stamp, the `_diag`
+  high-water mark), not `harvest-offsets.json`. None of it is evidence: lost on
+  a rebuild, the in-flight listings re-seed the watch list and the hourly
+  lookback re-records anything missed.
+- **Dedupe lives in the store, not runner-side.** Each day's rollup file
+  (`rollups/YYYY/MM/DD/<repo>.json`) carries
+  `recorded: ["<run_id>-<attempt>", …]` beside the counts (about 13 KB a day on
+  production). The lookback and a rebuilt runner both ask the store whether a
+  run is recorded, so a lost local state can never double-count a rollup or
+  duplicate an outcome line.
+- **Skipped runs are counts only, and `dropped` is read from the reporting
+  step.** Every `issue_comment` fires every command workflow, and all but one
+  skip; the first dry run showed those skipped runs would have earned outcome
+  lines and full logs (about 450 in 48 hours on Test). Now a skipped run of any
+  kind is a rollup count (A1), never a detail fetch, an outcome line or an
+  incident (`on-admin-mention` without a mention, `report-dropped-command`
+  without a cancellation). `report-dropped-command` succeeds whether or not it
+  found a dropped command, so its run is `dropped` only when its "Tell the user
+  the command was dropped" step ran (`dropped_report` in
+  `incident-sources.yml`); otherwise it is a plain success and no incident.
+- **Refusals** are recognized by a failed job named in `refusal_jobs`
+  (`authorize`, the job every `report-command-outcome` caller fails
+  deliberately) as well as by the step names in `refusal_steps`, and by PR B's
+  `REFUSED reason=` line when present.
+- **Labels (`markers`)**: for an incident they are reconstructed from the
+  issue's timeline at the run's `created_at` (`markers_source: timeline`); for a
+  plain outcome line they are the issue's labels at harvest time
+  (`markers_source: current`), one issue read per distinct issue per cycle
+  rather than a timeline read per command run.
+- **The instance name** comes from the log where it appears
+  (`name_source: log`); when only the issue number is known the name is derived
+  from the source's prefix (`name_source: derived`) so the late snapshot can
+  still be taken.
+- **The harvester's own log is not shipped** (a first draft did): every cycle
+  writes a line, so shipping it would make every cycle a commit and silence the
+  watchdog's "quiet store" signal. A cycle's failure reaches the store as
+  `last_error` in `state/harvester.json` (one bad run is contained to that run,
+  counted in `runs_failed`, and retried by the next cycle or the hourly
+  lookback); the traceback stays in `~/harvest-incidents.log` on the runner.
+- **Order of writes**: a run's files are written first and the rollup's
+  `recorded` mark last, so a failure halfway leaves the run unrecorded and
+  retried; rollups are flushed once per cycle (or per backfill day), not once
+  per run. A failed `git pull --rebase` is aborted at once so no cycle finds a
+  rebase in progress; the commit stays local for the next push.
+- **`_diag` lines are shipped once**: per-file offsets (local and, over SSH, for
+  the control runner) rather than "files modified since", which would re-ship
+  every matching line of the active runner log each cycle; the remote offsets
+  advance only after a complete read.
+- **`MORPHOCLOUD_CFG_DIR`** overrides `~/.config/morphocloud` so a `--dry-run`
+  can be made from a laptop with a scratch token file (used for the first dry
+  run against Test-Instances on 2026-11-09: no cursor, so the 48-hour lookback
+  ran: 2,946 runs, 150 would-be incidents, about ten minutes, nothing written).
+- **Data files** are read beside the script on a runner and from the repository
+  root in a checkout, so the same script runs in both places.
+- **Tests**: `scripts/test_harvest_incidents.py` (redaction fixture T11, the
+  wrapper T12, the installer's crontab line equals the renderer's, signatures,
+  refusals, log assembly, identification, the five actor rules, context feeds,
+  labels at a moment, store dedupe and dry run, log offsets and rotation),
+  `scripts/test_check_dispatch_logging.py` (one shell site, one multi-line
+  Python site with the line and one without, the 30-line window, and the
+  repository's own scripts), `scripts/test_check_workflow_clock.py` (both
+  targets rendered with and without a store).
 
 ## PR B — the job side
 

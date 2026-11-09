@@ -13,6 +13,7 @@
 */10 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh workshop-backfill.yml
 # --- runner-side scripts on the same clock ---
 */5 * * * * OS_CLOUD=BIO180006_IU MORPHOCLOUD_FIP_HOLD=5 MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/venv/bin/python /home/exouser/police-floating-ips.py >> /home/exouser/fip-police.log 2>&1
+*/5 * * * * OS_CLOUD=BIO180006_IU MORPHOCLOUD_SOURCE_REPO=MorphoCloud/Instances MORPHOCLOUD_STORE_REPO=MorphoCloud/Incidents /home/exouser/venv/bin/python /home/exouser/harvest-incidents.py >> /home/exouser/harvest-incidents.log 2>&1
 # --- appended verbatim from instances-runner.crontab.extra ---
 # Monthly usage report -> MorphoCloudAnalytics (separate repo + dedicated token)
 0 0 1 * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/MorphoCloudAnalytics MORPHOCLOUD_DISPATCH_TOKEN_FILE=/home/exouser/.config/morphocloud/analytics-dispatch.pat /home/exouser/morphocloud-dispatch.sh monthly-usage.yml

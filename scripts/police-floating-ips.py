@@ -339,6 +339,16 @@ def save_state(state: dict) -> None:
 ISSUE_RE = re.compile(r"(^|[_-])instance-([0-9]+)$")  # the same boundary as INSTANCE_RE
 
 
+def dispatch_result(r: subprocess.CompletedProcess) -> str:
+    """The result field of the uniform runner-side DISPATCH line
+    (INCIDENT_STORE_PLAN.md, actor_kind rule 1), logged the moment
+    `gh workflow run` returns so the incident harvester joins the run to it;
+    scripts/check-dispatch-logging.py requires the line at every call site."""
+    if r.returncode == 0:
+        return "ok"
+    return "FAILED " + " ".join((r.stderr or "").split())[-200:]
+
+
 def note_issue(server_name: str, note: str) -> None:
     """Decision 35: an automatic change to a member's instance is said on
     the member's issue, through admin-alert.yml (the runner cannot post).
@@ -373,6 +383,9 @@ def note_issue(server_name: str, note: str) -> None:
         text=True,
         timeout=60,
         env={**os.environ, "GH_TOKEN": token},
+    )
+    log(
+        f"DISPATCH admin-alert.yml repo={REPO} issue={m.group(2)} by=police-floating-ips.py result={dispatch_result(r)}"
     )
     if r.returncode != 0:
         log(
@@ -411,6 +424,9 @@ def send_alert(subject: str, body: str) -> bool:
         text=True,
         timeout=60,
         env={**os.environ, "GH_TOKEN": token},
+    )
+    log(
+        f"DISPATCH admin-alert.yml repo={REPO} issue=- by=police-floating-ips.py result={dispatch_result(r)}"
     )
     if r.returncode != 0:
         log(f"ALERT could not be dispatched ({r.stderr.strip()[-200:]}): {subject}")

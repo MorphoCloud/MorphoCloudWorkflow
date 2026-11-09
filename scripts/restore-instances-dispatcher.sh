@@ -19,6 +19,12 @@
 #                        (default ~/.ssh/GH_MorphoCloud-workflow-dispatcher)
 #   MWF_ANALYTICS_TOKEN  PAT for the MorphoCloudAnalytics lines; set to "" to skip
 #                        it and check-dispatch-tokens.sh (Test-Instances has neither)
+#   MWF_HARVEST_SOURCE_TOKEN, MWF_HARVEST_STORE_TOKEN, MWF_SOURCE_REPO, MWF_STORE_REPO
+#                        passed through to scripts/install-harvester.sh (the incident
+#                        harvester, INCIDENT_STORE_PLAN.md). A MISSING harvester token
+#                        never blocks the restore: a warning is printed, the harvester
+#                        line is left out of the installed crontab, everything else
+#                        is installed; the store's watchdog then reports it stopped.
 set -euo pipefail
 
 RUNNER="${1:-exouser@149.165.152.104}"
@@ -26,6 +32,8 @@ MWF="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CRONTAB="${MWF_CRONTAB:-$MWF/scripts/instances-runner.crontab}"
 WF_TOKEN="${MWF_WF_TOKEN:-$HOME/.ssh/GH_MorphoCloud-workflow-dispatcher}"      # -> dispatch.pat
 AN_TOKEN="${MWF_ANALYTICS_TOKEN-$HOME/.ssh/GH_MorphoCloud-analytics-dispatcher}" # -> analytics-dispatch.pat
+HV_SRC_TOKEN="${MWF_HARVEST_SOURCE_TOKEN:-$HOME/.ssh/GH_MorphoCloud-incidents-source}"
+HV_STORE_TOKEN="${MWF_HARVEST_STORE_TOKEN:-$HOME/.ssh/GH_MorphoCloud-incidents-store}"
 
 echo ">> Target ACQUIRE runner: $RUNNER"
 echo "   crontab: $CRONTAB"
@@ -52,11 +60,26 @@ else
   python3 "$MWF/scripts/check-workflow-clock.py" check || check_failed
 fi
 
+# The harvester: files and tokens through its own installer; the crontab line
+# is inside the rendered block. Without both tokens the line is stripped from
+# the crontab installed below and the clock is restored without it.
+HARVEST=1
+if [[ ! -s "$HV_SRC_TOKEN" || ! -s "$HV_STORE_TOKEN" ]]; then
+  HARVEST=0
+  echo "WARNING: incident-harvester token(s) missing ($HV_SRC_TOKEN, $HV_STORE_TOKEN):"
+  echo "         installing the clock WITHOUT the harvester line. The store watchdog will"
+  echo "         report the harvester as stopped; rerun with the tokens to add it."
+fi
+
 echo ">> Copying scripts, tokens, and crontab (values not printed) ..."
 ssh "$RUNNER" 'mkdir -p ~/.config/morphocloud && chmod 700 ~/.config/morphocloud'
 scp "$MWF/scripts/morphocloud-dispatch.sh" "$RUNNER:morphocloud-dispatch.sh"
 scp "$MWF/scripts/police-floating-ips.py" "$RUNNER:police-floating-ips.py"
-scp "$CRONTAB" "$RUNNER:instances-runner.crontab"
+if (( HARVEST )); then
+  scp "$CRONTAB" "$RUNNER:instances-runner.crontab"
+else
+  grep -v "harvest-incidents" "$CRONTAB" | ssh "$RUNNER" 'cat > ~/instances-runner.crontab'
+fi
 scp "$WF_TOKEN" "$RUNNER:.config/morphocloud/dispatch.pat"
 if [[ -n "$AN_TOKEN" ]]; then
   scp "$MWF/scripts/check-dispatch-tokens.sh" "$RUNNER:check-dispatch-tokens.sh"
@@ -67,7 +90,9 @@ echo ">> Setting permissions and installing the crontab's managed block ..."
 # Only the block between the BEGIN/END markers is ours. Everything else in the
 # runner's crontab is kept (the Test runner's portal pickup line lives there — an
 # earlier version of this script replaced the whole crontab and silenced it).
-# Dispatcher lines outside the block (pre-marker installs) are dropped too.
+# Dispatcher lines outside the block (pre-marker installs) are dropped too, and
+# so is a hand-added harvest-incidents line (production before the 2026-11-23
+# merge), so it cannot double-fire beside the rendered one.
 ssh "$RUNNER" '
   set -e
   chmod +x ~/morphocloud-dispatch.sh
@@ -75,12 +100,19 @@ ssh "$RUNNER" '
   chmod 600 ~/.config/morphocloud/*.pat
   kept=$(crontab -l 2>/dev/null \
     | sed "/^# BEGIN morphocloud-dispatcher/,/^# END morphocloud-dispatcher/d" \
-    | grep -vE "morphocloud-dispatch\.sh|check-dispatch-tokens\.sh" || true)
+    | grep -vE "morphocloud-dispatch\.sh|check-dispatch-tokens\.sh|harvest-incidents" || true)
   { [[ -n "$kept" ]] && printf "%s\n" "$kept"; cat ~/instances-runner.crontab; } | crontab -
   echo "kept outside the block: $(printf "%s\n" "$kept" | grep -cvE "^\s*(#|$)") line(s)"
   printf "%s\n" "$kept" | grep -vE "^\s*(#|$)" | cut -c1-100 | sed "s/^/    /"
   echo "dispatcher lines: $(crontab -l | grep -cE "morphocloud-dispatch|check-dispatch")"
+  echo "harvester lines: $(crontab -l | grep -c harvest-incidents || true)"
 '
+
+if (( HARVEST )); then
+  echo ">> Installing the incident harvester (files, tokens, store checkout) ..."
+  MWF_HARVEST_SOURCE_TOKEN="$HV_SRC_TOKEN" MWF_HARVEST_STORE_TOKEN="$HV_STORE_TOKEN" \
+    "$MWF/scripts/install-harvester.sh" "$RUNNER"
+fi
 
 echo ">> Verifying tokens authenticate (expiry header) ..."
 ssh "$RUNNER" '
@@ -90,4 +122,4 @@ ssh "$RUNNER" '
     echo "  $(basename "$f") -> ${exp:-FAILED (token invalid or gh missing)}"
   done'
 
-echo ">> Done. Watch ~/morphocloud-dispatch.log on the runner for 'dispatched' lines."
+echo ">> Done. Watch ~/morphocloud-dispatch.log on the runner for 'DISPATCH ... result=ok' lines."
