@@ -786,20 +786,28 @@ def actor_kind(  # noqa: PLR0913 — the plan's five rules need these five input
     """The plan's five rules, in order. Returns (kind, rule)."""
     actor = (run.get("actor") or {}).get("login") or ""
     trigger = (run.get("triggering_actor") or {}).get("login") or ""
-    if run.get("event") == "workflow_dispatch" and dispatches.match(
+    # GitHub's own scheduler and a workflow_run follow-up are automation by
+    # definition; GitHub credits such a run to whoever last committed the
+    # workflow file (jcfr on Test), who would otherwise read as a member.
+    if run.get("event") in ("schedule", "workflow_run"):
+        verdict = ("automation", f"event:{run['event']}")
+    elif run.get("event") == "workflow_dispatch" and dispatches.match(
         workflow_file(run), repo, run.get("created_at") or "", issue
     ):
-        return "automation", "dispatch-line"
-    if actor in cfg.bots or trigger in cfg.bots:
-        return "automation", "bot"
-    if actor in cfg.test_accounts or trigger in cfg.test_accounts:
-        return "test", "test-account"
-    if actor in cfg.admins or trigger in cfg.admins:
+        verdict = ("automation", "dispatch-line")
+    elif actor in cfg.bots or trigger in cfg.bots:
+        verdict = ("automation", "bot")
+    elif actor in cfg.test_accounts or trigger in cfg.test_accounts:
+        verdict = ("test", "test-account")
+    elif actor in cfg.admins or trigger in cfg.admins:
         login = trigger or actor
         if issue_author and login == issue_author:
-            return "member", "admin-own-issue"
-        return "admin", "admin"
-    return "member", "default"
+            verdict = ("member", "admin-own-issue")
+        else:
+            verdict = ("admin", "admin")
+    else:
+        verdict = ("member", "default")
+    return verdict
 
 
 # --- outside context (E) -----------------------------------------------------

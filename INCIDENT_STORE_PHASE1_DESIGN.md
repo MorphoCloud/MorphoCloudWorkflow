@@ -466,6 +466,19 @@ crontab (harvester line inside the block) and drops the hand-added line.
   found a dropped command, so its run is `dropped` only when its "Tell the user
   the command was dropped" step ran (`dropped_report` in
   `incident-sources.yml`); otherwise it is a plain success and no incident.
+- **`actor_kind` has a rule 0**: a run whose event is `schedule` (GitHub's own
+  scheduler, the backstop) or `workflow_run` (a follow-up such as
+  `report-dropped-command`) is `automation` whoever the actor is. GitHub credits
+  such a run to the last person who committed the workflow file, who is not an
+  admin on Test (jcfr), so the first backfill read August's scheduled ticks as
+  `member`. Found and fixed on the day of the Test install; the sandbox was
+  reset and backfilled again.
+- **Backfill limitation, stated**: the runner's dispatch log starts when the
+  dispatcher was (re)installed (2026-11-03 on Test), so a crontab-dispatched run
+  older than that has no `DISPATCH` line to join and reads as `admin` (the
+  dispatcher token's owner). The record keeps `actor`, `event` and `created_at`,
+  so PR B's `--reclassify` can revisit them; the production dispatch log reaches
+  further back.
 - **Refusals** are recognized by a failed job named in `refusal_jobs`
   (`authorize`, the job every `report-command-outcome` caller fails
   deliberately) as well as by the step names in `refusal_steps`, and by PR B's

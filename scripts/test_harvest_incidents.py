@@ -446,6 +446,21 @@ def test_rule1_legacy_dispatched_line_and_issue_match(cfg, tmp_path):
     )
 
 
+def test_schedule_and_workflow_run_events_are_automation(cfg, tmp_path):
+    d = dispatch_log(tmp_path, [])
+    # GitHub credits a schedule run to the workflow file's last committer
+    sched = run_of("jcfr", event="schedule", wf="collect-instance-uptime.yml")
+    assert hv.actor_kind(cfg, sched, "r", None, None, d) == (
+        "automation",
+        "event:schedule",
+    )
+    follow = run_of("Sarah-G-88", event="workflow_run", wf="report-dropped-command.yml")
+    assert hv.actor_kind(cfg, follow, "r", None, None, d) == (
+        "automation",
+        "event:workflow_run",
+    )
+
+
 def test_rules_2_to_5(cfg, tmp_path):
     d = dispatch_log(tmp_path, [])
     assert hv.actor_kind(cfg, run_of("github-actions[bot]"), "r", None, None, d) == (
