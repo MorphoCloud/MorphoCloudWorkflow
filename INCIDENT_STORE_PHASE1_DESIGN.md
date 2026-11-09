@@ -474,7 +474,9 @@ crontab (harvester line inside the block) and drops the hand-added line.
   such a run to the last person who committed the workflow file, who is not an
   admin on Test (jcfr), so the first backfill read August's scheduled ticks as
   `member`. Found and fixed on the day of the Test install; the sandbox was
-  reset and backfilled again.
+  reset and backfilled again. Rule 0 applies to the first attempt only: a rerun
+  keeps the event but its `triggering_actor` is the person who clicked, and the
+  five rules below decide it.
 - **Backfill limitation, stated**: the runner's dispatch log starts when the
   dispatcher was (re)installed (2026-11-03 on Test), so a crontab-dispatched run
   older than that has no `DISPATCH` line to join and reads as `admin` (the
