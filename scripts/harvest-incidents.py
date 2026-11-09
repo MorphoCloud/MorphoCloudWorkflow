@@ -754,6 +754,7 @@ class Dispatches:
         self.paths = paths
         self.by_wf: dict[str, list[tuple[float, str | None, str | None]]] = {}
         self.loaded_at = 0.0
+        self.refreshed_for: set[tuple[str, float]] = set()  # one re-read per run
         self.refresh()
 
     def refresh(self) -> None:
@@ -792,7 +793,9 @@ class Dispatches:
         if (
             not self._match(workflow, repo, t, issue)
             and t > self.loaded_at - DISPATCH_JOIN
+            and (workflow, t) not in self.refreshed_for
         ):
+            self.refreshed_for.add((workflow, t))  # a human dispatch never matches
             self.refresh()
         return self._match(workflow, repo, t, issue)
 

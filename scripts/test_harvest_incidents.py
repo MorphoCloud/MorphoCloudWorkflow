@@ -837,13 +837,22 @@ def test_dispatch_index_refreshes_for_a_run_newer_than_the_read(cfg, tmp_path):
     d = hv.Dispatches([logf])
     now = hv.to_iso(d.loaded_at + 1)
     run = run_of("muratmaga", created=now)
-    assert hv.actor_kind(cfg, run, "MorphoCloud/Instances", None, None, d)[0] == "admin"
     # the dispatcher writes its line a moment after the harvester read the log
     logf.write_text(f"{now} dispatched follow-through.yml\n")
     assert hv.actor_kind(cfg, run, "MorphoCloud/Instances", None, None, d) == (
         "automation",
         "dispatch-line",
     )
+    # a human dispatch in the same window re-reads the logs once, not on every miss
+    human = run_of("muratmaga", wf="reconcile-instances.yml", created=now)
+    assert (
+        hv.actor_kind(cfg, human, "MorphoCloud/Instances", None, None, d)[0] == "admin"
+    )
+    loaded = d.loaded_at
+    assert (
+        hv.actor_kind(cfg, human, "MorphoCloud/Instances", None, None, d)[0] == "admin"
+    )
+    assert d.loaded_at == loaded
 
 
 def test_too_fresh_runs_wait_for_the_next_cycle():
