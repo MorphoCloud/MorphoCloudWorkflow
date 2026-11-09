@@ -1619,7 +1619,7 @@ class Harvester:
         if size >= DIAG_DAY_CAP:
             return
         text, _ = self.redactor.text("".join(lines))
-        if size + len(text) > DIAG_DAY_CAP:
+        if size + len(text.encode("utf-8", "replace")) > DIAG_DAY_CAP:
             text += (
                 f"# capped: {DIAG_DAY_CAP} bytes for today; later lines are dropped\n"
             )
