@@ -1149,6 +1149,41 @@ no model involved. The prompt asks for these, in order:
 
 Output: `reports/<ISO week>.md` and one summary email.
 
+## Use case recorded 2026-11-09: a platform-wide outage notice
+
+Asked for by the maintainer after the Jetstream2 storage failure of 2026-11-09
+(official notice: "Jetstream2 is experiencing storage failures and is currently
+unavailable"). That day the users were told by hand, two hours in, from the
+maintainer's laptop (the portal and the join app were themselves down). The
+agent should do this, under these rules:
+
+- **Detect** a platform-wide outage, Jetstream2 or GitHub, not a MorphoCloud
+  bug. Never from one signal. The 2026-11-09 pattern: every self-hosted runner
+  offline to GitHub at once (production runners and the Test runner, three VMs);
+  the dispatcher stopped creating runs; the store heartbeat went stale; SSH to
+  several floating IPs timed out while GitHub itself answered; Nova later showed
+  every running VM `PAUSED` (control plane back, VMs not). A GitHub outage
+  inverts the picture: runners online, githubstatus.com reports an incident, our
+  API calls fail. A single dead runner, a dead harvester with runners online, or
+  a stale store with runs still completing is **our** problem and must never
+  produce a users' notice.
+- **Corroborate** with the outside feeds the harvester already reads (ACCESS
+  current outages, githubstatus.com) and the Jetstream2 status page, and say in
+  the record which signals agreed. The ACCESS feed had nothing posted an hour
+  into the 2026-11-09 outage, so its silence is not evidence of health.
+- **Wait** one to two hours of sustained signals before any email: brief blips
+  recover on their own and a notice for them costs trust.
+- **Act**: email every verified user (the join app's recipient rule, from the
+  intake backup snapshot on GitHub when the portal is down; batches of eight
+  through Dynadot) with the platform's own words, what is unreachable, that no
+  action is needed and commands should not be re-sent, and a follow-up when
+  service returns. Then write the incident like any other, with the signals, the
+  timeline and the notice as evidence.
+- **Baseline first**, like every other playbook: record-only until the
+  maintainer has seen it fire correctly on real outages, then the email.
+  Unpausing or restarting VMs after such an event is a separate decision and
+  stays with the maintainer.
+
 ## The agent among the other actors
 
 The agent's actions go through the same dispatch and lock as every other
