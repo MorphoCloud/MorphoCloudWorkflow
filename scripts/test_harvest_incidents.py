@@ -712,21 +712,61 @@ def test_feeds_empty_is_not_unavailable(cfg, monkeypatch):
     assert hv.github_status_context(feeds.github(), 0, 1)["status"] == "operational"
 
 
-def test_diag_new_lines_ships_each_line_once(tmp_path):
+def test_diag_new_lines_primes_then_ships_each_line_once(tmp_path):
     d = tmp_path / "_diag"
     d.mkdir()
     f = d / "Runner_1.log"
     f.write_text("INFO ok\nERR one\n")
     offsets: dict = {}
     pat = re.compile("ERR|Exception")
-    assert hv.diag_new_lines(d, offsets, pat) == ["# Runner_1.log\n", "ERR one\n"]
+    # first cycle: history is recorded, not shipped
+    assert hv.diag_new_lines(d, offsets, pat) == []
+    assert offsets == {"Runner_1.log": f.stat().st_size}
     assert hv.diag_new_lines(d, offsets, pat) == []  # touched, nothing new
     with f.open("a") as fh:
         fh.write("INFO more\nException two\npartial")
     assert hv.diag_new_lines(d, offsets, pat) == ["# Runner_1.log\n", "Exception two\n"]
+    (d / "Worker_2.log").write_text("ERR new file\n")  # born after priming: from 0
+    assert hv.diag_new_lines(d, offsets, pat) == ["# Worker_2.log\n", "ERR new file\n"]
     f.unlink()
+    (d / "Worker_2.log").unlink()
     assert hv.diag_new_lines(d, offsets, pat) == []
     assert offsets == {}
+
+
+def test_diag_match_is_the_runners_err_level_only():
+    sources = hv.yaml.safe_load(
+        (hv.data_dir() / "incident-sources.yml").read_text("utf-8")
+    )
+    pat = re.compile(sources["diag_match"])
+    assert pat.search(
+        "[2026-11-09 04:50:49Z ERR  GitHubActionsService] GET request failed"
+    )
+    for noise in (
+        "[2026-11-09 16:50:36Z INFO ProcessInvokerWrapper] STDOUT/STDERR stream read finished.",
+        " ---> System.Net.Sockets.SocketException (125): Operation canceled",
+        "   at System.Net.Sockets.Socket.AwaitableSocketAsyncEventArgs.ThrowException(SocketError e)",
+        '                "lit": "BASELINE_ERROR_REQS"',
+        "[2026-11-09 04:50:49Z WARN GitHubActionsService] slow",
+    ):
+        assert not pat.search(noise), noise
+
+
+def test_ship_diag_caps_a_day_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(hv, "DIAG_DAY_CAP", 40)
+    h = hv.Harvester.__new__(hv.Harvester)
+    h.store = hv.Store(tmp_path / "store", "instances", dry_run=False)
+    h.redactor = SimpleNamespace(text=lambda t: (t, 0))
+    rel = "runner/2026/11/09/host/diag.log"
+    h.ship_diag(rel, ["# A.log\n", "ERR one\n"])  # 16 bytes, under the cap
+    h.ship_diag(rel, ["# B.log\n", "ERR two is longer than the rest\n"])  # crosses it
+    h.ship_diag(rel, ["# C.log\n", "ERR three\n"])  # dropped
+    text = (tmp_path / "store" / rel).read_text()
+    assert text.startswith(
+        "# A.log\nERR one\n# B.log\nERR two is longer than the rest\n"
+    )
+    assert text.count("# capped:") == 1
+    assert "ERR three" not in text
 
 
 def test_safe_record_contains_one_bad_run(monkeypatch):
@@ -803,6 +843,33 @@ def test_remote_diag_parses_listing_and_forgets_rotated_files(tmp_path, monkeypa
     }
     shipped = (tmp_path / "store/runner/2026/11/09/control-host/diag.log").read_text()
     assert shipped == "# Worker_1.log\nERR two\n"
+
+
+def test_remote_diag_first_sight_primes_without_shipping(tmp_path, monkeypatch):
+    h = hv.Harvester.__new__(hv.Harvester)
+    h.cfg = hv.Config({"diag_match": "ERR"}, {})
+    h.store = hv.Store(tmp_path / "store", "instances", dry_run=False)
+    h.local = hv.Local(tmp_path / "local.json", dry_run=False)
+    h.redactor = SimpleNamespace(text=lambda t: (t, 0))
+    sent: dict = {}
+
+    def fake_run(*_a, **kw):
+        sent["script"] = kw["input"]
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="control-host\n==FILE Runner_1.log 900\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(hv.subprocess, "run", fake_run)
+    assert h.remote_diag("exouser@control", "2026/11/09") == "ok"
+    assert sent["script"].startswith("prime=1\n")
+    assert h.local.data["diag_remote_offsets"] == {"Runner_1.log": 900}
+    assert not (tmp_path / "store/runner/2026/11/09/control-host/diag.log").exists()
+    # with offsets in hand the script ships
+    h.remote_diag("exouser@control", "2026/11/09")
+    assert sent["script"].startswith("prime=\n")
 
 
 def test_assemble_log_empty_archive_means_no_log():

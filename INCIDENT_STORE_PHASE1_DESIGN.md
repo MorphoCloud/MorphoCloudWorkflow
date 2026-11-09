@@ -183,11 +183,13 @@ workflow is visible without being lost.
    exists) is appended to `runner/YYYY/MM/DD/<host>/<name>.log`, plain text, one
    file per day per log. Offsets live runner-side in
    `~/.config/morphocloud/harvest-offsets.json`; a file shorter than its offset
-   starts over at 0 (rotation). The Actions runner's `_diag` directory: only
-   lines matching `ERR|Exception|Unhandled|lost connection|Terminated`, from the
-   files changed since the last cycle, on runner-1 in place; the second runner
-   over SSH (`exouser@<control>`, the runner's own key) is attempted when
-   `incident-sources.yml` names a control host and recorded as
+   starts over at 0 (rotation). The Actions runner's `_diag` directory: only the
+   runner's own ERR-level lines (`^\[\S+ \S+ ERR `), from the files changed
+   since the last cycle, capped at 2 MB per day (`DIAG_DAY_CAP`, one marker line
+   when crossed); the first cycle on a runner records every file's end and ships
+   nothing, so months of history are never dumped. On runner-1 in place; the
+   second runner over SSH (`exouser@<control>`, the runner's own key) is
+   attempted when `incident-sources.yml` names a control host and recorded as
    `diag_remote: unreachable` when it fails. Whether the acquire runner can
    reach the control runner by key is verified in the test plan, not assumed.
 10. **Write.** `git add -A && git commit` with the message
@@ -524,7 +526,12 @@ crontab (harvester line inside the block) and drops the hand-added line.
 - **`_diag` lines are shipped once**: per-file offsets (local and, over SSH, for
   the control runner) rather than "files modified since", which would re-ship
   every matching line of the active runner log each cycle; the remote offsets
-  advance only after a complete read.
+  advance only after a complete read. Found on day one (2026-11-09): the first
+  pattern `ERR|Exception|Unhandled|lost connection|Terminated` matched
+  `STDOUT/STDERR stream read finished`, .NET long-poll cancellation stack frames
+  and job-message JSON literals, and the first cycle shipped the whole directory
+  (81 MB on Test, 9.7 MB on production). Now: ERR level only, prime-then-ship, 2
+  MB per day.
 - **`MORPHOCLOUD_CFG_DIR`** overrides `~/.config/morphocloud` so a `--dry-run`
   can be made from a laptop with a scratch token file (used for the first dry
   run against Test-Instances on 2026-11-09: no cursor, so the 48-hour lookback

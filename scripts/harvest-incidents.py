@@ -99,6 +99,10 @@ DISPATCH_JOIN = 60
 # the dispatcher and the harvester share the */5 clock, so the DISPATCH line
 # for a run created at :00:02 may not be in the log the harvester read at :00:01.
 GRACE = 120
+# A day's _diag extract stops growing here (one marker line, then silence until
+# the next day): the runner's own ERR lines are ~10 KB/day, so reaching the cap
+# means the pattern or the runner has gone wrong, and the store must not pay for it.
+DIAG_DAY_CAP = 2_000_000
 # How much of each runner log the DISPATCH join reads. Production's dispatch
 # log is 8 MB for five months, so 32 MB covers a 90-day backfill with room.
 DISPATCH_LOG_TAIL = 32_000_000
@@ -1600,12 +1604,26 @@ class Harvester:
                 Path(self.cfg.diag_dir).expanduser(), diag_offsets, self.cfg.diag_match
             )
             if lines:
-                text, _ = self.redactor.text("".join(lines))
-                self.store.append_text(f"runner/{day}/{host}/diag.log", text)
+                self.ship_diag(f"runner/{day}/{host}/diag.log", lines)
             control = self.src.get("control_host")
             if control:
                 status["diag_remote"] = self.remote_diag(control, day)
         return status
+
+    def ship_diag(self, rel: str, lines: list[str]) -> None:
+        """Append redacted _diag lines to the day's file, up to DIAG_DAY_CAP:
+        the chunk that crosses the cap is written with a marker line after it,
+        and later chunks are dropped until the next day's file."""
+        p = self.store.rel(rel)
+        size = p.stat().st_size if p.is_file() else 0
+        if size >= DIAG_DAY_CAP:
+            return
+        text, _ = self.redactor.text("".join(lines))
+        if size + len(text) > DIAG_DAY_CAP:
+            text += (
+                f"# capped: {DIAG_DAY_CAP} bytes for today; later lines are dropped\n"
+            )
+        self.store.append_text(rel, text)
 
     def remote_diag(self, control: str, day: str) -> str:
         """The control runner's _diag error lines over SSH, from per-file
@@ -1617,13 +1635,18 @@ class Harvester:
             f"    {shlex.quote(name)}) off={int(off)};;\n"
             for name, off in offsets.items()
         )
+        # No offsets yet = first sight of this host: record where every file
+        # ends and ship nothing, as diag_new_lines() does; history is not evidence.
+        prime = "1" if not offsets else ""
         script = (
+            f"prime={prime}\n"
             "cd ~/actions-runner/_diag || exit 3\nhostname\n"
             'for f in *; do\n  [ -f "$f" ] || continue\n'
             '  size=$(stat -c %s "$f"); off=0\n'
             f'  case "$f" in\n{cases}  esac\n'
             '  [ "$size" -lt "$off" ] && off=0\n'
             '  echo "==FILE $f $size"\n'  # every file, so a rotated one is forgotten
+            '  [ -n "$prime" ] && continue\n'
             '  [ "$size" -eq "$off" ] && continue\n'
             f'  tail -c +$((off+1)) "$f" | grep -E {shlex.quote(self.cfg.diag_match.pattern)} || true\n'
             "done\n"
@@ -1668,8 +1691,7 @@ class Harvester:
                     header = None
                 body.append(line + "\n")
         if body:
-            text, _ = self.redactor.text("".join(body))
-            self.store.append_text(f"runner/{day}/{host}/diag.log", text)
+            self.ship_diag(f"runner/{day}/{host}/diag.log", body)
         offsets.clear()
         offsets.update(new_offsets)
         return "ok"
@@ -1771,10 +1793,14 @@ class Harvester:
 def diag_new_lines(diag_dir: Path, offsets: dict, pattern: re.Pattern) -> list[str]:
     """The matching lines added to each _diag file since its offset (updated
     in place), so a line is shipped once however often the file is touched.
+    No offsets at all = the first cycle on this runner: every file's end is
+    recorded and nothing is shipped (the directory holds months of history that
+    is not evidence of anything current; it cost 81 MB on Test the first time).
     A file shorter than its offset starts over; a file that is gone is forgotten."""
     out: list[str] = []
     if not diag_dir.is_dir():
         return out
+    prime = not offsets
     seen: set[str] = set()
     for p in sorted(diag_dir.iterdir()):
         try:
@@ -1782,6 +1808,9 @@ def diag_new_lines(diag_dir: Path, offsets: dict, pattern: re.Pattern) -> list[s
                 continue
             seen.add(p.name)
             size = p.stat().st_size
+            if prime:
+                offsets[p.name] = size
+                continue
             off = int(offsets.get(p.name, 0))
             if size < off:
                 off = 0
