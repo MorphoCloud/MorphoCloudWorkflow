@@ -250,28 +250,43 @@ returns:
 
 - `morphocloud-dispatch.sh`: replaces `dispatched <wf>` /
   `FAILED to dispatch <wf>`; `gh`'s stderr is captured instead of sent to
-  `/dev/null`. The three documents that say to grep for `dispatched` are updated
-  to `DISPATCH`.
+  `/dev/null`. The two documents that say to grep for `dispatched`
+  (`runner-cron-dispatcher.md`, `INSTANCES_RUNNER_REBUILD.md`) and the restore
+  script's closing message are updated to `DISPATCH`.
 - `police-floating-ips.py`: `note_issue` and `send_alert`, one line each right
   after `subprocess.run`, `issue=` filled for notes.
 - `check-dispatch-tokens.sh`: `dispatch_alert`, to `~/token-expiry.log`.
 - The portal runner's `dispatch_shelve` is PR C (same format, `by=pickup`).
 
-`scripts/check-dispatch-logging.py` (pre-commit, `files: ^scripts/`): for every
-line containing `gh workflow run` or the Python list form `"workflow", "run"`, a
-line containing the literal `DISPATCH ` must follow within 30 lines of the same
-file, else the hook fails naming the site. PR B extends the same script to
-`.github/workflows` and `.github/actions`, where the required neighbor is a
-`facts.sh` dispatch record.
+`scripts/check-dispatch-logging.py` (pre-commit, `files: ^scripts/`): a call
+site is either the substring `gh workflow run` on one line (shell) or, in
+Python, the string literal `"gh"` followed by the literals `"workflow"` and
+`"run"` in that order within the next 5 lines, each on its own line as
+`police-floating-ips.py` writes them (`["gh", "workflow", "run", …]` laid out
+one element per line). For every call site a line containing the literal
+`DISPATCH ` must follow within 30 lines of the same file, else the hook fails
+naming the file and line. The hook's own test holds one shell site, one
+multi-line Python site with the line, and one without. PR B extends the same
+script to `.github/workflows` and `.github/actions`, where the required neighbor
+is a `facts.sh` dispatch record.
 
 ### Renderer and restore changes
 
 - `check-workflow-clock.py`: `TARGETS` tuples gain a fifth element, the store
   (`"MorphoCloud/Incidents"` for production, `"MorphoCloud/Incidents-sandbox"`
-  for Test while Phase 1 is tested, `None` afterwards). `RUNNER_SCRIPTS` gains
-  the harvester line with `{store}`; `render()` skips a line whose template
-  needs `{store}` when the target has none. Both committed crontabs are
-  re-rendered in the PR.
+  for Test while Phase 1 is tested, `None` afterwards), and the two places that
+  unpack the tuple change with it: `crontab_errors()` unpacks
+  `(repo, cloud, hold, extra_rel, store)` and `render()` gains a
+  `store: str | None` parameter. `RUNNER_SCRIPTS` gains the harvester line with
+  `{store}`. In `render()`'s loop over `RUNNER_SCRIPTS`, before the `format`
+  call: `if "{store}" in command and store is None: continue`; the `format` call
+  then passes `store=store` beside `cloud`, `repo` and `hold`. Today's single
+  fixed `format(cloud=…, repo=…, hold=…)` would otherwise raise `KeyError` on
+  the new placeholder or write the word `None` into a crontab, and this renderer
+  writes every dispatch line for both repositories, so the change gets a test:
+  render both targets with and without a store and assert the harvester line is
+  present exactly when the store is set and no other line changed. Both
+  committed crontabs are re-rendered in the PR.
 - `scripts/install-harvester.sh <user@host> [--outside-block]`: copies the
   script, the three data files and the wrapper; copies the PAT from
   `MWF_HARVEST_TOKEN` (default `~/.ssh/GH_MorphoCloud-incidents-harvester`) to
