@@ -1428,8 +1428,10 @@ class Harvester:
         return status
 
     def remote_diag(self, control: str, since: float, day: str) -> str:
+        # GNU find takes a date string, not @epoch (checked on the Test runner).
+        since_text = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(since))
         cmd = (
-            f"find ~/actions-runner/_diag -type f -newermt @{int(since)} -print0 2>/dev/null | "
+            f"find ~/actions-runner/_diag -type f -newermt '{since_text}' -print0 2>/dev/null | "
             f"xargs -0 grep -HE {json.dumps(self.cfg.diag_match.pattern)} 2>/dev/null; hostname"
         )
         try:
