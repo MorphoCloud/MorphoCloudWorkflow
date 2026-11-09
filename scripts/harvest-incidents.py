@@ -162,6 +162,9 @@ class Config:
         for kind, names in (sources.get("workflows") or {}).items():
             for name in names or []:
                 self.kinds[name] = kind
+        dropped = sources.get("dropped_report") or {}
+        self.dropped_report_workflow = dropped.get("workflow")
+        self.dropped_report_step = dropped.get("step")
         self.refusal_jobs = set(sources.get("refusal_jobs") or [])
         self.refusal_steps = set(sources.get("refusal_steps") or [])
         self.commands = list(sources.get("commands") or [])
@@ -487,12 +490,51 @@ class Local:
 # --- what one run is -------------------------------------------------------
 
 
-def base_result(workflow: str, conclusion: str | None) -> str:
-    if workflow == "report-dropped-command.yml" and conclusion == "success":
-        return "dropped"
+def base_result(conclusion: str | None) -> str:
     if conclusion in ("timed_out", "startup_failure"):
         return "failure"
     return conclusion or "unknown"
+
+
+def needs_detail(kind: str, result: str) -> bool:
+    """Jobs and the full log: every command and alert run that ran, and every
+    run that did not succeed. A skipped run is a count only (A1)."""
+    return result not in ("success", "skipped") or (
+        kind in ("command", "alert") and result == "success"
+    )
+
+
+def finalize(
+    cfg: Config, workflow: str, kind: str, result: str, jobs: list[dict]
+) -> tuple[str, bool]:
+    """The final result and whether the run is an incident.
+
+    report-dropped-command succeeds whether or not it found a dropped command;
+    only a run where the reporting step ran is `dropped`. A successful alert
+    run is an incident (something asked for the admins); skipped and refused
+    runs never are; everything else that did not succeed is."""
+    if workflow == cfg.dropped_report_workflow and result == "success":
+        reported = any(
+            s.get("name") == cfg.dropped_report_step
+            and s.get("conclusion") == "success"
+            for j in jobs
+            for s in j.get("steps") or []
+        )
+        return ("dropped", True) if reported else ("success", False)
+    if result == "success":
+        return result, kind == "alert"
+    if result in ("skipped", "refused"):
+        return result, False
+    return result, True
+
+
+def wants_outcome_line(kind: str, result: str) -> bool:
+    """One line per command run and per run that did not succeed; skipped
+    runs and successful sweeps are rollup counts."""
+    return (kind == "command" and result != "skipped") or result not in (
+        "success",
+        "skipped",
+    )
 
 
 def first_failed_step(jobs: list[dict]) -> dict | None:
@@ -1045,9 +1087,12 @@ class Harvester:
         created = run.get("created_at") or ""
         if self.store.recorded(created, run_id, attempt):
             return False
-        result = base_result(workflow, run.get("conclusion"))
-        detail = kind in ("command", "alert") or result not in ("success", "skipped")
-        d = self.fetch_detail(run_id, attempt) if detail else self.no_detail()
+        result = base_result(run.get("conclusion"))
+        d = (
+            self.fetch_detail(run_id, attempt)
+            if needs_detail(kind, result)
+            else self.no_detail()
+        )
         refusal = (
             is_refusal(self.cfg, d["failed"], d["logtext"])
             if result == "failure"
@@ -1055,6 +1100,7 @@ class Harvester:
         )
         if refusal:
             result = "refused"
+        result, is_incident = finalize(self.cfg, workflow, kind, result, d["jobs"])
 
         ident = identify(run, d["logtext"], self.prefix, self.cfg)
         issue_number = ident["issue"]
@@ -1066,7 +1112,6 @@ class Harvester:
         current_labels = sorted(
             lab.get("name", "") for lab in (issue or {}).get("labels") or []
         )
-        is_incident = kind == "alert" or result not in ("success", "skipped", "refused")
         record = {
             "schema_version": SCHEMA_VERSION,
             "id": f"{self.short}-{run_id}-{attempt}" + ("-0" if is_incident else ""),
@@ -1093,7 +1138,7 @@ class Harvester:
 
         # -- write
         self.store.mark(created, run_id, attempt, workflow, result)
-        if kind == "command" or result not in ("success", "skipped"):
+        if wants_outcome_line(kind, result):
             self.store.append_jsonl(
                 f"outcomes/{day_path(created)}/{self.short}.jsonl", record
             )

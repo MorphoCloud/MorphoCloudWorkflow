@@ -90,6 +90,15 @@ command_by_workflow:
   send-email.yml: /email
   delete-instance-and-volume.yml: /delete_instance
 
+# report-dropped-command runs on every cancelled command run and reports only
+# when it finds a dropped command: its run is `dropped` (an incident) when this
+# step ran, and a plain success otherwise. A skipped run of any alert workflow
+# (on-admin-mention without a mention, this one without a cancellation) is a
+# count, never an incident.
+dropped_report:
+  workflow: report-dropped-command.yml
+  step: "Tell the user the command was dropped"
+
 # A failed run whose failing job or step is one of these is `refused`, not
 # `failure`: the deliberate exit 1 of an authorize step (not approved, does not
 # exist, in flight, maintenance, unauthorized). PR B's `REFUSED reason=` line

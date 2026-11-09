@@ -456,6 +456,16 @@ crontab (harvester line inside the block) and drops the hand-added line.
   production). The lookback and a rebuilt runner both ask the store whether a
   run is recorded, so a lost local state can never double-count a rollup or
   duplicate an outcome line.
+- **Skipped runs are counts only, and `dropped` is read from the reporting
+  step.** Every `issue_comment` fires every command workflow, and all but one
+  skip; the first dry run showed those skipped runs would have earned outcome
+  lines and full logs (about 450 in 48 hours on Test). Now a skipped run of any
+  kind is a rollup count (A1), never a detail fetch, an outcome line or an
+  incident (`on-admin-mention` without a mention, `report-dropped-command`
+  without a cancellation). `report-dropped-command` succeeds whether or not it
+  found a dropped command, so its run is `dropped` only when its "Tell the user
+  the command was dropped" step ran (`dropped_report` in
+  `incident-sources.yml`); otherwise it is a plain success and no incident.
 - **Refusals** are recognized by a failed job named in `refusal_jobs`
   (`authorize`, the job every `report-command-outcome` caller fails
   deliberately) as well as by the step names in `refusal_steps`, and by PR B's

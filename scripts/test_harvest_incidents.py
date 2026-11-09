@@ -171,10 +171,69 @@ def test_api_5xx_only_on_the_error_line(cfg):
 
 
 def test_base_result():
-    assert hv.base_result("report-dropped-command.yml", "success") == "dropped"
-    assert hv.base_result("control-instance.yml", "timed_out") == "failure"
-    assert hv.base_result("control-instance.yml", "cancelled") == "cancelled"
-    assert hv.base_result("x.yml", None) == "unknown"
+    assert hv.base_result("timed_out") == "failure"
+    assert hv.base_result("cancelled") == "cancelled"
+    assert hv.base_result(None) == "unknown"
+
+
+def test_skipped_runs_are_counts_only():
+    assert not hv.needs_detail("command", "skipped")
+    assert not hv.needs_detail("alert", "skipped")
+    assert not hv.needs_detail("sweep", "success")
+    assert hv.needs_detail("command", "success")
+    assert hv.needs_detail("sweep", "failure")
+    assert not hv.wants_outcome_line("command", "skipped")
+    assert hv.wants_outcome_line("command", "success")
+    assert hv.wants_outcome_line("sweep", "cancelled")
+    assert not hv.wants_outcome_line("sweep", "success")
+
+
+def test_finalize_dropped_report_and_alerts(cfg):
+    reported = [
+        {
+            "steps": [
+                {
+                    "name": "Tell the user the command was dropped",
+                    "conclusion": "success",
+                }
+            ]
+        }
+    ]
+    silent = [
+        {
+            "steps": [
+                {
+                    "name": "Tell the user the command was dropped",
+                    "conclusion": "skipped",
+                }
+            ]
+        }
+    ]
+    wf = "report-dropped-command.yml"
+    assert hv.finalize(cfg, wf, "alert", "success", reported) == ("dropped", True)
+    assert hv.finalize(cfg, wf, "alert", "success", silent) == ("success", False)
+    assert hv.finalize(cfg, wf, "alert", "skipped", []) == ("skipped", False)
+    assert hv.finalize(cfg, "on-admin-mention.yml", "alert", "success", []) == (
+        "success",
+        True,
+    )
+    assert hv.finalize(cfg, "on-admin-mention.yml", "alert", "skipped", []) == (
+        "skipped",
+        False,
+    )
+    assert hv.finalize(cfg, "control-instance.yml", "command", "refused", []) == (
+        "refused",
+        False,
+    )
+    assert hv.finalize(cfg, "control-instance.yml", "command", "success", []) == (
+        "success",
+        False,
+    )
+    assert hv.finalize(cfg, "follow-through.yml", "sweep", "cancelled", []) == (
+        "cancelled",
+        True,
+    )
+    assert hv.finalize(cfg, "ci.yml", "other", "failure", []) == ("failure", True)
 
 
 def test_refusal(cfg):
