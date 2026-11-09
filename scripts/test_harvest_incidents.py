@@ -11,6 +11,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -760,7 +761,8 @@ def test_remote_diag_parses_listing_and_forgets_rotated_files(tmp_path, monkeypa
     h.store = hv.Store(tmp_path / "store", "instances", dry_run=False)
     h.local = hv.Local(tmp_path / "local.json", dry_run=False)
     h.local.data["diag_remote_offsets"] = {"Runner_old.log": 500, "Worker_1.log": 10}
-    h.redactor = hv.Redactor(SED, None)
+    # a stub: the subprocess.run patch below would catch the redactor's sed too
+    h.redactor = SimpleNamespace(text=lambda t: (t, 0))
     out = "control-host\n==FILE Worker_1.log 40\nERR two\n==FILE Worker_2.log 7\n"
     monkeypatch.setattr(
         hv.subprocess,
