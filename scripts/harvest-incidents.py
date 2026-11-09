@@ -797,13 +797,15 @@ def actor_kind(  # noqa: PLR0913 — the six rules need these five inputs
     # workflow file (jcfr on Test), who would otherwise read as a member. A
     # RERUN of such a run keeps the event but its triggering_actor is the
     # person who clicked, so attempt 2+ falls through to the rules below.
-    if (
-        run.get("event") in ("schedule", "workflow_run")
-        and int(run.get("run_attempt") or 1) == 1
-    ):
+    first_attempt = int(run.get("run_attempt") or 1) == 1
+    if run.get("event") in ("schedule", "workflow_run") and first_attempt:
         verdict = ("automation", f"event:{run['event']}")
-    elif run.get("event") == "workflow_dispatch" and dispatches.match(
-        workflow_file(run), repo, run.get("created_at") or "", issue
+    elif (
+        run.get("event") == "workflow_dispatch"
+        and first_attempt  # a rerun keeps attempt 1's created_at; the join is attempt 1's
+        and dispatches.match(
+            workflow_file(run), repo, run.get("created_at") or "", issue
+        )
     ):
         verdict = ("automation", "dispatch-line")
     elif actor in cfg.bots or trigger in cfg.bots:

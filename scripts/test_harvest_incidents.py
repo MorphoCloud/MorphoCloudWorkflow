@@ -404,6 +404,13 @@ def test_rule1_dispatch_line_makes_automation_whoever_the_actor_is(cfg, tmp_path
     assert hv.actor_kind(
         cfg, run_of("muratmaga"), "MorphoCloud/Instances", None, None, d
     ) == ("automation", "dispatch-line")
+    # a RERUN keeps attempt 1's created_at, so the line it matches is attempt
+    # 1's; the person who clicked re-run is the actor of attempt 2 (T6 on Test)
+    rerun = dict(run_of("muratmaga"), run_attempt=2)
+    assert hv.actor_kind(cfg, rerun, "MorphoCloud/Instances", None, None, d) == (
+        "admin",
+        "admin",
+    )
     # 61 s away, or another repository: not this clock's dispatch
     late = run_of("muratmaga", created="2026-11-09T03:01:02Z")
     assert (
