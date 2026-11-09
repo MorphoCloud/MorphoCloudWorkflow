@@ -826,3 +826,28 @@ def test_assemble_log_empty_archive_means_no_log():
         zf.writestr("job/blob.bin", b"\x00\x01")
     whole, _, _ = hv.assemble_log(buf.getvalue(), None)
     assert whole == "===== job/a.txt =====\nno newline\n===== job/b.txt =====\nsecond\n"
+
+
+# --- the :00 race between the dispatcher and the harvester (production, 2026-11-09 07:15Z)
+
+
+def test_dispatch_index_refreshes_for_a_run_newer_than_the_read(cfg, tmp_path):
+    logf = tmp_path / "morphocloud-dispatch.log"
+    logf.write_text("")
+    d = hv.Dispatches([logf])
+    now = hv.to_iso(d.loaded_at + 1)
+    run = run_of("muratmaga", created=now)
+    assert hv.actor_kind(cfg, run, "MorphoCloud/Instances", None, None, d)[0] == "admin"
+    # the dispatcher writes its line a moment after the harvester read the log
+    logf.write_text(f"{now} dispatched follow-through.yml\n")
+    assert hv.actor_kind(cfg, run, "MorphoCloud/Instances", None, None, d) == (
+        "automation",
+        "dispatch-line",
+    )
+
+
+def test_too_fresh_runs_wait_for_the_next_cycle():
+    now = hv.parse_ts("2026-11-09T07:15:03Z")
+    assert hv.too_fresh({"created_at": "2026-11-09T07:15:02Z"}, now)
+    assert hv.too_fresh({"created_at": "2026-11-09T07:13:10Z"}, now)
+    assert not hv.too_fresh({"created_at": "2026-11-09T07:12:50Z"}, now)

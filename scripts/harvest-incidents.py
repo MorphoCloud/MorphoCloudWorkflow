@@ -95,6 +95,10 @@ LOOKBACK = 48 * 3600
 LOOKBACK_EVERY = 3600
 FOLLOWUP_FOR = 24 * 3600
 DISPATCH_JOIN = 60
+# A run created within this many seconds of the cycle waits for the next one:
+# the dispatcher and the harvester share the */5 clock, so the DISPATCH line
+# for a run created at :00:02 may not be in the log the harvester read at :00:01.
+GRACE = 120
 # How much of each runner log the DISPATCH join reads. Production's dispatch
 # log is 8 MB for five months, so 32 MB covers a 90-day backfill with room.
 DISPATCH_LOG_TAIL = 32_000_000
@@ -747,8 +751,18 @@ class Dispatches:
     lines, for the backfill), indexed by workflow, for rule 1."""
 
     def __init__(self, paths: list[Path]):
+        self.paths = paths
         self.by_wf: dict[str, list[tuple[float, str | None, str | None]]] = {}
-        for p in paths:
+        self.loaded_at = 0.0
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Re-read the logs; called once at start and again when a run created
+        after the last read finds no line (the dispatcher may have written it
+        a moment after we read)."""
+        self.by_wf = {}
+        self.loaded_at = time.time()
+        for p in self.paths:
             if not p.is_file():
                 continue
             try:
@@ -775,6 +789,14 @@ class Dispatches:
         self, workflow: str, repo: str, created_at: str, issue: int | None
     ) -> bool:
         t = parse_ts(created_at)
+        if (
+            not self._match(workflow, repo, t, issue)
+            and t > self.loaded_at - DISPATCH_JOIN
+        ):
+            self.refresh()
+        return self._match(workflow, repo, t, issue)
+
+    def _match(self, workflow: str, repo: str, t: float, issue: int | None) -> bool:
         for when, line_repo, line_issue in self.by_wf.get(workflow, []):
             if abs(when - t) > DISPATCH_JOIN:
                 continue
@@ -1425,6 +1447,8 @@ class Harvester:
             runs.extend(self.list_window(start, end))
             start = end + 1
         for run in runs:
+            if too_fresh(run, now):  # next cycle; the 15-minute overlap relists it
+                continue
             self.advance_cursor(run.get("created_at") or "")
             if run.get("status") == "completed":
                 self.safe_record(run)
@@ -1440,7 +1464,7 @@ class Harvester:
             if run is None:
                 del self.local.data["watch"][run_id]
                 continue
-            if run.get("status") == "completed":
+            if run.get("status") == "completed" and not too_fresh(run, time.time()):
                 recorded = self.safe_record(run)
                 if recorded or self.store.recorded(
                     run.get("created_at") or "",
@@ -1454,6 +1478,8 @@ class Harvester:
             return
         missing = 0
         for run in self.list_window(now - LOOKBACK, now):
+            if too_fresh(run, now):
+                continue
             if run.get("status") == "completed" and self.safe_record(run):
                 missing += 1
         self.local.data["lookback_at"] = now
@@ -1778,6 +1804,12 @@ def diag_new_lines(diag_dir: Path, offsets: dict, pattern: re.Pattern) -> list[s
     for name in [n for n in offsets if n not in seen]:
         del offsets[name]
     return out
+
+
+def too_fresh(run: dict, now: float) -> bool:
+    """Created within GRACE seconds of now: its DISPATCH line may not be
+    written yet, so it is left for the next cycle (plan, actor_kind rule 1)."""
+    return now - parse_ts(run.get("created_at")) < GRACE
 
 
 def job_summary(job: dict) -> dict:
