@@ -123,10 +123,15 @@ runner_logs:
   - { name: fip-police, path: ~/fip-police.log }
   - { name: token-expiry, path: ~/token-expiry.log }
   - { name: pickup, path: ~/mc-data/pickup.log }
-# The Actions runner service's own logs (F5): only matching lines, from files
-# changed since the last cycle.
+# The Actions runner service's own logs (F5): only the lines the runner itself
+# logs at its ERR level (`[<date> <time> ERR  <Component>] ...`), from files
+# changed since the last cycle; the first cycle on a runner records where every
+# file ends and ships nothing. A looser pattern ("ERR|Exception|...") matched
+# "STDOUT/STDERR stream read finished" in every Worker log, the .NET stack
+# frames of routine long-poll cancellations and job-message JSON literals: 81 MB
+# of noise on Test's first day. The harvester also caps a day's file (DIAG_DAY_CAP).
 diag_dir: ~/actions-runner/_diag
-diag_match: "ERR|Exception|Unhandled|lost connection|Terminated"
+diag_match: '^\[\S+ \S+ ERR '
 
 # Outside context (E). Grafana: Jetstream2's public vacancy dashboard; a flavor
 # not listed is `not_tracked` (m3.* are not on the dashboard).
