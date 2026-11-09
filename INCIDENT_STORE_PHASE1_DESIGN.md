@@ -151,10 +151,12 @@ workflow is visible without being lost.
    match wins; `unclassified` otherwise. `github.api_5xx` matches
    `HTTP 5\d\d|50[234] |Server Error|Bad Gateway|Gateway Time-?out` **on the
    error line only**.
-7. **`actor_kind`** as the plan's five rules. Rule 1 reads the runner-side logs
-   for `DISPATCH` lines (same workflow, same issue where there is one, within 60
-   s of `created_at`). Rules 2–5 need the run's `actor`, `triggering_actor` and
-   the issue's author (`issues/<n>`, cached per cycle).
+7. **`actor_kind`** as the plan's five rules, preceded by rule 0 (a `schedule`
+   or `workflow_run` event's first attempt is automation; see "As built"). Rule
+   1 reads the runner-side logs for `DISPATCH` lines (same workflow, same issue
+   where there is one, within 60 s of `created_at`). Rules 2–5 need the run's
+   `actor`, `triggering_actor` and the issue's author (`issues/<n>`, cached per
+   cycle).
 8. **Incidents** (every `failure`, `cancelled`, `dropped`, and every `alert`
    run): the directory of the plan's "Records", `incident.json` with every field
    the collector can fill (`facts: missing` until PR B), `job.log.gz`,
@@ -515,7 +517,7 @@ crontab (harvester line inside the block) and drops the hand-added line.
   root in a checkout, so the same script runs in both places.
 - **Tests**: `scripts/test_harvest_incidents.py` (redaction fixture T11, the
   wrapper T12, the installer's crontab line equals the renderer's, signatures,
-  refusals, log assembly, identification, the five actor rules, context feeds,
+  refusals, log assembly, identification, the six actor rules, context feeds,
   labels at a moment, store dedupe and dry run, log offsets and rotation),
   `scripts/test_check_dispatch_logging.py` (one shell site, one multi-line
   Python site with the line and one without, the 30-line window, and the

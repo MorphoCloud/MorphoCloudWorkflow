@@ -775,7 +775,7 @@ class Dispatches:
         return False
 
 
-def actor_kind(  # noqa: PLR0913 — the plan's five rules need these five inputs
+def actor_kind(  # noqa: PLR0913 — the six rules need these five inputs
     cfg: Config,
     run: dict,
     repo: str,
@@ -783,13 +783,18 @@ def actor_kind(  # noqa: PLR0913 — the plan's five rules need these five input
     issue_author: str | None,
     dispatches: Dispatches,
 ) -> tuple[str, str | None]:
-    """The plan's five rules, in order. Returns (kind, rule)."""
+    """Rule 0 (the event) then the plan's five rules, in order. Returns (kind, rule)."""
     actor = (run.get("actor") or {}).get("login") or ""
     trigger = (run.get("triggering_actor") or {}).get("login") or ""
     # GitHub's own scheduler and a workflow_run follow-up are automation by
     # definition; GitHub credits such a run to whoever last committed the
-    # workflow file (jcfr on Test), who would otherwise read as a member.
-    if run.get("event") in ("schedule", "workflow_run"):
+    # workflow file (jcfr on Test), who would otherwise read as a member. A
+    # RERUN of such a run keeps the event but its triggering_actor is the
+    # person who clicked, so attempt 2+ falls through to the rules below.
+    if (
+        run.get("event") in ("schedule", "workflow_run")
+        and int(run.get("run_attempt") or 1) == 1
+    ):
         verdict = ("automation", f"event:{run['event']}")
     elif run.get("event") == "workflow_dispatch" and dispatches.match(
         workflow_file(run), repo, run.get("created_at") or "", issue

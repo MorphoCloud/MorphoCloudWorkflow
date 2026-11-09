@@ -454,6 +454,9 @@ def test_schedule_and_workflow_run_events_are_automation(cfg, tmp_path):
         "automation",
         "event:schedule",
     )
+    # a RERUN of a scheduled run is whoever clicked: the five rules decide
+    rerun = dict(sched, run_attempt=2, triggering_actor={"login": "muratmaga"})
+    assert hv.actor_kind(cfg, rerun, "r", None, None, d) == ("admin", "admin")
     follow = run_of("Sarah-G-88", event="workflow_run", wf="report-dropped-command.yml")
     assert hv.actor_kind(cfg, follow, "r", None, None, d) == (
         "automation",
