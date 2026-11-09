@@ -327,19 +327,27 @@ step inside `report-command-outcome`: composite actions accept
 GitHub incident from holding the per-issue lock for minutes. It is the last
 `if: always()` step of **every job that runs on a self-hosted runner**, placed
 **after** `report-command-outcome` where that is called, so the 👍/👎 comes
-first. That is not only the six workflows that call `report-command-outcome`
-(control-instance, create-instance, create-course-instance,
-delete-instance-and-volume, extend-session, send-email): the sweep found four
-more self-hosted workflows that do instance work without it
+first. The class is every self-hosted job, and the CI check
+`scripts/check-facts-upload.py` (decision 20) is the authority on which
+workflows that is; the list here is a snapshot of `share-prototype` a159be7,
+where 22 workflows run on a self-hosted runner: the six that call
+`report-command-outcome` (control-instance, create-instance,
+create-course-instance, delete-instance-and-volume, extend-session, send-email);
+four command-style workflows that do instance work without it
 (`control-instance-from-workflow`, `create-instance-from-workflow`,
-`resume-setup`, `migrate-volume`). Three further command workflows
-(`create-workshop`, `approve-workshop`, `update-renew-label`) run on
+`resume-setup`, `migrate-volume`); and twelve sweeps and alerts
+(`automatic-instance-shelving`, `close-expired-issues`,
+`collect-instance-uptime`, `expire-shares`, `follow-through`,
+`guard-issue-close`, `reconcile-instances`, `send-renewal-email`,
+`test-workshop-deletion`, `update-request-status-label`, `update-workshop`,
+`workshop-backfill`). Among the sweeps, `close-expired-issues` is the one that
+changes OpenStack itself (it detaches and deletes the volume before it
+dispatches the delete), so its B11 items carry those two actions. Three command
+workflows (`create-workshop`, `approve-workshop`, `update-renew-label`) run on
 `ubuntu-latest`, only edit labels and comments or hand the work to
 `create-instance-from-workflow`, and upload nothing; their runs are recorded
-from the envelope. The CI check `scripts/check-facts-upload.py` (decision 20)
-fails when a self-hosted job lacks the step. Among the GitHub-hosted jobs only
-the admin-email senders upload (see "Where it runs"). Every `run-name:` gains
-the issue number:
+from the envelope. Among the GitHub-hosted jobs only the admin-email senders
+upload (see "Where it runs"). Every `run-name:` gains the issue number:
 `#${{ github.event.issue.number || inputs.issue_number }} ${{ github.workflow }}`.
 
 ### Where it runs
