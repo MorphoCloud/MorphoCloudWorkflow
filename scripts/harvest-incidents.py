@@ -1562,8 +1562,9 @@ class Harvester:
             'for f in *; do\n  [ -f "$f" ] || continue\n'
             '  size=$(stat -c %s "$f"); off=0\n'
             f'  case "$f" in\n{cases}  esac\n'
-            '  [ "$size" -lt "$off" ] && off=0\n  [ "$size" -eq "$off" ] && continue\n'
-            '  echo "==FILE $f $size"\n'
+            '  [ "$size" -lt "$off" ] && off=0\n'
+            '  echo "==FILE $f $size"\n'  # every file, so a rotated one is forgotten
+            '  [ "$size" -eq "$off" ] && continue\n'
             f'  tail -c +$((off+1)) "$f" | grep -E {shlex.quote(self.cfg.diag_match.pattern)} || true\n'
             "done\n"
         )
@@ -1591,14 +1592,20 @@ class Harvester:
             return "unreachable"
         lines = r.stdout.splitlines()
         host = lines[0].strip() if lines else control.split("@")[-1]
-        new_offsets: dict[str, int] = dict(offsets)
+        # Only the files the listing names keep an offset: a rotated file is
+        # forgotten, as diag_new_lines() does locally.
+        new_offsets: dict[str, int] = {}
         body: list[str] = []
+        header = None
         for line in lines[1:]:
             if line.startswith("==FILE "):
                 name, size = line[len("==FILE ") :].rsplit(" ", 1)
                 new_offsets[name] = int(size)
-                body.append(f"# {name}\n")
+                header = f"# {name}\n"
             else:
+                if header:
+                    body.append(header)
+                    header = None
                 body.append(line + "\n")
         if body:
             text, _ = self.redactor.text("".join(body))

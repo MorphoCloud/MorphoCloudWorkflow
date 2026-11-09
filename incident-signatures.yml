@@ -3,6 +3,10 @@
 # nothing matches -> `unclassified`. The agent may propose additions in its
 # decision record; only the maintainer adds them here.
 #
+# The error line is REDACTED (redact.sed + the email HMAC pass) before the
+# signatures see it: a pattern that keys on a token, a password or an email
+# address can never match. Key on the message, not the secret.
+#
 # Each entry: signature, field (error_line | failed_step | workflow), match (a
 # Python regular expression, searched, case-sensitive unless (?i)). (The key is
 # `field`, not `on`: PyYAML reads an unquoted `on` as the boolean True.) Until PR B

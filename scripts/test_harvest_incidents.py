@@ -752,3 +752,27 @@ def test_assemble_log_matches_a_sanitized_job_folder():
     )
     assert error == "boom"
     assert tail == "a\n##[error]boom\n"
+
+
+def test_remote_diag_parses_listing_and_forgets_rotated_files(tmp_path, monkeypatch):
+    h = hv.Harvester.__new__(hv.Harvester)
+    h.cfg = hv.Config({"diag_match": "ERR"}, {})
+    h.store = hv.Store(tmp_path / "store", "instances", dry_run=False)
+    h.local = hv.Local(tmp_path / "local.json", dry_run=False)
+    h.local.data["diag_remote_offsets"] = {"Runner_old.log": 500, "Worker_1.log": 10}
+    h.redactor = hv.Redactor(SED, None)
+    out = "control-host\n==FILE Worker_1.log 40\nERR two\n==FILE Worker_2.log 7\n"
+    monkeypatch.setattr(
+        hv.subprocess,
+        "run",
+        lambda *_a, **_k: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=out, stderr=""
+        ),
+    )
+    assert h.remote_diag("exouser@control", "2026/11/09") == "ok"
+    assert h.local.data["diag_remote_offsets"] == {
+        "Worker_1.log": 40,
+        "Worker_2.log": 7,
+    }
+    shipped = (tmp_path / "store/runner/2026/11/09/control-host/diag.log").read_text()
+    assert shipped == "# Worker_1.log\nERR two\n"
