@@ -653,12 +653,20 @@ def assemble_log(zip_bytes: bytes, failed: dict | None) -> tuple[str, str, str |
                 errors = ERROR_RE.findall(text)
                 if errors:
                     error_line = TS_PREFIX_RE.sub("", errors[-1]).strip()
+        if not job_files:  # no per-job file: keep whatever text files there are
+            for name in sorted(n for n in names if n.endswith(".txt")):
+                parts.append(f"===== {name} =====\n")
+                parts.append(zf.read(name).decode("utf-8", "replace"))
+                if not parts[-1].endswith("\n"):
+                    parts.append("\n")
     whole = "".join(parts)
     if error_line is None:
         errors = ERROR_RE.findall(whole)
         if errors:
             error_line = TS_PREFIX_RE.sub("", errors[-1]).strip()
-    return whole, step_tail, error_line
+    # A run cancelled before it started (the concurrency queue) has an EMPTY
+    # archive; None says "no log", so no empty job.log.gz is written.
+    return (whole or None), step_tail, error_line
 
 
 def classify(
@@ -775,7 +783,7 @@ class Dispatches:
         return False
 
 
-def actor_kind(  # noqa: PLR0913 — the plan's five rules need these five inputs
+def actor_kind(  # noqa: PLR0913 — the six rules need these five inputs
     cfg: Config,
     run: dict,
     repo: str,
@@ -783,23 +791,38 @@ def actor_kind(  # noqa: PLR0913 — the plan's five rules need these five input
     issue_author: str | None,
     dispatches: Dispatches,
 ) -> tuple[str, str | None]:
-    """The plan's five rules, in order. Returns (kind, rule)."""
+    """Rule 0 (the event) then the plan's five rules, in order. Returns (kind, rule)."""
     actor = (run.get("actor") or {}).get("login") or ""
     trigger = (run.get("triggering_actor") or {}).get("login") or ""
-    if run.get("event") == "workflow_dispatch" and dispatches.match(
-        workflow_file(run), repo, run.get("created_at") or "", issue
+    # GitHub's own scheduler and a workflow_run follow-up are automation by
+    # definition; GitHub credits such a run to whoever last committed the
+    # workflow file (jcfr on Test), who would otherwise read as a member. A
+    # RERUN of such a run keeps the event but its triggering_actor is the
+    # person who clicked, so attempt 2+ falls through to the rules below.
+    first_attempt = int(run.get("run_attempt") or 1) == 1
+    if run.get("event") in ("schedule", "workflow_run") and first_attempt:
+        verdict = ("automation", f"event:{run['event']}")
+    elif (
+        run.get("event") == "workflow_dispatch"
+        and first_attempt  # a rerun keeps attempt 1's created_at; the join is attempt 1's
+        and dispatches.match(
+            workflow_file(run), repo, run.get("created_at") or "", issue
+        )
     ):
-        return "automation", "dispatch-line"
-    if actor in cfg.bots or trigger in cfg.bots:
-        return "automation", "bot"
-    if actor in cfg.test_accounts or trigger in cfg.test_accounts:
-        return "test", "test-account"
-    if actor in cfg.admins or trigger in cfg.admins:
+        verdict = ("automation", "dispatch-line")
+    elif actor in cfg.bots or trigger in cfg.bots:
+        verdict = ("automation", "bot")
+    elif actor in cfg.test_accounts or trigger in cfg.test_accounts:
+        verdict = ("test", "test-account")
+    elif actor in cfg.admins or trigger in cfg.admins:
         login = trigger or actor
         if issue_author and login == issue_author:
-            return "member", "admin-own-issue"
-        return "admin", "admin"
-    return "member", "default"
+            verdict = ("member", "admin-own-issue")
+        else:
+            verdict = ("admin", "admin")
+    else:
+        verdict = ("member", "default")
+    return verdict
 
 
 # --- outside context (E) -----------------------------------------------------
@@ -1235,6 +1258,7 @@ class Harvester:
             "logtext": None,
             "step_tail": "",
             "error_line": None,
+            "log": "not_fetched",  # present | none | unreadable | not_fetched
         }
 
     def fetch_detail(self, run_id: int, attempt: int) -> dict:
@@ -1249,12 +1273,15 @@ class Harvester:
             f"/repos/{self.repo}/actions/runs/{run_id}/attempts/{attempt}/logs",
             raw=True,
         )
+        d["log"] = "none"
         if blob:
             try:
                 d["logtext"], d["step_tail"], d["error_line"] = assemble_log(
                     blob, d["failed"]
                 )
+                d["log"] = "present" if d["logtext"] is not None else "none"
             except zipfile.BadZipFile:
+                d["log"] = "unreadable"
                 log(f"run {run_id} attempt {attempt}: log archive unreadable")
         # The error line goes into incident.json and the outcome line, so it
         # is redacted here; the log and the step tail are redacted when written.
@@ -1297,6 +1324,7 @@ class Harvester:
             "error_line": d["error_line"],
             "html_url": run.get("html_url"),
             "facts": "missing",
+            "log": d["log"],
             "backfill": self.backfill,
         }
 

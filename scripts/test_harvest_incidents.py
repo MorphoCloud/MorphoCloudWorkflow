@@ -404,6 +404,13 @@ def test_rule1_dispatch_line_makes_automation_whoever_the_actor_is(cfg, tmp_path
     assert hv.actor_kind(
         cfg, run_of("muratmaga"), "MorphoCloud/Instances", None, None, d
     ) == ("automation", "dispatch-line")
+    # a RERUN keeps attempt 1's created_at, so the line it matches is attempt
+    # 1's; the person who clicked re-run is the actor of attempt 2 (T6 on Test)
+    rerun = dict(run_of("muratmaga"), run_attempt=2)
+    assert hv.actor_kind(cfg, rerun, "MorphoCloud/Instances", None, None, d) == (
+        "admin",
+        "admin",
+    )
     # 61 s away, or another repository: not this clock's dispatch
     late = run_of("muratmaga", created="2026-11-09T03:01:02Z")
     assert (
@@ -443,6 +450,24 @@ def test_rule1_legacy_dispatched_line_and_issue_match(cfg, tmp_path):
     )
     assert (
         hv.actor_kind(cfg, alert, "MorphoCloud/Instances", 215, None, d)[0] == "admin"
+    )
+
+
+def test_schedule_and_workflow_run_events_are_automation(cfg, tmp_path):
+    d = dispatch_log(tmp_path, [])
+    # GitHub credits a schedule run to the workflow file's last committer
+    sched = run_of("jcfr", event="schedule", wf="collect-instance-uptime.yml")
+    assert hv.actor_kind(cfg, sched, "r", None, None, d) == (
+        "automation",
+        "event:schedule",
+    )
+    # a RERUN of a scheduled run is whoever clicked: the five rules decide
+    rerun = dict(sched, run_attempt=2, triggering_actor={"login": "muratmaga"})
+    assert hv.actor_kind(cfg, rerun, "r", None, None, d) == ("admin", "admin")
+    follow = run_of("Sarah-G-88", event="workflow_run", wf="report-dropped-command.yml")
+    assert hv.actor_kind(cfg, follow, "r", None, None, d) == (
+        "automation",
+        "event:workflow_run",
     )
 
 
@@ -778,3 +803,26 @@ def test_remote_diag_parses_listing_and_forgets_rotated_files(tmp_path, monkeypa
     }
     shipped = (tmp_path / "store/runner/2026/11/09/control-host/diag.log").read_text()
     assert shipped == "# Worker_1.log\nERR two\n"
+
+
+def test_assemble_log_empty_archive_means_no_log():
+    """A run cancelled in the concurrency queue has an empty archive (seen on
+    Test: 61 of 189 backfilled incidents); no empty job.log.gz is written."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w"):
+        pass
+    assert hv.assemble_log(buf.getvalue(), None) == (None, "", None)
+    # an archive with only nested files is still kept
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("job/system.txt", "sys\n")
+    whole, _, _ = hv.assemble_log(buf.getvalue(), None)
+    assert whole == "===== job/system.txt =====\nsys\n"
+    # nested files without a trailing newline, and a non-text entry, in the fallback
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("job/a.txt", "no newline")
+        zf.writestr("job/b.txt", "second")
+        zf.writestr("job/blob.bin", b"\x00\x01")
+    whole, _, _ = hv.assemble_log(buf.getvalue(), None)
+    assert whole == "===== job/a.txt =====\nno newline\n===== job/b.txt =====\nsecond\n"

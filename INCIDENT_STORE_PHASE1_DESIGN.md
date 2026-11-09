@@ -151,10 +151,12 @@ workflow is visible without being lost.
    match wins; `unclassified` otherwise. `github.api_5xx` matches
    `HTTP 5\d\d|50[234] |Server Error|Bad Gateway|Gateway Time-?out` **on the
    error line only**.
-7. **`actor_kind`** as the plan's five rules. Rule 1 reads the runner-side logs
-   for `DISPATCH` lines (same workflow, same issue where there is one, within 60
-   s of `created_at`). Rules 2–5 need the run's `actor`, `triggering_actor` and
-   the issue's author (`issues/<n>`, cached per cycle).
+7. **`actor_kind`** as the plan's five rules, preceded by rule 0 (a `schedule`
+   or `workflow_run` event's first attempt is automation; see "As built"). Rule
+   1 reads the runner-side logs for `DISPATCH` lines (same workflow, same issue
+   where there is one, within 60 s of `created_at`). Rules 2–5 need the run's
+   `actor`, `triggering_actor` and the issue's author (`issues/<n>`, cached per
+   cycle).
 8. **Incidents** (every `failure`, `cancelled`, `dropped`, and every `alert`
    run): the directory of the plan's "Records", `incident.json` with every field
    the collector can fill (`facts: missing` until PR B), `job.log.gz`,
@@ -466,6 +468,23 @@ crontab (harvester line inside the block) and drops the hand-added line.
   found a dropped command, so its run is `dropped` only when its "Tell the user
   the command was dropped" step ran (`dropped_report` in
   `incident-sources.yml`); otherwise it is a plain success and no incident.
+- **`actor_kind` has a rule 0**: a run whose event is `schedule` (GitHub's own
+  scheduler, the backstop) or `workflow_run` (a follow-up such as
+  `report-dropped-command`) is `automation` whoever the actor is. GitHub credits
+  such a run to the last person who committed the workflow file, who is not an
+  admin on Test (jcfr), so the first backfill read August's scheduled ticks as
+  `member`. Found and fixed on the day of the Test install; the sandbox was
+  reset and backfilled again. Rule 0 applies to the first attempt only: a rerun
+  keeps the event but its `triggering_actor` is the person who clicked, and the
+  five rules below decide it. Rule 1 (the `DISPATCH` join) is gated the same
+  way: a rerun keeps attempt 1's `created_at`, so the line it would match is
+  attempt 1's (test T6 found this: the rerun read as `automation`).
+- **Backfill limitation, stated**: the runner's dispatch log starts when the
+  dispatcher was (re)installed (2026-11-03 on Test), so a crontab-dispatched run
+  older than that has no `DISPATCH` line to join and reads as `admin` (the
+  dispatcher token's owner). The record keeps `actor`, `event` and `created_at`,
+  so PR B's `--reclassify` can revisit them; the production dispatch log reaches
+  further back.
 - **Refusals** are recognized by a failed job named in `refusal_jobs`
   (`authorize`, the job every `report-command-outcome` caller fails
   deliberately) as well as by the step names in `refusal_steps`, and by PR B's
@@ -502,7 +521,7 @@ crontab (harvester line inside the block) and drops the hand-added line.
   root in a checkout, so the same script runs in both places.
 - **Tests**: `scripts/test_harvest_incidents.py` (redaction fixture T11, the
   wrapper T12, the installer's crontab line equals the renderer's, signatures,
-  refusals, log assembly, identification, the five actor rules, context feeds,
+  refusals, log assembly, identification, the six actor rules, context feeds,
   labels at a moment, store dedupe and dry run, log offsets and rotation),
   `scripts/test_check_dispatch_logging.py` (one shell site, one multi-line
   Python site with the line and one without, the 30-line window, and the
