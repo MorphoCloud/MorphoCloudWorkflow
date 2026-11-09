@@ -476,7 +476,9 @@ crontab (harvester line inside the block) and drops the hand-added line.
   `member`. Found and fixed on the day of the Test install; the sandbox was
   reset and backfilled again. Rule 0 applies to the first attempt only: a rerun
   keeps the event but its `triggering_actor` is the person who clicked, and the
-  five rules below decide it.
+  five rules below decide it. Rule 1 (the `DISPATCH` join) is gated the same
+  way: a rerun keeps attempt 1's `created_at`, so the line it would match is
+  attempt 1's (test T6 found this: the rerun read as `automation`).
 - **Backfill limitation, stated**: the runner's dispatch log starts when the
   dispatcher was (re)installed (2026-11-03 on Test), so a crontab-dispatched run
   older than that has no `DISPATCH` line to join and reads as `admin` (the

@@ -818,3 +818,11 @@ def test_assemble_log_empty_archive_means_no_log():
         zf.writestr("job/system.txt", "sys\n")
     whole, _, _ = hv.assemble_log(buf.getvalue(), None)
     assert whole == "===== job/system.txt =====\nsys\n"
+    # nested files without a trailing newline, and a non-text entry, in the fallback
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("job/a.txt", "no newline")
+        zf.writestr("job/b.txt", "second")
+        zf.writestr("job/blob.bin", b"\x00\x01")
+    whole, _, _ = hv.assemble_log(buf.getvalue(), None)
+    assert whole == "===== job/a.txt =====\nno newline\n===== job/b.txt =====\nsecond\n"
