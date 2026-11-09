@@ -112,6 +112,12 @@ refusal_steps:
   - "Workflow management not approved (failure)"
   - "Fail when the instance does not exist"
   - "Check workshop organizer team membership"
+  # validate-command-*.yml: the deliberate exit 1 when the command text is not
+  # a command (the member is told in a comment). Day one of production showed
+  # these as the only "failures" of the day; they are refusals.
+  - "Validate instance command"
+  - "Validate workshop command"
+  - "Validate course command"
 
 # Runner-side logs shipped in full (F1-F4), each from its last offset. A path
 # that does not exist on a runner is skipped (pickup.log exists on Test only).
