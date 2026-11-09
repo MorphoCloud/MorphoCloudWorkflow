@@ -479,8 +479,21 @@ crontab (harvester line inside the block) and drops the hand-added line.
   (`name_source: log`); when only the issue number is known the name is derived
   from the source's prefix (`name_source: derived`) so the late snapshot can
   still be taken.
-- **The harvester's own log** (`~/harvest-incidents.log`) is one of the runner
-  logs it ships (F), so a crashing cycle leaves its traceback in the store.
+- **The harvester's own log is not shipped** (a first draft did): every cycle
+  writes a line, so shipping it would make every cycle a commit and silence the
+  watchdog's "quiet store" signal. A cycle's failure reaches the store as
+  `last_error` in `state/harvester.json` (one bad run is contained to that run,
+  counted in `runs_failed`, and retried by the next cycle or the hourly
+  lookback); the traceback stays in `~/harvest-incidents.log` on the runner.
+- **Order of writes**: a run's files are written first and the rollup's
+  `recorded` mark last, so a failure halfway leaves the run unrecorded and
+  retried; rollups are flushed once per cycle (or per backfill day), not once
+  per run. A failed `git pull --rebase` is aborted at once so no cycle finds a
+  rebase in progress; the commit stays local for the next push.
+- **`_diag` lines are shipped once**: per-file offsets (local and, over SSH, for
+  the control runner) rather than "files modified since", which would re-ship
+  every matching line of the active runner log each cycle; the remote offsets
+  advance only after a complete read.
 - **`MORPHOCLOUD_CFG_DIR`** overrides `~/.config/morphocloud` so a `--dry-run`
   can be made from a laptop with a scratch token file (used for the first dry
   run against Test-Instances on 2026-11-09: no cursor, so the 48-hour lookback

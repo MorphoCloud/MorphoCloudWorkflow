@@ -39,6 +39,8 @@ for wf in "$@"; do
     echo "$ts DISPATCH $wf repo=$REPO issue=- by=morphocloud-dispatch.sh result=ok" >>"$LOG"
   else
     err=$(printf '%s' "$err" | tr '\n' ' ')
-    echo "$ts DISPATCH $wf repo=$REPO issue=- by=morphocloud-dispatch.sh result=FAILED ${err: -200}" >>"$LOG"
+    # (bash's "${err: -200}" is EMPTY when err is shorter than 200 characters)
+    if (( ${#err} > 200 )); then err="${err: -200}"; fi
+    echo "$ts DISPATCH $wf repo=$REPO issue=- by=morphocloud-dispatch.sh result=FAILED $err" >>"$LOG"
   fi
 done

@@ -581,9 +581,11 @@ def test_store_marks_and_dedupes(tmp_path):
     st.mark("2026-11-09T03:00:07Z", 1, 2, "follow-through.yml", "failure")
     assert st.recorded("2026-11-09T03:00:07Z", 1, 1)
     assert st.recorded("2026-11-09T03:00:07Z", 1, 2)
+    assert not (tmp_path / "rollups").exists()  # nothing on disk until flush()
+    st.flush()
     roll = json.loads((tmp_path / "rollups/2026/11/09/instances.json").read_text())
     assert roll["counts"] == {"follow-through.yml": {"success": 2, "failure": 1}}
-    assert roll["recorded"] == ["1-1", "2-1", "1-2"]
+    assert roll["recorded"] == ["1-1", "1-2", "2-1"]
     # a fresh Store reads the same day file back
     assert hv.Store(tmp_path, "instances", dry_run=False).recorded(
         "2026-11-09T03:00:07Z", 2, 1
@@ -595,8 +597,9 @@ def test_store_dry_run_writes_nothing(tmp_path):
     st.mark("2026-11-09T03:00:07Z", 1, 1, "x.yml", "success")
     st.write_gz("logs/a.log.gz", "text")
     st.append_jsonl("outcomes/x.jsonl", {"a": 1})
+    st.flush()
     assert list(tmp_path.iterdir()) == []
-    assert st.writes == 3  # noqa: PLR2004 — the three writes above
+    assert st.writes == 3  # noqa: PLR2004 — gz, jsonl, and the flushed rollup
 
 
 def test_runner_log_offsets_restart_on_rotation(tmp_path, monkeypatch, cfg):
@@ -642,3 +645,110 @@ def test_timestamps_are_utc():
     assert hv.day_path("2026-11-09T03:00:07Z") == "2026/11/09"
     assert hv.month_path("2026-11-09T03:00:07Z") == "2026/11"
     assert hv.parse_ts(None) == 0.0
+
+
+# --- review findings (local review of PR #402) ---------------------------------------------
+
+
+def test_identify_sweep_runs_take_no_instance_from_the_log(cfg):
+    run = {
+        "display_title": "Reconcile Instances",
+        "event": "workflow_dispatch",
+        "path": ".github/workflows/reconcile-instances.yml",
+    }
+    logtext = "checking instance-12 ... instance-57 ... issue_number=57"
+    ident = hv.identify(run, logtext, "instance-", cfg, kind="sweep")
+    assert ident["issue"] is None
+    assert ident["name"] is None
+    # an alert fired on an issue comment still gets its issue from the title
+    alert = {
+        "display_title": "MC-Individual-230",
+        "event": "issue_comment",
+        "path": ".github/workflows/on-admin-mention.yml",
+    }
+    ident = hv.identify(alert, logtext, "instance-", cfg, kind="alert")
+    assert ident["issue"] == 230  # noqa: PLR2004
+    assert ident["name"] is None  # not derived for an alert
+
+
+def test_feeds_empty_is_not_unavailable(cfg, monkeypatch):
+    monkeypatch.setattr(
+        hv,
+        "fetch_json",
+        lambda *_a, **_k: {"results": [], "incidents": []},
+    )
+    feeds = hv.Feeds(cfg)
+    assert feeds.access() == []
+    assert feeds.github() == []
+    assert (
+        hv.access_context(feeds.access(), "jetstream", 0, 1)["status"] == "operational"
+    )
+    assert hv.github_status_context(feeds.github(), 0, 1)["status"] == "operational"
+
+
+def test_diag_new_lines_ships_each_line_once(tmp_path):
+    d = tmp_path / "_diag"
+    d.mkdir()
+    f = d / "Runner_1.log"
+    f.write_text("INFO ok\nERR one\n")
+    offsets: dict = {}
+    pat = re.compile("ERR|Exception")
+    assert hv.diag_new_lines(d, offsets, pat) == ["# Runner_1.log\n", "ERR one\n"]
+    assert hv.diag_new_lines(d, offsets, pat) == []  # touched, nothing new
+    with f.open("a") as fh:
+        fh.write("INFO more\nException two\npartial")
+    assert hv.diag_new_lines(d, offsets, pat) == ["# Runner_1.log\n", "Exception two\n"]
+    f.unlink()
+    assert hv.diag_new_lines(d, offsets, pat) == []
+    assert offsets == {}
+
+
+def test_safe_record_contains_one_bad_run(monkeypatch):
+    h = hv.Harvester.__new__(hv.Harvester)
+    h.errors = []
+    monkeypatch.setattr(
+        h, "record", lambda _run: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+    assert h.safe_record({"id": 1, "run_attempt": 1}) is False
+    assert h.errors == ["run 1/1: RuntimeError: boom"]
+
+
+def test_dispatch_sh_logs_the_failure_reason(tmp_path):
+    """The bash '${err: -200}' trap: an empty tail when stderr is short."""
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "gh").write_text("#!/bin/sh\necho 'HTTP 502: Bad Gateway' >&2\nexit 1\n")
+    (fake / "gh").chmod(0o755)
+    cfg_dir = tmp_path / "cfg"
+    cfg_dir.mkdir()
+    (cfg_dir / "dispatch.pat").write_text("x\n")
+    env = {
+        "PATH": f"{fake}:/usr/bin:/bin",
+        "HOME": str(tmp_path),
+        "MORPHOCLOUD_DISPATCH_REPO": "MorphoCloud/Test-Instances",
+        "MORPHOCLOUD_DISPATCH_TOKEN_FILE": str(cfg_dir / "dispatch.pat"),
+    }
+    subprocess.run(
+        ["bash", str(SCRIPTS / "morphocloud-dispatch.sh"), "follow-through.yml"],
+        env=env,
+        check=True,
+    )
+    line = (tmp_path / "morphocloud-dispatch.log").read_text().strip()
+    assert (
+        " DISPATCH follow-through.yml repo=MorphoCloud/Test-Instances issue=- by=morphocloud-dispatch.sh result=FAILED HTTP 502: Bad Gateway"
+        in line
+    )
+    assert hv.DISPATCH_RE.match(line)
+
+
+def test_assemble_log_matches_a_sanitized_job_folder():
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("0_Create _ provision_ step.txt", "x\n")
+        zf.writestr("Create _ provision_ step/2_Poll.txt", "a\n##[error]boom\n")
+        zf.writestr("Other job/2_Poll.txt", "##[error]not this one\n")
+    _, tail, error = hv.assemble_log(
+        buf.getvalue(), {"job": "Create / provision: step", "step": "Poll", "number": 2}
+    )
+    assert error == "boom"
+    assert tail == "a\n##[error]boom\n"

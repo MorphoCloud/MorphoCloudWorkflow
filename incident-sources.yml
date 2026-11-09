@@ -115,12 +115,14 @@ refusal_steps:
 
 # Runner-side logs shipped in full (F1-F4), each from its last offset. A path
 # that does not exist on a runner is skipped (pickup.log exists on Test only).
+# NOT the harvester's own log: shipping it would make every cycle a change
+# (the "committed" line), one commit every five minutes, and the watchdog's
+# "quiet store = stopped harvester" signal would be gone.
 runner_logs:
   - { name: morphocloud-dispatch, path: ~/morphocloud-dispatch.log }
   - { name: fip-police, path: ~/fip-police.log }
   - { name: token-expiry, path: ~/token-expiry.log }
   - { name: pickup, path: ~/mc-data/pickup.log }
-  - { name: harvest-incidents, path: ~/harvest-incidents.log }
 # The Actions runner service's own logs (F5): only matching lines, from files
 # changed since the last cycle.
 diag_dir: ~/actions-runner/_diag

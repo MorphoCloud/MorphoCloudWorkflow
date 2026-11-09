@@ -63,6 +63,7 @@ import io
 import json
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -361,7 +362,11 @@ class Store:
         self.short = short
         self.dry_run = dry_run
         self.writes = 0
+        # day -> {"counts": {wf: {result: n}}, "recorded": set("<run>-<attempt>")};
+        # kept in memory and written by flush() (once per cycle, or per backfill
+        # day), not once per run: a busy day has thousands of runs.
         self._rollups: dict[str, dict] = {}
+        self._dirty: set[str] = set()
 
     # -- paths
     def rel(self, *parts: str) -> Path:
@@ -371,15 +376,16 @@ class Store:
         day = day_path(created_at)
         if day not in self._rollups:
             p = self.rel("rollups", day, f"{self.short}.json")
-            data = {"counts": {}, "recorded": []}
+            data: dict = {}
             if p.is_file():
                 try:
                     data = json.loads(p.read_text("utf-8"))
                 except ValueError:
                     log(f"rollup {p} unreadable; starting it over")
-            data.setdefault("counts", {})
-            data.setdefault("recorded", [])
-            self._rollups[day] = data
+            self._rollups[day] = {
+                "counts": data.get("counts") or {},
+                "recorded": set(data.get("recorded") or []),
+            }
         return self._rollups[day]
 
     def recorded(self, created_at: str, run_id: int, attempt: int) -> bool:
@@ -388,11 +394,22 @@ class Store:
     def mark(
         self, created_at: str, run_id: int, attempt: int, workflow: str, result: str
     ) -> None:
+        """Called LAST for a run, after its files are written, so a failure
+        halfway leaves the run unrecorded and the next cycle retries it."""
         roll = self._rollup(created_at)
-        roll["recorded"].append(f"{run_id}-{attempt}")
+        roll["recorded"].add(f"{run_id}-{attempt}")
         roll["counts"].setdefault(workflow, {})
         roll["counts"][workflow][result] = roll["counts"][workflow].get(result, 0) + 1
-        self.write_json(f"rollups/{day_path(created_at)}/{self.short}.json", roll)
+        self._dirty.add(day_path(created_at))
+
+    def flush(self) -> None:
+        for day in sorted(self._dirty):
+            roll = self._rollups[day]
+            self.write_json(
+                f"rollups/{day}/{self.short}.json",
+                {"counts": roll["counts"], "recorded": sorted(roll["recorded"])},
+            )
+        self._dirty.clear()
 
     # -- writes
     def _write(self, rel: str, data: bytes, append: bool = False) -> None:
@@ -445,17 +462,33 @@ class Store:
     def commit_push(self, message: str) -> bool:
         """True when a commit was made. A failed push is logged and left for
         the next cycle (the commit stays local); nothing is lost."""
+        self.flush()
         if self.dry_run:
             log(f"would commit: {message}")
             return False
-        self.git("add", "-A")
-        if self.git("status", "--porcelain").stdout.strip() == "":
+        try:
+            self.git("add", "-A")
+            if self.git("status", "--porcelain").stdout.strip() == "":
+                return False
+            self.git("commit", "-q", "-m", message)
+        except subprocess.CalledProcessError as e:
+            log(f"git commit failed: {e.stderr.strip()[-300:]}")
             return False
-        self.git("commit", "-q", "-m", message)
         try:
             self.git("pull", "-q", "--rebase")
         except subprocess.CalledProcessError as e:
-            log(f"pull --rebase failed ({e.stderr.strip()[-200:]}); pushing anyway")
+            # Never leave a rebase in progress: it would wedge every later
+            # cycle. Abort it; the commit stays local and the next cycle retries.
+            log(
+                f"pull --rebase failed ({e.stderr.strip()[-200:]}); aborting the rebase"
+            )
+            subprocess.run(
+                ["git", "-C", str(self.root), "rebase", "--abort"],
+                capture_output=True,
+                check=False,
+                timeout=120,
+            )
+            return True
         try:
             self.git("push", "-q")
         except subprocess.CalledProcessError as e:
@@ -471,7 +504,13 @@ class Local:
     def __init__(self, path: Path, dry_run: bool):
         self.path = path
         self.dry_run = dry_run
-        self.data = {"watch": {}, "offsets": {}, "lookback_at": 0, "diag_since": 0}
+        self.data = {
+            "watch": {},
+            "offsets": {},
+            "lookback_at": 0,
+            "diag_offsets": {},
+            "diag_remote_offsets": {},
+        }
         if path.is_file():
             try:
                 self.data.update(json.loads(path.read_text("utf-8")))
@@ -572,6 +611,10 @@ def is_refusal(cfg: Config, failed: dict | None, logtext: str | None) -> str | N
     return None
 
 
+def _plain(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
 def assemble_log(zip_bytes: bytes, failed: dict | None) -> tuple[str, str, str | None]:
     """The whole log as one text (the per-job files in order, a header line
     each), the failed step's last TAIL_LINES lines, and its last error line."""
@@ -593,15 +636,15 @@ def assemble_log(zip_bytes: bytes, failed: dict | None) -> tuple[str, str, str |
                 parts.append("\n")
         if failed and failed.get("number") is not None:
             prefix = f"{failed['number']}_"
+            # The archive's job folder is the job name with punctuation
+            # replaced, so compare on letters and digits only.
+            want = _plain(str(failed.get("job") or ""))[:40]
             candidates = [
                 n
                 for n in names
                 if "/" in n
                 and n.rsplit("/", 1)[1].startswith(prefix)
-                and (
-                    failed.get("job") is None
-                    or n.split("/", 1)[0].startswith(str(failed["job"])[:40])
-                )
+                and (not want or _plain(n.split("/", 1)[0]).startswith(want))
             ]
             if candidates:
                 text = zf.read(candidates[0]).decode("utf-8", "replace")
@@ -632,8 +675,16 @@ def classify(
     return "unclassified"
 
 
-def identify(run: dict, logtext: str | None, prefix: str, cfg: Config) -> dict:
-    """issue number, instance name and command, from the title and the log."""
+def identify(
+    run: dict, logtext: str | None, prefix: str, cfg: Config, kind: str = "command"
+) -> dict:
+    """issue number, instance name and command, from the title and the log.
+
+    The log is consulted for the issue and the instance only for a command
+    run, which is about one instance. A sweep or alert run names many
+    instances in its log, and the first one would be an arbitrary, wrong
+    attribution; those runs get an issue only from their title (an
+    `issue_comment` or `issues` event)."""
     issue = None
     m = TITLE_ISSUE_RE.search(run.get("display_title") or "")
     if m and run.get("event") in ("issue_comment", "issues"):
@@ -641,7 +692,7 @@ def identify(run: dict, logtext: str | None, prefix: str, cfg: Config) -> dict:
     name = None
     name_source = None
     command = None
-    if logtext:
+    if logtext and kind == "command":
         nm = re.search(re.escape(prefix) + r"(\d+)\b", logtext)
         if nm:
             name = nm.group(0)
@@ -651,6 +702,7 @@ def identify(run: dict, logtext: str | None, prefix: str, cfg: Config) -> dict:
             im = ISSUE_LINE_RE.search(logtext)
             if im:
                 issue = int(im.group(1))
+    if logtext:
         cm = re.search(r"command_name=(\w+)", logtext)
         if cm:
             command = "/" + cm.group(1)
@@ -659,7 +711,7 @@ def identify(run: dict, logtext: str | None, prefix: str, cfg: Config) -> dict:
             cm = re.search(r"(?<![\w/])/(" + words + r")\b", logtext)
             if cm:
                 command = "/" + cm.group(1)
-    if name is None and issue is not None:
+    if name is None and issue is not None and kind == "command":
         name = f"{prefix}{issue}"
         name_source = "derived"
     if command is None:
@@ -784,7 +836,7 @@ class Feeds:
             except (urllib.error.URLError, ValueError, OSError, TimeoutError) as e:
                 log(f"ACCESS feed unavailable: {e}")
                 self._access = False
-        return self._access or None
+        return None if self._access is False else self._access
 
     def github(self) -> list[dict] | None:
         if self._github is None:
@@ -796,7 +848,7 @@ class Feeds:
             except (urllib.error.URLError, ValueError, OSError, TimeoutError) as e:
                 log(f"githubstatus feed unavailable: {e}")
                 self._github = False
-        return self._github or None
+        return None if self._github is False else self._github
 
 
 def access_context(
@@ -1045,6 +1097,7 @@ class Harvester:
         self._issues: dict[int, dict | None] = {}
         self.runs_recorded = 0
         self.incidents_recorded = 0
+        self.errors: list[str] = []
         self.cursor: str = (store.read_json("state/cursors.json") or {}).get(
             "source_cursor"
         ) or ""
@@ -1102,7 +1155,7 @@ class Harvester:
             result = "refused"
         result, is_incident = finalize(self.cfg, workflow, kind, result, d["jobs"])
 
-        ident = identify(run, d["logtext"], self.prefix, self.cfg)
+        ident = identify(run, d["logtext"], self.prefix, self.cfg, kind)
         issue_number = ident["issue"]
         issue = self.issue(issue_number) if issue_number else None
         issue_author = ((issue or {}).get("user") or {}).get("login")
@@ -1136,8 +1189,8 @@ class Harvester:
             "jobs": [job_summary(j) for j in d["jobs"]],
         }
 
-        # -- write
-        self.store.mark(created, run_id, attempt, workflow, result)
+        # -- write (the mark comes last: a failure above leaves the run
+        # unrecorded, and the next cycle or the hourly lookback retries it)
         if wants_outcome_line(kind, result):
             self.store.append_jsonl(
                 f"outcomes/{day_path(created)}/{self.short}.jsonl", record
@@ -1152,6 +1205,7 @@ class Harvester:
             self.store.write_gz(
                 f"logs/{day_path(created)}/{run_id}-{attempt}.log.gz", redacted
             )
+        self.store.mark(created, run_id, attempt, workflow, result)
         self.runs_recorded += 1
         log(
             f"recorded {workflow} run {run_id}/{attempt} {result} {actor[0]}"
@@ -1159,6 +1213,19 @@ class Harvester:
             + (" INCIDENT" if is_incident else "")
         )
         return True
+
+    def safe_record(self, run: dict) -> bool:
+        """record() with the failure contained to this one run: it is logged,
+        counted in state/harvester.json (last_error), left unrecorded for the
+        next cycle or the lookback, and the cycle goes on with the next run."""
+        try:
+            return self.record(run)
+        except Exception as e:
+            detail = f"run {run.get('id')}/{run.get('run_attempt')}: {type(e).__name__}: {str(e)[:200]}"
+            log(f"FAILED to record {detail}")
+            traceback.print_exc()
+            self.errors.append(detail)
+            return False
 
     @staticmethod
     def no_detail() -> dict:
@@ -1189,6 +1256,10 @@ class Harvester:
                 )
             except zipfile.BadZipFile:
                 log(f"run {run_id} attempt {attempt}: log archive unreadable")
+        # The error line goes into incident.json and the outcome line, so it
+        # is redacted here; the log and the step tail are redacted when written.
+        if d["error_line"]:
+            d["error_line"], _ = self.redactor.text(d["error_line"])
         return d
 
     def envelope(self, run: dict, kind: str, d: dict, actor: tuple) -> dict:
@@ -1325,7 +1396,7 @@ class Harvester:
         for run in runs:
             self.advance_cursor(run.get("created_at") or "")
             if run.get("status") == "completed":
-                self.record(run)
+                self.safe_record(run)
             else:
                 self.local.data["watch"][str(run["id"])] = run.get("created_at")
         for status in ("queued", "in_progress"):
@@ -1339,15 +1410,20 @@ class Harvester:
                 del self.local.data["watch"][run_id]
                 continue
             if run.get("status") == "completed":
-                self.record(run)
-                del self.local.data["watch"][run_id]
+                recorded = self.safe_record(run)
+                if recorded or self.store.recorded(
+                    run.get("created_at") or "",
+                    int(run["id"]),
+                    int(run.get("run_attempt") or 1),
+                ):
+                    del self.local.data["watch"][run_id]  # else: retried next cycle
 
     def lookback(self, now: float) -> None:
         if now - float(self.local.data.get("lookback_at") or 0) < LOOKBACK_EVERY:
             return
         missing = 0
         for run in self.list_window(now - LOOKBACK, now):
-            if run.get("status") == "completed" and self.record(run):
+            if run.get("status") == "completed" and self.safe_record(run):
                 missing += 1
         self.local.data["lookback_at"] = now
         if missing:
@@ -1459,29 +1535,51 @@ class Harvester:
             offsets[entry["name"]] = offset + cut
             status[entry["name"]] = offset + cut
         if self.cfg.diag_dir:
-            since = float(self.local.data.get("diag_since") or 0)
-            lines = diag_lines(
-                Path(self.cfg.diag_dir).expanduser(), since, self.cfg.diag_match
+            diag_offsets = self.local.data.setdefault("diag_offsets", {})
+            lines = diag_new_lines(
+                Path(self.cfg.diag_dir).expanduser(), diag_offsets, self.cfg.diag_match
             )
             if lines:
                 text, _ = self.redactor.text("".join(lines))
                 self.store.append_text(f"runner/{day}/{host}/diag.log", text)
-            self.local.data["diag_since"] = now
             control = self.src.get("control_host")
             if control:
-                status["diag_remote"] = self.remote_diag(control, since, day)
+                status["diag_remote"] = self.remote_diag(control, day)
         return status
 
-    def remote_diag(self, control: str, since: float, day: str) -> str:
-        # GNU find takes a date string, not @epoch (checked on the Test runner).
-        since_text = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(since))
-        cmd = (
-            f"find ~/actions-runner/_diag -type f -newermt '{since_text}' -print0 2>/dev/null | "
-            f"xargs -0 grep -HE {json.dumps(self.cfg.diag_match.pattern)} 2>/dev/null; hostname"
+    def remote_diag(self, control: str, day: str) -> str:
+        """The control runner's _diag error lines over SSH, from per-file
+        offsets kept here (`diag_remote_offsets`), so a line is shipped once.
+        The offsets advance only when the whole read succeeded; an unreachable
+        host loses nothing, the next cycle reads from the same offsets."""
+        offsets = self.local.data.setdefault("diag_remote_offsets", {})
+        cases = "".join(
+            f"    {shlex.quote(name)}) off={int(off)};;\n"
+            for name, off in offsets.items()
+        )
+        script = (
+            "cd ~/actions-runner/_diag || exit 3\nhostname\n"
+            'for f in *; do\n  [ -f "$f" ] || continue\n'
+            '  size=$(stat -c %s "$f"); off=0\n'
+            f'  case "$f" in\n{cases}  esac\n'
+            '  [ "$size" -lt "$off" ] && off=0\n  [ "$size" -eq "$off" ] && continue\n'
+            '  echo "==FILE $f $size"\n'
+            f'  tail -c +$((off+1)) "$f" | grep -E {shlex.quote(self.cfg.diag_match.pattern)} || true\n'
+            "done\n"
         )
         try:
             r = subprocess.run(
-                ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", control, cmd],
+                [
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=10",
+                    control,
+                    "bash",
+                    "-s",
+                ],
+                input=script,
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -1489,14 +1587,24 @@ class Harvester:
             )
         except (subprocess.TimeoutExpired, OSError):
             return "unreachable"
-        if r.returncode != 0 and not r.stdout.strip():
+        if r.returncode != 0:
             return "unreachable"
         lines = r.stdout.splitlines()
-        host = lines[-1].strip() if lines else control.split("@")[-1]
-        body = "\n".join(lines[:-1])
+        host = lines[0].strip() if lines else control.split("@")[-1]
+        new_offsets: dict[str, int] = dict(offsets)
+        body: list[str] = []
+        for line in lines[1:]:
+            if line.startswith("==FILE "):
+                name, size = line[len("==FILE ") :].rsplit(" ", 1)
+                new_offsets[name] = int(size)
+                body.append(f"# {name}\n")
+            else:
+                body.append(line + "\n")
         if body:
-            text, _ = self.redactor.text(body + "\n")
+            text, _ = self.redactor.text("".join(body))
             self.store.append_text(f"runner/{day}/{host}/diag.log", text)
+        offsets.clear()
+        offsets.update(new_offsets)
         return "ok"
 
     def finish(
@@ -1504,6 +1612,8 @@ class Harvester:
     ) -> None:
         """state/cursors.json and state/harvester.json, written only when
         something moved (so an idle store means a stopped harvester or clock)."""
+        if self.errors and not error:
+            error = f"{len(self.errors)} run(s) could not be recorded; first: {self.errors[0]}"
         changed = self.cursor_moved or self.runs_recorded or self.store.writes
         previous = self.store.read_json("state/harvester.json") or {}
         if error != previous.get("last_error"):
@@ -1526,6 +1636,7 @@ class Harvester:
                     "rate_limit_remaining": self.gh.remaining,
                     "runs_recorded": self.runs_recorded,
                     "incidents_recorded": self.incidents_recorded,
+                    "runs_failed": len(self.errors),
                     "watching": len(self.local.data.get("watch") or {}),
                     **extra,
                 },
@@ -1574,7 +1685,7 @@ class Harvester:
                     )
                 current_day = day
                 if run.get("status") == "completed":
-                    self.record(run)
+                    self.safe_record(run)
                 else:
                     self.local.data["watch"][str(run["id"])] = run.get("created_at")
             log(
@@ -1590,21 +1701,44 @@ class Harvester:
         return 0
 
 
-def diag_lines(diag_dir: Path, since: float, pattern: re.Pattern) -> list[str]:
+def diag_new_lines(diag_dir: Path, offsets: dict, pattern: re.Pattern) -> list[str]:
+    """The matching lines added to each _diag file since its offset (updated
+    in place), so a line is shipped once however often the file is touched.
+    A file shorter than its offset starts over; a file that is gone is forgotten."""
     out: list[str] = []
     if not diag_dir.is_dir():
         return out
+    seen: set[str] = set()
     for p in sorted(diag_dir.iterdir()):
         try:
-            if not p.is_file() or p.stat().st_mtime <= since:
+            if not p.is_file():
                 continue
-            text = p.read_text("utf-8", "replace")
+            seen.add(p.name)
+            size = p.stat().st_size
+            off = int(offsets.get(p.name, 0))
+            if size < off:
+                off = 0
+            if size == off:
+                continue
+            with p.open("rb") as fh:
+                fh.seek(off)
+                chunk = fh.read(size - off)
         except OSError:
             continue
-        hits = [line for line in text.splitlines() if pattern.search(line)]
+        cut = chunk.rfind(b"\n") + 1
+        if cut == 0:
+            continue
+        hits = [
+            line
+            for line in chunk[:cut].decode("utf-8", "replace").splitlines()
+            if pattern.search(line)
+        ]
         if hits:
             out.append(f"# {p.name}\n")
             out.extend(h + "\n" for h in hits)
+        offsets[p.name] = off + cut
+    for name in [n for n in offsets if n not in seen]:
+        del offsets[name]
     return out
 
 

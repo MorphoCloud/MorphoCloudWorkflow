@@ -27,7 +27,8 @@ dispatch_alert() {
     echo "$(ts) $name: alert dispatched ($days days left)"
   else
     err=$(printf '%s' "$err" | tr '\n' ' ')
-    echo "$(ts) DISPATCH token-expiry-alert.yml repo=MorphoCloud/MorphoCloudAnalytics issue=- by=check-dispatch-tokens.sh result=FAILED ${err: -200}"
+    if (( ${#err} > 200 )); then err="${err: -200}"; fi  # "${err: -200}" is empty when shorter
+    echo "$(ts) DISPATCH token-expiry-alert.yml repo=MorphoCloud/MorphoCloudAnalytics issue=- by=check-dispatch-tokens.sh result=FAILED $err"
     echo "$(ts) $name: FAILED to dispatch alert"
   fi
 }
