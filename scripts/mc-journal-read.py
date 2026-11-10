@@ -27,13 +27,14 @@ the last entry written and the next call continues from there.
 The second and only other form reads a log file one of our services writes
 outside the journal (a cron job's `>> /var/log/...`):
 
-    file <name> <offset>
+    file <name> <offset | ->
 
 `name` must be a line `<name> <absolute path>` in the root-owned allowlist
 /etc/morphocloud/mc-journal-files (written by the installer); nothing else is
 readable. Output: the bytes from `offset` up to the last whole line (at most
 CAP), then `##OFFSET <new offset>`. A file shorter than `offset` (rotated or
-rewritten) is read from 0.
+rewritten) is read from 0. `-` is first sight: nothing is returned but the
+file's current size, so reading starts at its end.
 """
 
 from __future__ import annotations
@@ -166,10 +167,16 @@ def allowed_files(path: str = ALLOWLIST) -> dict[str, str]:
 
 def read_file(name: str, offset_text: str, out, allowlist: str = ALLOWLIST) -> int:
     path = allowed_files(allowlist).get(name)
-    if path is None or not offset_text.isdigit():
+    if path is None or not (offset_text.isdigit() or offset_text == "-"):
         return deny(f"file '{name}' is not in {allowlist}")
-    offset = int(offset_text)
     try:
+        if offset_text == "-":
+            # first sight: start at the file's current end, as the _diag
+            # reader does; a service log's months of history are not evidence
+            # of anything current (the welcome-email log held 13 MB).
+            out.write(f"##OFFSET {Path(path).stat().st_size}\n")
+            return 0
+        offset = int(offset_text)
         with Path(path).open("rb") as fh:
             size = os.fstat(fh.fileno()).st_size
             if size < offset:

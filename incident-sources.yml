@@ -98,6 +98,18 @@ journal_noise:
     match: 'INFO: +\S+ - "[A-Z]+ \S+ HTTP/[\d.]+" [234]\d\d '
   # copyparty's upload progress (it logs everything at info); keeps users' file
   # names out of the store. Its errors still ship.
+  # the join app's outgoing HTTP requests (httpx, three per welcome-email run,
+  # ~12,000 lines a day, with GitHub user names) when they succeed; a 4xx or
+  # 5xx answer (an expired token, GitHub down) still ships.
+  - name: httpx-request-ok
+    match: 'INFO:httpx:HTTP Request: [A-Z]+ \S+ "HTTP/[\d.]+ [23]\d\d '
+  # the welcome-email job's membership check of each invited user who has
+  # not accepted yet: GitHub answers 404 until they do, every 2 minutes, with
+  # the user name. Pending counts are in send-welcomes.log; other 4xx ship.
+  - name: httpx-membership-pending
+    match:
+      'INFO:httpx:HTTP Request: GET https://api\.github\.com/orgs/[^/
+      ]+/memberships/\S+ "HTTP/[\d.]+ 404 '
   - name: copyparty-progress
     match:
       'copyparty\.service\S* p\d+: .*(BTW: got \d+ more chunks|LOG:
