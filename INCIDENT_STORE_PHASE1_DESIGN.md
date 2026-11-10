@@ -801,9 +801,10 @@ Jetstream2 and why, with the evidence a Jetstream2 ticket needs.
   Exhausted all hosts…") "No capacity available". A request with a `compute_*`
   step reached a host; one that errored there, or whose server fault says the
   hosts were exhausted, is `host_failed`. Without the diagnostics block
-  (production until it is vendorized with it): "found no host" and "failed step:
-  schedule*instances" are `no_host`, "failed step: compute*…" is `host_failed`,
-  and the pre-2026-11-04 "failed on the compute host (request R)." is `unknown`.
+  (production until it is vendorized with it): "found no host" and
+  `failed step: schedule_instances` are `no_host`, `failed step: compute_…` is
+  `host_failed`, and the pre-2026-11-04 "failed on the compute host (request
+  R)." is `unknown`.
 - **Refusals are requests a workflow declined by design, never failures.** The
   reason now comes from the failed step's own error line matching
   `refusal_errors` in `incident-sources.yml` (per-user instance and request
