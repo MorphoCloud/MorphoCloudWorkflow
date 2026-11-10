@@ -722,7 +722,9 @@ spot named above.
 
 Every November record and stored log was checked against what the run's own log
 says. Three derived values were wrong; everything else (instance, issue, flavor,
-actor_kind, error line, failed step, journals, platform) matched.
+actor_kind, failed step, journals, platform) matched. (The error line was
+checked as "the last error line" and matched that; it was the wrong rule, see
+Capacity failures below.)
 
 - **The command.** The harvester took the first command word anywhere in the
   log, and the help comment the workflows post lists every command, so 538 of
@@ -750,6 +752,49 @@ actor_kind, error line, failed step, journals, platform) matched.
   turned 3 Validate refusals recorded before that rule existed from incidents
   into outcomes (their logs kept under `logs/`), and re-filed 161,154 runner-log
   lines with none lost or duplicated.
+
+### Capacity failures (2026-11-10)
+
+The question the store must answer: how many times a member asked for a flavor
+and Jetstream2 had none to give, counting every attempt, with outages and bugs
+filtered out at query time. Each `/create` and `/unshelve` run is one record
+(the portal never stops a request for a flavor showing 0 free: its only disabled
+types are the prototype's), so every attempt is already a record. What was
+missing is a field that says which attempts were capacity failures, and the
+evidence to tell scarcity from a failure that only looks like it.
+
+- **The error line was the runner's.** The harvester kept the last error line,
+  and the runner closes every failed step with "Process completed with exit code
+  N.", so 83 of 91 November failures carried that line only. The error line is
+  now the last error that is not that line (that line only when nothing else
+  is); `--rederive` corrects stored records whose line is the exit-code line,
+  from the failed step's stored tail, else the last error before the run's first
+  exit-code line.
+- **`capacity` on every command record** (null unless the workflow printed a
+  capacity verdict): `verdict` (`no_capacity`, or `system_cap` for MorphoCloud's
+  own MAX_TOTAL limit, refused before Jetstream2 is asked), `flavor`, `message`,
+  `attempt`, `request_id`, `fault`, `nova_steps`, `host_tried`, `evidence`.
+- **`host_tried` separates scarcity from a host bug.** The create workflow calls
+  any ERROR with no host "No capacity available", which includes a build that
+  failed on every host it tried (Nova: "Exceeded maximum number of retries.
+  Exhausted all hosts available for retrying build failures"). Nova's action
+  list in the command-diagnostics block tells them apart: a failed request with
+  no `compute_*` step was never placed (`host_tried: false`, scarcity); one with
+  a `compute_*` step was placed and failed (`true`). `evidence` says where that
+  came from: `nova` (the diagnostics block), `workflow` (control-instance prints
+  "found no host" only after a `schedule_instances` error), or `none` (no
+  evidence in the log: production creates until production is vendorized with
+  command-diagnostics, and Test creates before it existed).
+- **The outage filter is already beside it**: an incident's `context.js2_status`
+  (ACCESS outages) and `context.js2_vacancy` (Grafana, recorded only). "Couldn't
+  get the flavor, solely scarcity" is
+  `capacity.verdict == "no_capacity" and capacity.host_tried == false and context.js2_status == "operational"`,
+  over `incidents/*/*/*/incident.json` (every capacity failure is an incident;
+  the outcome line carries `capacity` but not `context`).
+- On copies of the stores the rebuild found 22 capacity failures on Test (14
+  scarcity, 6 hosts tried, 2 without evidence) and 13 on production (7
+  unshelves, scarcity by the workflow's own check; 6 creates without evidence),
+  and corrected 65 and 67 error lines; a second run changed nothing.
 
 ### Open: the watchdog's own clock
 

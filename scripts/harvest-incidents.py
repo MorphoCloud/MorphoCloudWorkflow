@@ -177,6 +177,43 @@ GH_NO_COMMAND = "no command detected"
 # fip-police, token-expiry, journal lines) or `[YYYY-MM-DD ` (the runner's _diag).
 LINE_DAY_RE = re.compile(r"^\[?(\d{4})-(\d\d)-(\d\d)[T ]")
 OTHER_KIND = "other"
+# The runner closes every failed step with this line, so it is the LAST error
+# line of nearly every failure; the step's own reason is the error before it
+# (2026-11-10: 83 of 91 November failures were recorded with this line only).
+GENERIC_EXIT_RE = re.compile(r"^Process completed with exit code \d+\.?$")
+TS_LINE_RE = re.compile(r"^\S+Z ", re.M)
+# The workflow's own capacity verdict, as the error line it prints
+# (create-instance and control-instance "Exit on capacity error", the unshelve
+# scheduling check, and the MAX_TOTAL instance limit in create-instance.yml).
+CAPACITY_ERRORS = (
+    (
+        "no_capacity",
+        re.compile(
+            r"^##\[error\]No capacity available for flavor ?(?P<flavor>\S*)\s*$", re.M
+        ),
+    ),
+    (
+        "no_capacity",
+        re.compile(
+            r"^##\[error\]no (?P<flavor>\S+) capacity on Jetstream2 "
+            r"\(unshelve request (?P<req>\S+) failed at scheduling\)",
+            re.M,
+        ),
+    ),
+    ("system_cap", re.compile(r"^##\[error\]System capacity: \d+/\d+\s*$", re.M)),
+)
+# Printed by control-instance only when Nova's failed step was schedule_instances
+# (no host could take the flavor), never for a failure on a compute host.
+NO_HOST_ATTEMPT_RE = re.compile(
+    r"^Attempt (\d+) found no host for the flavor \(request (req-\S+)\): no capacity\.$",
+    re.M,
+)
+# command-diagnostics' block: the server's fault, then Nova's actions newest
+# first, each with its steps (compute_* steps run on a compute host).
+NOVA_ACTIONS_RE = re.compile(r"^Recent actions, newest first.*$", re.M)
+NOVA_FAULT_RE = re.compile(r"^fault +(.*?)\s*$", re.M)
+NOVA_ACTION_RE = re.compile(r"^\d{4}-\d\d-\d\dT[\d:]+\s+(\w+)\s+(\S+)\s+(req-\S+)\s*$")
+NOVA_STEP_RE = re.compile(r"^ {4}(\w+)\s+(\S+)")
 
 
 def log(msg: str) -> None:
@@ -733,6 +770,104 @@ def _plain(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
+def pick_error(errors: list[str]) -> str | None:
+    """The last error line that says why, else the last one: the runner's
+    closing "Process completed with exit code N." only when nothing else is."""
+    lines = [TS_PREFIX_RE.sub("", e).strip() for e in errors]
+    lines = [e for e in lines if e]
+    specific = [e for e in lines if not GENERIC_EXIT_RE.match(e)]
+    return (specific or lines or [None])[-1]
+
+
+def nova_actions(text: str) -> tuple[str | None, list[dict]] | None:
+    """The last command-diagnostics block of a log (timestamps stripped): the
+    server's fault (None when Nova recorded none) and its actions newest
+    first, or None when the log has no such block."""
+    heads = list(NOVA_ACTIONS_RE.finditer(text))
+    if not heads:
+        return None
+    head = heads[-1]
+    faults = list(NOVA_FAULT_RE.finditer(text, 0, head.start()))
+    fault = faults[-1].group(1) if faults else None
+    if fault == "(none recorded)":
+        fault = None
+    actions: list[dict] = []
+    for line in text[head.end() :].splitlines()[1:]:
+        a = NOVA_ACTION_RE.match(line)
+        if a:
+            actions.append(
+                {"action": a[1], "result": a[2], "request_id": a[3], "steps": []}
+            )
+            continue
+        s = NOVA_STEP_RE.match(line)
+        if s and actions:
+            actions[-1]["steps"].append(f"{s[1]}:{s[2]}")
+            continue
+        break
+    return fault, actions
+
+
+def capacity_of(logtext: str | None) -> dict | None:
+    """What the log proves about a capacity failure, or None when the workflow
+    did not call it one. Record-only: the query decides what counts.
+
+    verdict is the workflow's own call (no_capacity: Jetstream2 placed no
+    instance of the flavor; system_cap: MorphoCloud's own instance limit).
+    host_tried says whether Nova tried a compute host for the failed request:
+    False = the scheduler found no host for the flavor (scarcity); True = hosts
+    were tried and the builds failed ("Exhausted all hosts available for
+    retrying build failures"), which the create workflow also reports as no
+    capacity; None = the log has no evidence either way. evidence names the
+    source: nova (command-diagnostics' action list), workflow (control-instance
+    prints "found no host" only after a schedule_instances error), or none."""
+    if not logtext:
+        return None
+    text = TS_LINE_RE.sub("", logtext)
+    hits = [
+        (m.start(), verdict, m)
+        for verdict, regex in CAPACITY_ERRORS
+        for m in regex.finditer(text)
+    ]
+    if not hits:
+        return None
+    _, verdict, m = max(hits, key=lambda h: h[0])
+    groups = m.groupdict()
+    flavor = groups.get("flavor") or None
+    if flavor == "flavor":  # the workflow's "${flavor:-flavor}" placeholder
+        flavor = None
+    attempts = list(NO_HOST_ATTEMPT_RE.finditer(text))
+    request = groups.get("req") or (attempts[-1][2] if attempts else None)
+    out = {
+        "verdict": verdict,
+        "flavor": flavor,
+        "message": m.group(0).removeprefix("##[error]").strip(),
+        "attempt": int(attempts[-1][1]) if attempts else None,
+        "request_id": request,
+        "fault": None,
+        "nova_steps": None,
+        "host_tried": None,
+        "evidence": "none",
+    }
+    if verdict == "system_cap":  # refused before Jetstream2 was asked
+        return out
+    diag = nova_actions(text)
+    action = None
+    if diag:
+        out["fault"], actions = diag
+        action = next(
+            (a for a in actions if request and a["request_id"] == request), None
+        ) or next((a for a in actions if a["action"] in ("create", "unshelve")), None)
+    if action:
+        out["request_id"] = action["request_id"]
+        out["nova_steps"] = [f"{action['action']}:{action['result']}", *action["steps"]]
+        out["host_tried"] = any(s.startswith("compute_") for s in action["steps"])
+        out["evidence"] = "nova"
+    elif attempts:
+        out["host_tried"] = False
+        out["evidence"] = "workflow"
+    return out
+
+
 def assemble_log(zip_bytes: bytes, failed: dict | None) -> tuple[str, str, str | None]:
     """The whole log as one text (the per-job files in order, a header line
     each), the failed step's last TAIL_LINES lines, and its last error line."""
@@ -768,9 +903,7 @@ def assemble_log(zip_bytes: bytes, failed: dict | None) -> tuple[str, str, str |
                 text = zf.read(candidates[0]).decode("utf-8", "replace")
                 lines = text.splitlines()
                 step_tail = "\n".join(lines[-TAIL_LINES:]) + ("\n" if lines else "")
-                errors = ERROR_RE.findall(text)
-                if errors:
-                    error_line = TS_PREFIX_RE.sub("", errors[-1]).strip()
+                error_line = pick_error(ERROR_RE.findall(text))
         if not job_files:  # no per-job file: keep whatever text files there are
             for name in sorted(n for n in names if n.endswith(".txt")):
                 parts.append(f"===== {name} =====\n")
@@ -779,9 +912,7 @@ def assemble_log(zip_bytes: bytes, failed: dict | None) -> tuple[str, str, str |
                     parts.append("\n")
     whole = "".join(parts)
     if error_line is None:
-        errors = ERROR_RE.findall(whole)
-        if errors:
-            error_line = TS_PREFIX_RE.sub("", errors[-1]).strip()
+        error_line = pick_error(ERROR_RE.findall(whole))
     # A run cancelled before it started (the concurrency queue) has an EMPTY
     # archive; None says "no log", so no empty job.log.gz is written.
     return (whole or None), step_tail, error_line
@@ -1419,6 +1550,9 @@ class Harvester:
         current_labels = sorted(
             lab.get("name", "") for lab in (issue or {}).get("labels") or []
         )
+        redacted, replacements = (
+            self.redactor.text(d["logtext"]) if d["logtext"] is not None else (None, 0)
+        )
         record = {
             "schema_version": SCHEMA_VERSION,
             "id": f"{self.short}-{run_id}-{attempt}" + ("-0" if is_incident else ""),
@@ -1438,6 +1572,8 @@ class Harvester:
             )
             if result not in ("success", "skipped", "refused")
             else None,
+            # From the redacted log, the text --rederive reads back.
+            "capacity": capacity_of(redacted) if kind == "command" else None,
             "markers": current_labels,
             "markers_source": "current",
             "jobs": [job_summary(j) for j in d["jobs"]],
@@ -1449,9 +1585,6 @@ class Harvester:
             self.store.append_jsonl(
                 f"outcomes/{day_path(created)}/{self.short}.jsonl", record
             )
-        redacted, replacements = (
-            self.redactor.text(d["logtext"]) if d["logtext"] is not None else (None, 0)
-        )
         if is_incident:
             self.write_incident(record, redacted, d["step_tail"], replacements)
             self.incidents_recorded += 1
@@ -2387,17 +2520,49 @@ def stored_log(root: Path, rec: dict) -> str | None:
     return None
 
 
-def rederive_record(cfg: Config, rec: dict, logtext: str | None) -> dict:
+def stored_step_tail(root: Path, rec: dict) -> str | None:
+    """An incident's failed-step.log (the failed step's last lines), or None."""
+    created = rec["source"].get("created_at") or ""
+    p = root / f"incidents/{month_path(created)}/{rec['id']}/failed-step.log"
+    return p.read_text("utf-8", "replace") if p.is_file() else None
+
+
+def rederive_record(
+    cfg: Config, rec: dict, logtext: str | None, step_tail: str | None = None
+) -> dict:
     """The record as record() would write it today, from what it stored:
-    the kind, the command (from the stored log; unchanged without one) and
-    refused-versus-failure. A record that would now become an incident keeps
-    its id (an incident needs the context only a fresh harvest can gather)."""
+    the kind, the command (from the stored log; unchanged without one),
+    refused-versus-failure, the capacity facts, and an error line that is only
+    the runner's "exit code" line (from the failed step's stored tail, else the
+    whole log, as assemble_log reads them). A record that would now become an
+    incident keeps its id (an incident needs the context only a fresh harvest
+    can gather)."""
     new = json.loads(json.dumps(rec))
     s = new["source"]
     workflow = s["workflow_file"]
     s["kind"] = cfg.kind(workflow)
     if logtext is not None:
         new["command"] = command_of(logtext, workflow, cfg)
+    new["capacity"] = capacity_of(logtext) if s["kind"] == "command" else None
+    if GENERIC_EXIT_RE.match(s.get("error_line") or ""):
+        source = step_tail if step_tail is not None else logtext
+        better = pick_error(ERROR_RE.findall(source)) if source is not None else None
+        if (better is None or GENERIC_EXIT_RE.match(better)) and logtext:
+            # The stored tail is the step's last TAIL_LINES lines; a reason
+            # above them is the last error before the run's first exit-code
+            # line (the line that closes the first failed step).
+            first_exit = re.search(
+                r"##\[error\]Process completed with exit code", logtext
+            )
+            if first_exit:
+                better = (
+                    pick_error(ERROR_RE.findall(logtext[: first_exit.start()]))
+                    or better
+                )
+        if better and better != s["error_line"]:
+            s["error_line"] = better
+            if new["result"] not in ("success", "skipped", "refused"):
+                new["signature"] = classify(cfg, better, s.get("failed_step"), workflow)
     if new["result"] == "failure":
         failed = (
             {"job": s.get("failed_job"), "step": s.get("failed_step")}
@@ -2444,6 +2609,15 @@ class Rederive:
         ):
             if get(old) != get(new):
                 self.count(f"{label} {get(old)} -> {get(new)}")
+        if old["source"].get("error_line") != new["source"].get("error_line"):
+            self.count("error_line: the step's own error, not the exit-code line")
+        if "capacity" not in old:
+            self.count("capacity field added")
+        cap = new.get("capacity")
+        if cap and cap != old.get("capacity"):
+            self.count(
+                f"capacity {cap['verdict']} host_tried={cap['host_tried']} ({cap['evidence']})"
+            )
 
     def outcomes(self) -> None:
         for p in sorted(self.root.glob("outcomes/*/*/*/*.jsonl")):
@@ -2453,7 +2627,12 @@ class Rederive:
                 if not line.strip():
                     continue
                 rec = json.loads(line)
-                new = rederive_record(self.cfg, rec, stored_log(self.root, rec))
+                new = rederive_record(
+                    self.cfg,
+                    rec,
+                    stored_log(self.root, rec),
+                    stored_step_tail(self.root, rec),
+                )
                 self.new_by_id[rec["id"]] = new
                 if new == rec:
                     kept.append(line)
@@ -2486,10 +2665,16 @@ class Rederive:
         for p in sorted(self.root.glob("incidents/*/*/*/incident.json")):
             rec = json.loads(p.read_text("utf-8"))
             rel_dir = str(p.parent.relative_to(self.root))
-            new = rederive_record(self.cfg, rec, stored_log(self.root, rec))
+            new = rederive_record(
+                self.cfg,
+                rec,
+                stored_log(self.root, rec),
+                stored_step_tail(self.root, rec),
+            )
             if new["id"] == rec["id"]:
                 if new != rec:
                     self.w.write_json(f"{rel_dir}/incident.json", new)
+                    self.count("incident.json rewritten")
                 continue
             s = rec["source"]
             log_gz = p.parent / "job.log.gz"
