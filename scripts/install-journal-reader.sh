@@ -52,9 +52,9 @@ PUB="$(ssh -o BatchMode=yes "$RUNNER" 'cat ~/.ssh/id_ed25519.pub' | awk '{print 
 KEYLINE="restrict,command=\"/usr/bin/python3 /usr/local/lib/morphocloud/mc-journal-read.py\" $PUB"
 
 echo ">> Installing the journal reader on $ADMIN (runner $RUNNER reaches it at $ADDR)"
-scp -q "${JUMP[@]}" "$READER" "$ADMIN:/tmp/mc-journal-read.py"
+scp -q ${JUMP[@]+"${JUMP[@]}"} "$READER" "$ADMIN:/tmp/mc-journal-read.py"
 # shellcheck disable=SC2029  # KEYLINE and ALLOW are expanded here on purpose
-ssh "${JUMP[@]}" "$ADMIN" "
+ssh ${JUMP[@]+"${JUMP[@]}"} "$ADMIN" "
   set -e
   sudo -n install -d -m 755 /usr/local/lib/morphocloud /etc/morphocloud
   sudo -n install -m 755 -o root -g root /tmp/mc-journal-read.py /usr/local/lib/morphocloud/mc-journal-read.py
