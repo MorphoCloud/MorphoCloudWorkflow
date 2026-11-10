@@ -332,7 +332,8 @@ def test_identify_from_title_and_log(cfg):
     }
     ident = hv.identify(
         run,
-        "x command_name=unshelve y\nserver morpho-cloud-test_instance-230 ACTIVE",
+        "2026-11-10T04:42:59.8005509Z   command_name: unshelve\n"
+        "server morpho-cloud-test_instance-230 ACTIVE",
         "morpho-cloud-test_instance-",
         cfg,
     )
@@ -357,6 +358,95 @@ def test_identify_derives_name_and_command_fallback(cfg):
         "name_source": "derived",
         "command": "/create",
     }
+
+
+# Excerpts of production run 42757567985 (a member's /unshelve, 2026-11-10),
+# which the first-command-word rule recorded as /delete_all: the help comment
+# the workflow posts, the step inputs GitHub prints for every possible command,
+# the script source it echoes, and the one typed-command line.
+UNSHELVE_LOG = """\
+2026-11-10T04:42:45.9061944Z   command: /unshelve
+2026-11-10T04:42:46.8959325Z   command: /shelve
+2026-11-10T04:42:46.9000000Z   command: /delete_instance
+2026-11-10T04:42:47.0646937Z   COMMAND: /unshelve
+2026-11-10T04:42:59.8005509Z   command_name: unshelve
+2026-11-10T04:42:59.8126193Z \x1b[36;1m  echo "::error ::Unknown command name '$COMMAND_NAME'."\x1b[0m
+2026-11-10T04:44:10.0000000Z - `/delete_instance`: Delete **instance-250**
+2026-11-10T04:44:10.0000001Z - `/delete_all`: Delete both **instance-250** and associated volume
+2026-11-10T04:44:12.0000000Z   COMMAND: shelve
+"""
+
+
+# The shape of production logs from before record-command-context (runs
+# 34112474461 and 39682165336): one github/command step per command served.
+def _gh_step(command: str, outcome: str) -> str:
+    return (
+        "2026-10-21T21:52:03.0546931Z ##[group]Run github/command@3442f3fa\n"
+        "2026-10-21T21:52:03.0548000Z with:\n"
+        f"2026-10-21T21:52:03.0549091Z   command: {command}\n"
+        "2026-10-21T21:52:03.0550000Z   reaction: rocket\n"
+        "2026-10-21T21:52:03.0560000Z ##[endgroup]\n"
+        "2026-10-21T21:52:03.1260634Z \U0001f6f8 github/command v2.0.3\n"
+        f"2026-10-21T21:52:03.1300000Z {outcome}\n"
+    )
+
+
+NO = "⛔ no command detected in comment"
+OLD_MATCHED_LOG = (
+    _gh_step("/unshelve", NO)
+    + _gh_step("/shelve", "\U0001f680 success!")
+    + _gh_step("/delete_instance", NO)
+    + "2026-10-21T21:52:03.3612373Z ##[group]Run if [[ x ]]; then\n"
+)
+OLD_NO_COMMAND_LOG = (
+    _gh_step("/renew", NO) + "2026-10-21T21:52:03.3612373Z ##[group]Run echo\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("workflow", "logtext", "expected"),
+    [
+        # the typed command wins over every other mention
+        ("control-instance.yml", UNSHELVE_LOG, "/unshelve"),
+        # delete-instance-and-volume: typed /delete_all, action "delete"
+        (
+            "delete-instance-and-volume.yml",
+            "2026-11-03T04:00:41.4641745Z   COMMAND: /delete_all\n"
+            "2026-11-03T04:00:57.2635010Z   command_name: delete\n",
+            "/delete_all",
+        ),
+        # started by a workflow: no typed command, the first action
+        (
+            "control-instance-from-workflow.yml",
+            "2026-11-06T12:01:42.8541396Z   command_name: delete\n"
+            "2026-11-06T12:01:53.4766532Z   command_name: unapprove\n",
+            "/delete",
+        ),
+        # only the help text names commands: the workflow's own, never /delete_all
+        (
+            "send-email.yml",
+            "2026-11-10T04:44:10.0000001Z - `/delete_all`: Delete both\n",
+            "/email",
+        ),
+        ("control-instance.yml", "- `/delete_all`: Delete both\n", None),
+        ("update-renew-label.yml", None, "/renew"),
+        # before record-command-context: the github/command step that matched
+        ("control-instance.yml", OLD_MATCHED_LOG, "/shelve"),
+        # ... and when every step said "no command detected", no command at
+        # all, not the workflow's default (a plain comment on the issue)
+        ("update-renew-label.yml", OLD_NO_COMMAND_LOG, None),
+        # report-dropped-command: the dropped command's context
+        (
+            "report-dropped-command.yml",
+            '2026-10-21T21:46:10.9045985Z   "command": "/unshelve"\n',
+            "/unshelve",
+        ),
+    ],
+)
+def test_command_is_the_typed_command_never_a_word_in_the_log(
+    cfg, workflow, logtext, expected
+):
+    assert hv.command_of(logtext, workflow, cfg) == expected
 
 
 def test_identify_workflow_dispatch_title_is_not_an_issue(cfg):
@@ -1408,3 +1498,208 @@ def test_harvester_asks_for_first_sight_of_a_new_file(tmp_path, cfg, monkeypatch
     h.host_files(host, st, "2026/11/10")
     h.host_files(host, st, "2026/11/10")
     assert sent == ["file welcomes -", "file welcomes 1700"]
+
+
+# --- every workflow has a kind; unlisted ones are named until listed ----------------
+
+
+def test_every_mwf_workflow_has_a_kind(cfg):
+    """MWF's workflows are what Instances and Test-Instances run; the few
+    files that exist only there are listed by hand (incident-sources.yml)."""
+    names = sorted(p.name for p in (ROOT / ".github" / "workflows").glob("*.yml"))
+    assert names
+    assert [n for n in names if n not in cfg.kinds] == []
+
+
+def test_an_unlisted_workflow_stays_in_last_error_until_listed(cfg):
+    data: dict = {}
+    note = hv.unmapped_note(cfg, {"brand-new.yml", "ci.yml"}, data)
+    assert note is not None
+    assert "brand-new.yml" in note
+    assert "ci.yml" not in note
+    # a later cycle that records no run of it still reports it
+    assert "brand-new.yml" in (hv.unmapped_note(cfg, set(), data) or "")
+    listed = hv.Config(
+        dict(cfg.raw, workflows={**cfg.raw["workflows"], "sweep": ["brand-new.yml"]}),
+        {},
+    )
+    assert hv.unmapped_note(listed, set(), data) is None
+    assert data["unmapped_workflows"] == []
+
+
+# --- each shipped line is filed under the day it carries ---------------------------
+
+
+def test_split_by_day_follows_the_lines_own_dates():
+    lines = [
+        '{"candidates":9}\n',  # undated before anything dated: the day shipped
+        "2026-06-02T16:00:01Z dispatched x.yml\n",
+        "  continuation of the June line\n",
+        "# Worker_20261109.log\n",  # a _diag header goes with the line after it
+        "[2026-11-09 12:00:00Z ERR  Worker] boom\n",
+        "2026-11-10T00:00:06Z held=5\n",
+    ]
+    assert hv.split_by_day(lines, "2026/11/10") == {
+        "2026/11/10": ['{"candidates":9}\n', "2026-11-10T00:00:06Z held=5\n"],
+        "2026/06/02": [
+            "2026-06-02T16:00:01Z dispatched x.yml\n",
+            "  continuation of the June line\n",
+        ],
+        "2026/11/09": [
+            "# Worker_20261109.log\n",
+            "[2026-11-09 12:00:00Z ERR  Worker] boom\n",
+        ],
+    }
+
+
+def test_a_first_read_of_a_long_log_lands_in_each_lines_day(tmp_path, monkeypatch, cfg):
+    store = hv.Store(tmp_path / "store", "instances", dry_run=False)
+    logf = tmp_path / "morphocloud-dispatch.log"
+    logf.write_text(
+        "2026-06-08T14:30:01Z dispatched a.yml\n2026-11-09T23:59:01Z dispatched b.yml\n"
+    )
+    h = hv.Harvester.__new__(hv.Harvester)
+    h.cfg = hv.Config(
+        dict(
+            cfg.raw,
+            runner_logs=[{"name": "morphocloud-dispatch", "path": str(logf)}],
+            diag_dir=None,
+        ),
+        {},
+    )
+    h.store, h.local, h.src = (
+        store,
+        hv.Local(tmp_path / "local.json", dry_run=False),
+        {"short": "instances"},
+    )
+    h.redactor = SimpleNamespace(text=lambda t: (t, 0))
+    monkeypatch.setattr(hv.socket, "gethostname", lambda: "runner")
+    h.runner_logs(hv.parse_ts("2026-11-10T00:05:00Z"))
+    base = tmp_path / "store/runner"
+    assert (base / "2026/06/08/runner/morphocloud-dispatch.log").read_text() == (
+        "2026-06-08T14:30:01Z dispatched a.yml\n"
+    )
+    assert (base / "2026/11/09/runner/morphocloud-dispatch.log").read_text() == (
+        "2026-11-09T23:59:01Z dispatched b.yml\n"
+    )
+    assert not (base / "2026/11/10").exists()
+
+
+# --- --rederive ------------------------------------------------------------------------
+
+
+def _gz(text: str) -> bytes:
+    import gzip  # noqa: PLC0415 — only these tests write archives
+
+    return gzip.compress(text.encode())
+
+
+def _rec(run_id: int, workflow: str, result: str, **src) -> dict:
+    return {
+        "id": f"instances-{run_id}-1" + ("-0" if result == "failure" else ""),
+        "command": "/delete_all",
+        "result": result,
+        "refusal_reason": None,
+        "signature": "unclassified" if result == "failure" else None,
+        "jobs": [],
+        "source": {
+            "run_id": run_id,
+            "run_attempt": 1,
+            "created_at": "2026-11-09T06:19:12Z",
+            "workflow_file": workflow,
+            "kind": "other",
+            "failed_job": None,
+            "failed_step": None,
+            **src,
+        },
+    }
+
+
+def _store_with_old_records(root: Path) -> None:
+    unshelve = _rec(1, "control-instance.yml", "success")
+    unshelve["source"]["kind"] = "command"
+    refusal = _rec(
+        2,
+        "validate-command-instance.yml",
+        "failure",
+        failed_job="validate",
+        failed_step="Validate instance command",
+    )
+    out = root / "outcomes/2026/11/09"
+    out.mkdir(parents=True)
+    (out / "instances.jsonl").write_text(
+        json.dumps(unshelve) + "\n" + json.dumps(refusal) + "\n"
+    )
+    (root / "logs/2026/11/09").mkdir(parents=True)
+    (root / "logs/2026/11/09/1-1.log.gz").write_bytes(_gz(UNSHELVE_LOG))
+    inc = root / "incidents/2026/11/instances-2-1-0"
+    inc.mkdir(parents=True)
+    (inc / "incident.json").write_text(json.dumps(refusal))
+    (inc / "job.log.gz").write_bytes(
+        _gz("##[error]Process completed with exit code 1.\n")
+    )
+    (inc / "context.json").write_text("{}")
+    roll = root / "rollups/2026/11/09"
+    roll.mkdir(parents=True)
+    (roll / "instances.json").write_text(
+        json.dumps(
+            {
+                "counts": {
+                    "control-instance.yml": {"success": 1},
+                    "validate-command-instance.yml": {"failure": 1},
+                },
+                "recorded": ["1-1", "2-1"],
+            }
+        )
+    )
+    run_dir = root / "runner/2026/11/09/runner"
+    run_dir.mkdir(parents=True)
+    (run_dir / "morphocloud-dispatch.log").write_text(
+        "2026-06-08T14:30:01Z dispatched a.yml\n2026-11-09T01:00:01Z dispatched b.yml\n"
+    )
+    (run_dir / "journal.log").write_text("# daily summary 2026/11/08: kept as is\n")
+
+
+def test_rederive_fixes_what_is_stored_and_a_second_run_changes_nothing(
+    tmp_path, cfg, monkeypatch
+):
+    monkeypatch.setattr(
+        hv.Store, "commit_push", lambda self, _msg: (self.flush(), True)
+    )
+    root = tmp_path / "store"
+    _store_with_old_records(root)
+    before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    assert hv.rederive(cfg, root, dry_run=True) == 0
+    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+
+    assert hv.rederive(cfg, root, dry_run=False) == 0
+    lines = [
+        json.loads(x)
+        for x in (root / "outcomes/2026/11/09/instances.jsonl").read_text().splitlines()
+    ]
+    assert lines[0]["command"] == "/unshelve"
+    assert lines[1]["result"] == "refused"
+    assert lines[1]["id"] == "instances-2-1"
+    assert lines[1]["refusal_reason"] == "Validate instance command"
+    assert lines[1]["signature"] is None
+    assert lines[1]["source"]["kind"] == "sweep"
+    assert not (root / "incidents/2026/11/instances-2-1-0").exists()
+    assert (root / "logs/2026/11/09/2-1.log.gz").is_file()  # the evidence stays
+    roll = json.loads((root / "rollups/2026/11/09/instances.json").read_text())
+    assert roll["counts"]["validate-command-instance.yml"] == {"refused": 1}
+    assert roll["recorded"] == ["1-1", "2-1"]
+    assert (root / "runner/2026/06/08/runner/morphocloud-dispatch.log").read_text() == (
+        "2026-06-08T14:30:01Z dispatched a.yml\n"
+    )
+    assert (root / "runner/2026/11/09/runner/morphocloud-dispatch.log").read_text() == (
+        "2026-11-09T01:00:01Z dispatched b.yml\n"
+    )
+    assert (
+        (root / "runner/2026/11/09/runner/journal.log")
+        .read_text()
+        .startswith("# daily summary 2026/11/08")
+    )
+
+    after = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    assert hv.rederive(cfg, root, dry_run=False) == 0
+    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == after
