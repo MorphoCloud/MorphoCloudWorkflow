@@ -371,6 +371,14 @@ all expire 2027-11-10):
 | `MAIL_USERNAME`, `MAIL_PASSWORD`, `ADMIN_EMAILS` | the same values `admin-alert.yml` uses (set 2026-11-09)         | secrets and variable on both store repositories; verified with one sandbox watchdog email |
 | HMAC key (`hmac.key`)                            | 32 random bytes                                                 | PR B's concern; PR A fails closed without it (`[email]`)                                  |
 
+**Amended by the coverage amendment (K1, PR A2):** the production source token
+`GH_MorphoCloud-incidents-source` is re-issued for **all repositories of the
+organization**, with the same two permissions (Actions:read, Issues:read). Its
+blast radius grows from one repository to read access on every org repository's
+runs, logs and issues, private ones included; it still cannot write anywhere.
+The Test source token is unchanged: the Test harvester keeps harvesting
+`Test-Instances` only.
+
 Issues:write on the store is unused until Phase 2 (verdict issues) but is
 granted now so the PAT is not re-issued in two weeks. No token has Actions write
 anywhere: the harvester cannot start a workflow.
@@ -648,10 +656,12 @@ needed.
 **K, every repository (PR A2, harvester).** `sources:` becomes the whole
 organization minus `deny:`, read once a cycle from the org's repository list, so
 a new course repository is harvested from its first run. Unknown workflows are
-kind `other` (counted; a failure is an incident), as today. The source PATs are
-re-issued for **all** repositories of the organization (read-only Actions and
-Issues), or a new repository would be invisible to them. Cost: about one listing
-call per repository per cycle, a few hundred calls an hour on a 5,000 limit.
+kind `other` (counted; a failure is an incident), as today. K applies to the
+production harvester; the production source PAT is re-issued for **all**
+repositories of the organization (read-only Actions and Issues; see "Credentials
+PR A needs"), or a new repository would be invisible to it. Cost: about one
+listing call per repository per cycle, a few hundred calls an hour on a 5,000
+limit.
 
 **R1, checks that exercise the resource.** The portal's share check reads each
 share (a `stat` and a directory listing under a timeout) and logs one line per
@@ -671,13 +681,13 @@ spot named above.
 
 ### Where each piece lands
 
-| Piece                                                                                             | PR                              | Order             |
-| ------------------------------------------------------------------------------------------------- | ------------------------------- | ----------------- |
-| I, J, K in the harvester; `hosts:`, `deny:`, noise list; `mcjournal` installer                    | **PR A2** (MorphoCloudWorkflow) | next, before PR B |
-| R1 and R2 on the portal                                                                           | PR C (morphocloud-data-portal)  | with PR C         |
-| R2 in the join app and `morphocloud-monitor`                                                      | one small PR in each repository | after A2          |
-| R2 in the workflows                                                                               | PR B                            | with PR B         |
-| one-time import of the 2026-11-09 outage window, already saved from all seven hosts on 2026-11-10 | PR A2's install                 | at A2's install   |
+| Piece                                                                                                       | PR                              | Order             |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------- | ----------------- |
+| I, J, K in the harvester; `hosts:`, `deny:`, noise list; `mcjournal` installer                              | **PR A2** (MorphoCloudWorkflow) | next, before PR B |
+| R1 and R2 on the portal                                                                                     | PR C (morphocloud-data-portal)  | with PR C         |
+| R2 in the join app and `morphocloud-monitor`                                                                | one small PR in each repository | after A2          |
+| R2 in the workflows                                                                                         | PR B                            | with PR B         |
+| one-time import of the 2026-11-09 outage window, already saved from the six MorphoCloud hosts on 2026-11-10 | PR A2's install                 | at A2's install   |
 
 ### Open: the watchdog's own clock
 
