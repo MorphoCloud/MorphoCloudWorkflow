@@ -182,38 +182,58 @@ OTHER_KIND = "other"
 # (2026-11-10: 83 of 91 November failures were recorded with this line only).
 GENERIC_EXIT_RE = re.compile(r"^Process completed with exit code \d+\.?$")
 TS_LINE_RE = re.compile(r"^\S+Z ", re.M)
-# The workflow's own capacity verdict, as the error line it prints
-# (create-instance and control-instance "Exit on capacity error", the unshelve
-# scheduling check, and the MAX_TOTAL instance limit in create-instance.yml).
-CAPACITY_ERRORS = (
+# A /create or /unshelve that left the member without an instance because of
+# what Jetstream2 did, as the failed step's own error line says it. The cause
+# comes from Nova's action list when the log has one (the line's own wording
+# predates the schedule_instances check: before 2026-11-04 control-instance
+# called every unshelve Error a host failure), from the workflow's lines when
+# it does not.
+CAPACITY_LINES = (
     (
-        "no_capacity",
+        "unavailable",
+        re.compile(r"^No capacity available for flavor ?(?P<flavor>\S*)\s*$"),
+    ),
+    (
+        "no_host",
         re.compile(
-            r"^##\[error\]No capacity available for flavor ?(?P<flavor>\S*)\s*$", re.M
+            r"^no (?P<flavor>\S+) capacity on Jetstream2 "
+            r"\(unshelve request (?P<req>req-\S+) failed at scheduling\)"
         ),
     ),
     (
-        "no_capacity",
-        re.compile(
-            r"^##\[error\]no (?P<flavor>\S+) capacity on Jetstream2 "
-            r"\(unshelve request (?P<req>\S+) failed at scheduling\)",
-            re.M,
-        ),
+        "host_failed",
+        re.compile(r"^unshelve failed on the compute host after \d+ attempt"),
     ),
-    ("system_cap", re.compile(r"^##\[error\]System capacity: \d+/\d+\s*$", re.M)),
+    ("timed_out", re.compile(r"^Instance failed to reach ACTIVE state")),
 )
-# Printed by control-instance only when Nova's failed step was schedule_instances
-# (no host could take the flavor), never for a failure on a compute host.
+# Unshelve only: the same lines end a shelve or a delete that ran out of time.
+UNSHELVE_TIMEOUT_LINES = (
+    re.compile(r"^Maximum wait time \(\d+ seconds\) exceeded\.$"),
+    re.compile(r"^Server action still in progress after \d+s"),
+)
+CAPACITY_COMMANDS = ("/create", "/unshelve")
 NO_HOST_ATTEMPT_RE = re.compile(
-    r"^Attempt (\d+) found no host for the flavor \(request (req-\S+)\): no capacity\.$",
+    r"^Attempt \d+ found no host for the flavor \(request (req-\S+)\): no capacity\.$",
     re.M,
 )
-# command-diagnostics' block: the server's fault, then Nova's actions newest
-# first, each with its steps (compute_* steps run on a compute host).
+# "(request R; failed step: S)" since 2026-11-04; "(request R)" before, when
+# the workflow did not yet look at which step failed.
+HOST_ATTEMPT_RE = re.compile(
+    r"^Attempt \d+ failed on the compute host "
+    r"\(request (req-[^;)\s]+)(?:; failed step: ([^)]*))?\)\.$",
+    re.M,
+)
+# Nova's fault when every host it tried failed the build.
+EXHAUSTED_RE = re.compile(r"Exceeded maximum number of retries|Exhausted all hosts")
+# collect-instance-diagnostics' block: the server's fault, then Nova's actions
+# newest first, each with its steps (step, result, host id; compute_* steps run
+# on a compute host).
 NOVA_ACTIONS_RE = re.compile(r"^Recent actions, newest first.*$", re.M)
 NOVA_FAULT_RE = re.compile(r"^fault +(.*?)\s*$", re.M)
-NOVA_ACTION_RE = re.compile(r"^\d{4}-\d\d-\d\dT[\d:]+\s+(\w+)\s+(\S+)\s+(req-\S+)\s*$")
-NOVA_STEP_RE = re.compile(r"^ {4}(\w+)\s+(\S+)")
+NOVA_ACTION_RE = re.compile(
+    r"^(\d{4}-\d\d-\d\dT[\d:]+)\s+(\w+)\s+(\S+)\s+(req-\S+)\s*$"
+)
+NOVA_STEP_RE = re.compile(r"^ {4}(\w+)\s+(\S+)(?:\s+(\S+))?")
 
 
 def log(msg: str) -> None:
@@ -260,6 +280,10 @@ class Config:
         self.dropped_report_step = dropped.get("step")
         self.refusal_jobs = set(sources.get("refusal_jobs") or [])
         self.refusal_steps = set(sources.get("refusal_steps") or [])
+        self.refusal_errors = [
+            (r["reason"], re.compile(r["match"]))
+            for r in sources.get("refusal_errors") or []
+        ]
         self.command_by_workflow = dict(sources.get("command_by_workflow") or {})
         self.runner_logs = list(sources.get("runner_logs") or [])
         self.diag_dir = sources.get("diag_dir")
@@ -752,12 +776,28 @@ def first_failed_step(jobs: list[dict]) -> dict | None:
     return None
 
 
-def is_refusal(cfg: Config, failed: dict | None, logtext: str | None) -> str | None:
-    """The refusal reason, or None when the failure is real."""
+def is_refusal(
+    cfg: Config,
+    failed: dict | None,
+    logtext: str | None,
+    error_line: str | None = None,
+) -> str | None:
+    """The refusal reason, or None when the failure is real.
+
+    A refusal is a request the workflow declined by design (a limit, a state,
+    a permission), never a failure. In order: a `REFUSED reason=` line; the
+    failed step's own error line matching refusal_errors; then the step and
+    job names, only when the step printed no reason of its own (a GitHub 503
+    inside the authorize job is a failure, not a refusal)."""
     if logtext:
         m = REFUSED_RE.search(logtext)
         if m:
             return m.group(1)
+    for reason, regex in cfg.refusal_errors:
+        if error_line and regex.search(error_line):
+            return reason
+    if error_line and not GENERIC_EXIT_RE.match(error_line):
+        return None
     if failed:
         if failed.get("step") in cfg.refusal_steps:
             return failed["step"]
@@ -780,9 +820,9 @@ def pick_error(errors: list[str]) -> str | None:
 
 
 def nova_actions(text: str) -> tuple[str | None, list[dict]] | None:
-    """The last command-diagnostics block of a log (timestamps stripped): the
-    server's fault (None when Nova recorded none) and its actions newest
-    first, or None when the log has no such block."""
+    """The last diagnostics block of a log (timestamps stripped): the server's
+    fault (None when Nova recorded none) and its actions newest first, or None
+    when the log has no such block."""
     heads = list(NOVA_ACTIONS_RE.finditer(text))
     if not heads:
         return None
@@ -796,76 +836,160 @@ def nova_actions(text: str) -> tuple[str | None, list[dict]] | None:
         a = NOVA_ACTION_RE.match(line)
         if a:
             actions.append(
-                {"action": a[1], "result": a[2], "request_id": a[3], "steps": []}
+                {
+                    "request_id": a[4],
+                    "action": a[2],
+                    "started": a[1] + "Z",
+                    "result": a[3],
+                    "steps": [],
+                }
             )
             continue
         s = NOVA_STEP_RE.match(line)
         if s and actions:
-            actions[-1]["steps"].append(f"{s[1]}:{s[2]}")
+            actions[-1]["steps"].append({"step": s[1], "result": s[2], "host_id": s[3]})
             continue
         break
     return fault, actions
 
 
-def capacity_of(logtext: str | None) -> dict | None:
-    """What the log proves about a capacity failure, or None when the workflow
-    did not call it one. Record-only: the query decides what counts.
+def request_outcome(req: dict, fault: str | None) -> str:
+    """What became of one Nova request: no_host (the scheduler placed it
+    nowhere), host_failed (placed, and the compute host failed it),
+    in_progress (still scheduling or spawning when the run gave up), ok.
+    fault is the server's, so it applies to the newest request only."""
+    compute = [s for s in req["steps"] if s["step"].startswith("compute_")]
+    if compute:
+        if (
+            any(s["result"] == "Error" for s in compute)
+            or req["result"] == "Error"
+            or (fault and EXHAUSTED_RE.search(fault))
+        ):
+            return "host_failed"
+        return "in_progress" if any(s["result"] == "-" for s in compute) else "ok"
+    if req["result"] == "Error" or any(s["result"] == "Error" for s in req["steps"]):
+        return "no_host"
+    return "in_progress"
 
-    verdict is the workflow's own call (no_capacity: Jetstream2 placed no
-    instance of the flavor; system_cap: MorphoCloud's own instance limit).
-    host_tried says whether Nova tried a compute host for the failed request:
-    False = the scheduler found no host for the flavor (scarcity); True = hosts
-    were tried and the builds failed ("Exhausted all hosts available for
-    retrying build failures"), which the create workflow also reports as no
-    capacity; None = the log has no evidence either way. evidence names the
-    source: nova (command-diagnostics' action list), workflow (control-instance
-    prints "found no host" only after a schedule_instances error), or none."""
-    if not logtext:
+
+def workflow_requests(text: str, message_req: str | None) -> list[dict]:
+    """The run's Nova requests as control-instance's own lines name them (a
+    log without the diagnostics block: production until it has one)."""
+    reqs: dict[str, dict] = {}
+    for m in NO_HOST_ATTEMPT_RE.finditer(text):
+        reqs[m[1]] = {"request_id": m[1], "outcome": "no_host"}
+    for m in HOST_ATTEMPT_RE.finditer(text):
+        step = m[2]
+        outcome = (
+            "unknown"
+            if not step
+            else "host_failed"
+            if "compute_" in step
+            else "no_host"
+            if "schedule" in step
+            else "unknown"
+        )
+        reqs[m[1]] = {"request_id": m[1], "outcome": outcome, "failed_step": step}
+    if message_req and message_req not in reqs:
+        reqs[message_req] = {"request_id": message_req, "outcome": "no_host"}
+    return list(reqs.values())
+
+
+def capacity_said(
+    error_line: str | None, command: str | None
+) -> tuple[str, dict] | None:
+    """What the failed step's error line says happened at Jetstream2, with its
+    named groups (flavor, req), or None when the line is about anything else."""
+    if command not in CAPACITY_COMMANDS or not error_line:
         return None
-    text = TS_LINE_RE.sub("", logtext)
-    hits = [
-        (m.start(), verdict, m)
-        for verdict, regex in CAPACITY_ERRORS
-        for m in regex.finditer(text)
-    ]
-    if not hits:
-        return None
-    _, verdict, m = max(hits, key=lambda h: h[0])
-    groups = m.groupdict()
-    flavor = groups.get("flavor") or None
-    if flavor == "flavor":  # the workflow's "${flavor:-flavor}" placeholder
-        flavor = None
-    attempts = list(NO_HOST_ATTEMPT_RE.finditer(text))
-    request = groups.get("req") or (attempts[-1][2] if attempts else None)
-    out = {
-        "verdict": verdict,
-        "flavor": flavor,
-        "message": m.group(0).removeprefix("##[error]").strip(),
-        "attempt": int(attempts[-1][1]) if attempts else None,
-        "request_id": request,
-        "fault": None,
-        "nova_steps": None,
-        "host_tried": None,
-        "evidence": "none",
-    }
-    if verdict == "system_cap":  # refused before Jetstream2 was asked
-        return out
+    for label, regex in CAPACITY_LINES:
+        m = regex.search(error_line)
+        if m:
+            return label, m.groupdict()
+    if command == "/unshelve" and any(
+        r.search(error_line) for r in UNSHELVE_TIMEOUT_LINES
+    ):
+        return "timed_out", {}
+    return None
+
+
+def nova_requests(text: str, since: str) -> tuple[str | None, list[dict]]:
+    """The server's fault and the create/unshelve requests Nova shows since
+    the run started (newest first), each with its outcome and compute hosts."""
     diag = nova_actions(text)
-    action = None
-    if diag:
-        out["fault"], actions = diag
-        action = next(
-            (a for a in actions if request and a["request_id"] == request), None
-        ) or next((a for a in actions if a["action"] in ("create", "unshelve")), None)
-    if action:
-        out["request_id"] = action["request_id"]
-        out["nova_steps"] = [f"{action['action']}:{action['result']}", *action["steps"]]
-        out["host_tried"] = any(s.startswith("compute_") for s in action["steps"])
-        out["evidence"] = "nova"
-    elif attempts:
-        out["host_tried"] = False
-        out["evidence"] = "workflow"
-    return out
+    if not diag or not since:  # no run start: no way to tell this run's requests
+        return None, []
+    fault, actions = diag
+    reqs = [
+        a
+        for a in actions
+        if a["action"] in ("create", "unshelve") and a["started"][:19] >= since
+    ]
+    for i, r in enumerate(reqs):
+        r["outcome"] = request_outcome(r, fault if i == 0 else None)
+        r["hosts"] = sorted(
+            {
+                s["host_id"]
+                for s in r["steps"]
+                if s["step"].startswith("compute_") and s["host_id"]
+            }
+        )
+    # The fault is the server's latest; it belongs to this run only when one
+    # of this run's requests is there.
+    return (fault if reqs else None), reqs
+
+
+def run_cause(said: str, requests: list[dict]) -> str:
+    """One cause for the run: a timeout is timed_out whatever Nova shows; a
+    host that failed a request makes it host_failed; then unknown (a request
+    the log cannot place, or none at all); else no_host."""
+    outcomes = {r["outcome"] for r in requests}
+    if said == "timed_out":
+        return "timed_out"
+    if "host_failed" in outcomes:
+        return "host_failed"
+    if "unknown" in outcomes or "no_host" not in outcomes:
+        return "unknown"
+    return "no_host"
+
+
+def capacity_of(
+    logtext: str | None,
+    error_line: str | None,
+    command: str | None,
+    started: str | None,
+    flavor: str | None,
+) -> dict | None:
+    """A /create or /unshelve that left the member without an instance because
+    of Jetstream2, with the evidence to tell why; None for every other run.
+    Record-only: the queries decide what counts.
+
+    cause: no_host (the scheduler found no host for the flavor), host_failed
+    (Nova placed it and the compute host failed: what to report to
+    Jetstream2), timed_out (not running when the workflow's wait ran out),
+    unknown (the log cannot tell no_host from host_failed). requests: every
+    create/unshelve request Nova shows since the run started, each with its
+    outcome, steps and compute hosts. evidence: nova (the diagnostics block),
+    workflow (control-instance's attempt lines), none."""
+    said = capacity_said(error_line, command)
+    if said is None:
+        return None
+    label, groups = said
+    text = TS_LINE_RE.sub("", logtext or "")
+    fault, requests = nova_requests(text, (started or "")[:19])
+    evidence = "nova" if requests else "none"
+    if not requests:
+        requests = workflow_requests(text, groups.get("req"))
+        evidence = "workflow" if requests else "none"
+    named = groups.get("flavor")
+    return {
+        "cause": run_cause(label, requests),
+        "flavor": named if named and named != "flavor" else flavor,
+        "message": error_line,
+        "evidence": evidence,
+        "fault": fault,
+        "requests": requests,
+    }
 
 
 def assemble_log(zip_bytes: bytes, failed: dict | None) -> tuple[str, str, str | None]:
@@ -1532,7 +1656,7 @@ class Harvester:
             else self.no_detail()
         )
         refusal = (
-            is_refusal(self.cfg, d["failed"], d["logtext"])
+            is_refusal(self.cfg, d["failed"], d["logtext"], d["error_line"])
             if result == "failure"
             else None
         )
@@ -1573,7 +1697,15 @@ class Harvester:
             if result not in ("success", "skipped", "refused")
             else None,
             # From the redacted log, the text --rederive reads back.
-            "capacity": capacity_of(redacted) if kind == "command" else None,
+            "capacity": capacity_of(
+                redacted,
+                d["error_line"],
+                ident["command"],
+                run.get("run_started_at") or created,
+                flavor_of(current_labels),
+            )
+            if kind == "command" and result == "failure"
+            else None,
             "markers": current_labels,
             "markers_source": "current",
             "jobs": [job_summary(j) for j in d["jobs"]],
@@ -2531,10 +2663,10 @@ def rederive_record(
     cfg: Config, rec: dict, logtext: str | None, step_tail: str | None = None
 ) -> dict:
     """The record as record() would write it today, from what it stored:
-    the kind, the command (from the stored log; unchanged without one),
-    refused-versus-failure, the capacity facts, and an error line that is only
-    the runner's "exit code" line (from the failed step's stored tail, else the
-    whole log, as assemble_log reads them). A record that would now become an
+    the kind, the command (from the stored log; unchanged without one), an
+    error line that is only the runner's "exit code" line (from the failed
+    step's stored tail, else the whole log), refused-versus-failure in both
+    directions, and the capacity facts. A record that would now become an
     incident keeps its id (an incident needs the context only a fresh harvest
     can gather)."""
     new = json.loads(json.dumps(rec))
@@ -2543,7 +2675,6 @@ def rederive_record(
     s["kind"] = cfg.kind(workflow)
     if logtext is not None:
         new["command"] = command_of(logtext, workflow, cfg)
-    new["capacity"] = capacity_of(logtext) if s["kind"] == "command" else None
     if GENERIC_EXIT_RE.match(s.get("error_line") or ""):
         source = step_tail if step_tail is not None else logtext
         better = pick_error(ERROR_RE.findall(source)) if source is not None else None
@@ -2561,17 +2692,35 @@ def rederive_record(
                 )
         if better and better != s["error_line"]:
             s["error_line"] = better
-            if new["result"] not in ("success", "skipped", "refused"):
-                new["signature"] = classify(cfg, better, s.get("failed_step"), workflow)
-    if new["result"] == "failure":
+    if new["result"] in ("failure", "refused"):
         failed = (
             {"job": s.get("failed_job"), "step": s.get("failed_step")}
             if s.get("failed_job") or s.get("failed_step")
             else None
         )
-        reason = is_refusal(cfg, failed, logtext)
+        reason = is_refusal(cfg, failed, logtext, s.get("error_line"))
         if reason:
             new.update(result="refused", refusal_reason=reason, signature=None)
+        elif new["result"] == "refused":
+            new.update(result="failure", refusal_reason=None)
+    if new["result"] == "failure" and (
+        new.get("signature") is None
+        or s.get("error_line") != rec["source"].get("error_line")
+    ):
+        new["signature"] = classify(
+            cfg, s.get("error_line"), s.get("failed_step"), workflow
+        )
+    new["capacity"] = (
+        capacity_of(
+            logtext,
+            s.get("error_line"),
+            new.get("command"),
+            s.get("run_started_at") or s.get("created_at"),
+            (new.get("instance") or {}).get("flavor"),
+        )
+        if s["kind"] == "command" and new["result"] == "failure"
+        else None
+    )
     result, incident = finalize(
         cfg, workflow, s["kind"], new["result"], new.get("jobs") or []
     )
@@ -2611,12 +2760,16 @@ class Rederive:
                 self.count(f"{label} {get(old)} -> {get(new)}")
         if old["source"].get("error_line") != new["source"].get("error_line"):
             self.count("error_line: the step's own error, not the exit-code line")
-        if "capacity" not in old:
-            self.count("capacity field added")
-        cap = new.get("capacity")
-        if cap and cap != old.get("capacity"):
+        if old.get("refusal_reason") != new.get("refusal_reason"):
             self.count(
-                f"capacity {cap['verdict']} host_tried={cap['host_tried']} ({cap['evidence']})"
+                f"refusal_reason {old.get('refusal_reason')} -> {new.get('refusal_reason')}"
+            )
+        cap, was = new.get("capacity"), old.get("capacity")
+        if cap != was:
+            self.count(
+                f"capacity {cap['cause']} ({cap['evidence']})"
+                if cap
+                else "capacity -> null"
             )
 
     def outcomes(self) -> None:

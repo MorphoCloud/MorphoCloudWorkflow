@@ -753,48 +753,87 @@ Capacity failures below.)
   into outcomes (their logs kept under `logs/`), and re-filed 161,154 runner-log
   lines with none lost or duplicated.
 
-### Capacity failures (2026-11-10)
+### Capacity failures and refusals (2026-11-10)
 
-The question the store must answer: how many times a member asked for a flavor
-and Jetstream2 had none to give, counting every attempt, with outages and bugs
-filtered out at query time. Each `/create` and `/unshelve` run is one record
-(the portal never stops a request for a flavor showing 0 free: its only disabled
-types are the prototype's), so every attempt is already a record. What was
-missing is a field that says which attempts were capacity failures, and the
-evidence to tell scarcity from a failure that only looks like it.
+Two questions the store must answer, every attempt counted, with outages and
+MorphoCloud's own bugs filtered out at query time:
 
-- **The error line was the runner's.** The harvester kept the last error line,
-  and the runner closes every failed step with "Process completed with exit code
-  N.", so 83 of 91 November failures carried that line only. The error line is
-  now the last error that is not that line (that line only when nothing else
-  is); `--rederive` corrects stored records whose line is the exit-code line,
-  from the failed step's stored tail, else the last error before the run's first
-  exit-code line.
-- **`capacity` on every command record** (null unless the workflow printed a
-  capacity verdict): `verdict` (`no_capacity`, or `system_cap` for MorphoCloud's
-  own MAX_TOTAL limit, refused before Jetstream2 is asked), `flavor`, `message`,
-  `attempt`, `request_id`, `fault`, `nova_steps`, `host_tried`, `evidence`.
-- **`host_tried` separates scarcity from a host bug.** The create workflow calls
-  any ERROR with no host "No capacity available", which includes a build that
-  failed on every host it tried (Nova: "Exceeded maximum number of retries.
-  Exhausted all hosts available for retrying build failures"). Nova's action
-  list in the command-diagnostics block tells them apart: a failed request with
-  no `compute_*` step was never placed (`host_tried: false`, scarcity); one with
-  a `compute_*` step was placed and failed (`true`). `evidence` says where that
-  came from: `nova` (the diagnostics block), `workflow` (control-instance prints
-  "found no host" only after a `schedule_instances` error), or `none` (no
-  evidence in the log: production creates until production is vendorized with
-  command-diagnostics, and Test creates before it existed).
-- **The outage filter is already beside it**: an incident's `context.js2_status`
-  (ACCESS outages) and `context.js2_vacancy` (Grafana, recorded only). "Couldn't
-  get the flavor, solely scarcity" is
-  `capacity.verdict == "no_capacity" and capacity.host_tried == false and context.js2_status == "operational"`,
-  over `incidents/*/*/*/incident.json` (every capacity failure is an incident;
-  the outcome line carries `capacity` but not `context`).
-- On copies of the stores the rebuild found 22 capacity failures on Test (14
-  scarcity, 6 hosts tried, 2 without evidence) and 13 on production (7
-  unshelves, scarcity by the workflow's own check; 6 creates without evidence),
-  and corrected 65 and 67 error lines; a second run changed nothing.
+1. **How many times could a member not get an instance of the type they asked
+   for?** To the member, "no host was free" and "Nova placed it and the host
+   failed" are the same: there was no capacity to use.
+2. **What to report to Jetstream2:** the subset where Nova thought it had
+   capacity and its hosts failed.
+
+Each `/create` and `/unshelve` run is one record (the portal never blocks a type
+that shows 0 free; its only disabled types are the prototype's), so every
+attempt is already a record. The record must say which attempts failed at
+Jetstream2 and why, with the evidence a Jetstream2 ticket needs.
+
+- **The error line is the step's reason.** The harvester kept the last error
+  line, which is the runner's "Process completed with exit code N." on 83 of 91
+  November failures. It is now the last error that is not that line;
+  `--rederive` corrects stored records from the failed step's stored tail, else
+  the last error before the run's first exit-code line.
+- **`capacity`** (failed `/create` and `/unshelve` only; null otherwise) is set
+  when the failed step's error line is one of: "No capacity available for flavor
+  X", "no X capacity on Jetstream2 (unshelve request R failed at scheduling)",
+  "unshelve failed on the compute host…", "Instance failed to reach ACTIVE
+  state…", and, for an unshelve only, "Maximum wait time…" or "Server action
+  still in progress…" (the same lines end a shelve or delete that ran out of
+  time, which is not capacity). Fields:
+  - `cause`: `no_host` (the scheduler found no host for the flavor),
+    `host_failed` (Nova placed it and the compute host failed it), `timed_out`
+    (not running when the workflow's wait ran out), `unknown` (the log cannot
+    tell `no_host` from `host_failed`).
+  - `requests`: every create/unshelve request Nova shows since the run started,
+    each with `request_id`, `started`, its steps (step, result, host id),
+    `hosts` (the compute hosts it reached) and `outcome` (`no_host`,
+    `host_failed`, `in_progress`, `ok`, `unknown`). An unshelve can make two
+    requests in one run.
+  - `evidence`: `nova` (the collect-instance-diagnostics block), `workflow`
+    (control-instance's "Attempt N …" lines), `none`. `fault`, `flavor`,
+    `message`.
+- **Nova decides the cause, not the workflow's wording.** Before 2026-11-04
+  control-instance called every unshelve error a host failure; Test run
+  41538863343 says "failed on the compute host" while Nova shows both requests
+  failing at `schedule_instances` (no host). The create workflow calls a build
+  that failed on every host it tried (Nova: "Exceeded maximum number of retries.
+  Exhausted all hosts…") "No capacity available". A request with a `compute_*`
+  step reached a host; one that errored there, or whose server fault says the
+  hosts were exhausted, is `host_failed`. Without the diagnostics block
+  (production until it is vendorized with it): "found no host" and
+  `failed step: schedule_instances` are `no_host`, `failed step: compute_…` is
+  `host_failed`, and the pre-2026-11-04 "failed on the compute host (request
+  R)." is `unknown`.
+- **Refusals are requests a workflow declined by design, never failures.** The
+  reason now comes from the failed step's own error line matching
+  `refusal_errors` in `incident-sources.yml` (per-user instance and request
+  limits, closed issue, in flight, already exists, no instance, wrong state, not
+  approved, no data share, not an allowed operator, unsupported command,
+  portal-only, invalid request, the workshop window); a test checks each pattern
+  against a message a workflow prints. The job and step names (`authorize`, the
+  Validate steps) apply only when the step printed no reason of its own: a
+  GitHub 503 inside the authorize job is a failure. `--rederive` re-evaluates
+  refusals in both directions. MorphoCloud's system-wide MAX_TOTAL limit is not
+  a category (never approached; a quota request fixes it); if it ever triggers
+  it stays a failure with its line.
+- **Queries** (over `incidents/*/*/*/incident.json`, which carries `capacity`
+  and the outage context; the outcome line carries `capacity` only):
+  - Members who could not get an instance: `capacity.cause` in (`no_host`,
+    `host_failed`, `timed_out`, `unknown`), run by a member,
+    `context.js2_status == "operational"`. Count runs (attempts) and distinct
+    members; successful `/create` and `/unshelve` runs are the denominator.
+  - To report to Jetstream2: `cause == "host_failed"`, plus `timed_out` requests
+    with `hosts`, grouped by host id with request ids and times.
+  - Scarcity alone: `cause == "no_host"`.
+- On copies of the stores the rebuild set `capacity` on 43 Test records (18
+  `no_host`, 11 `host_failed`, 10 `timed_out`, 4 `unknown`) and 24 production
+  records (7 `no_host`, 6 `timed_out`, 11 `unknown`: production has no
+  diagnostics block yet); it turned 16 and 21 failures into refusals and 2
+  production "refusals" that were GitHub errors in the authorize job back into
+  failures. A second run changed nothing. The Test data already names hosts to
+  report: 172ae0b9 stuck spawning in 8 creates and unshelves (Oct 27 to Nov 9),
+  decb9c33 failing 4 unshelves (Oct 26), 176eaf02 (Nov 6 and 7).
 
 ### Open: the watchdog's own clock
 

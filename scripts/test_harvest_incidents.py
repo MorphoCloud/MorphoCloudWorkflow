@@ -1729,13 +1729,13 @@ def _diag(fault: str, *actions: str) -> list[str]:
     ]
 
 
-SCRIPT_ECHO = [  # the run script GitHub echoes: must never count as a verdict
+SCRIPT_ECHO = [  # the run script GitHub echoes: must never count
     '\x1b[36;1m    echo "::error ::no ${flavor:-flavor} capacity on Jetstream2 (unshelve request $failed_req failed at scheduling)."\x1b[0m',
     '\x1b[36;1m        echo "::error ::No capacity available for flavor $FLAVOR"\x1b[0m',
     '\x1b[36;1m# "No valid host" from builds failing on every host tried.\x1b[0m',
 ]
 EXIT = "##[error]Process completed with exit code 1."
-# Test-Instances run 42853462672 (issue 538): the scheduler found no g3.xl host.
+# Test-Instances run 42853462672 (#538): the scheduler found no g3.xl host.
 UNSHELVE_NO_HOST = _log(
     *SCRIPT_ECHO,
     "Attempt 1 found no host for the flavor (request req-38c26c9d-71ff-4fa0-9b83-daad9b0cd173): no capacity.",
@@ -1750,19 +1750,19 @@ UNSHELVE_NO_HOST = _log(
         "    compute_shelve_instance  Success  6a983ccd",
     ),
 )
-# Test-Instances #515: create, Nova "No valid host", scheduler only.
+# Test-Instances #539 (run 42864454776): create, "No valid host", scheduler only.
 CREATE_NO_HOST = _log(
     *SCRIPT_ECHO,
     "Detected capacity error - no instance available",
     *_diag(
-        "500 No valid host was found.  (at 2026-11-04T18:08:17Z)",
-        "2026-11-04T18:08:15  create  Error  req-35669a50-2c9a-491b-961d-e17ea1004fe1",
+        "500 No valid host was found.  (at 2026-11-10T17:24:10Z)",
+        "2026-11-10T17:24:07  create  Error  req-fc3755ad-f3df-464d-be7e-d12fae401ba5",
         "    conductor_schedule_and_build_instances  Error  92dcff2d",
     ),
     "##[error]No capacity available for flavor g3.xl",
     EXIT,
 )
-# Test-Instances run 41544021619: a host was tried and every build failed; the
+# Test-Instances run 41544021619: placed on a host, every build failed; the
 # workflow still says "No capacity available".
 CREATE_HOSTS_FAILED = _log(
     "Detected capacity error - no instance available",
@@ -1774,10 +1774,75 @@ CREATE_HOSTS_FAILED = _log(
     "##[error]No capacity available for flavor g3.large",
     EXIT,
 )
-# Production (no command-diagnostics yet): Instances runs 42549117229, 41538645590.
+# Test-Instances run 41538635871: placed on 172ae0b9, still spawning at the deadline.
+CREATE_BUILD_TIMEOUT = _log(
+    *_diag(
+        "(none recorded)",
+        "2026-11-02T22:54:46  create  -  req-98c78156-4c8e-41c3-870c-27c68588ae1b",
+        "    compute__do_build_and_run_instance  -  172ae0b9",
+    ),
+    "Instance did not reach ACTIVE in time (status: BUILD); deleting the partial instance.",
+    "##[error]Instance failed to reach ACTIVE state. Current status: BUILD",
+    EXIT,
+)
+# Test-Instances run 41538863343 (2026-11-02, before the schedule_instances
+# check): the workflow said "failed on the compute host"; Nova says neither
+# request found a host.
+UNSHELVE_OLD_HOST_LABEL = _log(
+    "Attempt 1 failed on the compute host (request req-3f939280-ff13-4f47-ba16-e9d192577af4).",
+    "Attempt 2 failed on the compute host (request req-2ecf13aa-c19b-4345-8833-b704236d1489).",
+    "##[error]unshelve failed on the compute host after 2 attempt(s) this run (2 recent failures total).",
+    EXIT,
+    *_diag(
+        "(none recorded)",
+        "2026-11-02T22:45:06  unshelve  Error  req-2ecf13aa-c19b-4345-8833-b704236d1489",
+        "    schedule_instances  Error  38c86f90",
+        "    get_image_info  Success  38c86f90",
+        "2026-11-02T22:44:13  unshelve  Error  req-3f939280-ff13-4f47-ba16-e9d192577af4",
+        "    schedule_instances  Error  92dcff2d",
+        "    get_image_info  Success  92dcff2d",
+        "2026-10-27T18:45:02  shelve  -  req-2dfec2da-dc75-4202-93f6-8cf8f99c4bc8",
+        "    compute_shelve_instance  Success  08360f46",
+    ),
+)
+UNSHELVE_HOST_FAILED = _log(
+    "Attempt 1 failed on the compute host (request req-a1; failed step: compute_unshelve_instance).",
+    "Attempt 2 failed on the compute host (request req-a2; failed step: compute_unshelve_instance).",
+    "##[error]unshelve failed on the compute host after 2 attempt(s) this run (2 recent failures total).",
+    EXIT,
+    *_diag(
+        "(none recorded)",
+        "2026-11-10T16:21:40  unshelve  Error  req-a2",
+        "    compute_unshelve_instance  Error  6a983ccd",
+        "    schedule_instances  Success  92dcff2d",
+        "2026-11-10T16:21:00  unshelve  Error  req-a1",
+        "    compute_unshelve_instance  Error  172ae0b9",
+        "    schedule_instances  Success  92dcff2d",
+    ),
+)
+# Test-Instances run 41536458418: placed on 172ae0b9, still spawning at 300 s.
+UNSHELVE_TIMEOUT = _log(
+    "##[error]Maximum wait time (300 seconds) exceeded.",
+    EXIT,
+    *_diag(
+        "(none recorded)",
+        "2026-11-02T22:21:39  unshelve  -  req-1adacbc0-6d48-4f10-9f02-a48d1c4c8d4d",
+        "    compute_unshelve_instance  -  172ae0b9",
+        "    schedule_instances  Success  92dcff2d",
+        "2026-11-01T20:46:24  shelve  -  req-9cbd9391-d7f0-44b9-b01d-0e3918e30e3a",
+        "    compute_shelve_instance  Success  f77da792",
+    ),
+)
+# Production, no diagnostics block: Instances runs 42549117229, 41520095839, 41538645590.
 PROD_UNSHELVE = _log(
     "Attempt 1 found no host for the flavor (request req-5706c9ed-304e-4c0f-b940-b31561cd2255): no capacity.",
     "##[error]no g3.xl capacity on Jetstream2 (unshelve request req-5706c9ed-304e-4c0f-b940-b31561cd2255 failed at scheduling).",
+    EXIT,
+)
+PROD_UNSHELVE_OLD_HOST = _log(
+    "Attempt 1 failed on the compute host (request req-9fa6b93c-fcba-4607-bc81-cba01517da06).",
+    "Attempt 2 failed on the compute host (request req-c5c3a607-2150-40c1-b9cd-83fad01562a2).",
+    "##[error]unshelve failed on the compute host after 2 attempt(s) this run (2 recent failures total).",
     EXIT,
 )
 PROD_CREATE = _log(
@@ -1785,62 +1850,111 @@ PROD_CREATE = _log(
     "##[error]No capacity available for flavor g3.xl",
     EXIT,
 )
-SYSTEM_CAP = _log(
-    "Total instances in OpenStack: 90 (system limit: 90)",
-    "##[error]System capacity: 90/90",
-    EXIT,
-)
-HOST_ERROR = _log(
-    "Attempt 2 failed on the compute host (request req-1; failed step: compute_unshelve_instance).",
-    "##[error]unshelve failed on the compute host after 2 attempt(s) this run (2 recent failures total).",
-    EXIT,
-)
+
+RUN_START = {
+    UNSHELVE_NO_HOST: "2026-11-10T16:20:02Z",
+    CREATE_NO_HOST: "2026-11-10T17:23:27Z",
+    CREATE_HOSTS_FAILED: "2026-11-02T23:15:38Z",
+    CREATE_BUILD_TIMEOUT: "2026-11-02T22:36:01Z",
+    UNSHELVE_OLD_HOST_LABEL: "2026-11-02T22:37:40Z",
+    UNSHELVE_HOST_FAILED: "2026-11-10T16:20:30Z",
+    UNSHELVE_TIMEOUT: "2026-11-02T22:20:44Z",
+    PROD_UNSHELVE: "2026-11-09T02:06:59Z",
+    PROD_UNSHELVE_OLD_HOST: "2026-11-02T20:32:14Z",
+    PROD_CREATE: "2026-11-02T22:36:06Z",
+}
+
+
+def _cap(log: str, command: str, flavor: str = "g3.xl") -> dict | None:
+    whole = hv.TS_LINE_RE.sub("", log)
+    error = hv.pick_error(hv.ERROR_RE.findall(whole))
+    return hv.capacity_of(log, error, command, RUN_START.get(log), flavor)
 
 
 @pytest.mark.parametrize(
-    ("log", "want"),
+    ("log", "command", "want"),
     [
-        (UNSHELVE_NO_HOST, ("no_capacity", "g3.xl", False, "nova", 1)),
-        (CREATE_NO_HOST, ("no_capacity", "g3.xl", False, "nova", None)),
-        (CREATE_HOSTS_FAILED, ("no_capacity", "g3.large", True, "nova", None)),
-        (PROD_UNSHELVE, ("no_capacity", "g3.xl", False, "workflow", 1)),
-        (PROD_CREATE, ("no_capacity", "g3.xl", None, "none", None)),
-        (SYSTEM_CAP, ("system_cap", None, None, "none", None)),
+        (UNSHELVE_NO_HOST, "/unshelve", ("no_host", "nova", ["no_host"], [[]])),
+        (CREATE_NO_HOST, "/create", ("no_host", "nova", ["no_host"], [[]])),
+        (
+            CREATE_HOSTS_FAILED,
+            "/create",
+            ("host_failed", "nova", ["host_failed"], [["42629bc0"]]),
+        ),
+        (
+            CREATE_BUILD_TIMEOUT,
+            "/create",
+            ("timed_out", "nova", ["in_progress"], [["172ae0b9"]]),
+        ),
+        (
+            UNSHELVE_OLD_HOST_LABEL,
+            "/unshelve",
+            ("no_host", "nova", ["no_host", "no_host"], [[], []]),
+        ),
+        (
+            UNSHELVE_HOST_FAILED,
+            "/unshelve",
+            (
+                "host_failed",
+                "nova",
+                ["host_failed", "host_failed"],
+                [["6a983ccd"], ["172ae0b9"]],
+            ),
+        ),
+        (
+            UNSHELVE_TIMEOUT,
+            "/unshelve",
+            ("timed_out", "nova", ["in_progress"], [["172ae0b9"]]),
+        ),
+        (PROD_UNSHELVE, "/unshelve", ("no_host", "workflow", ["no_host"], [None])),
+        (
+            PROD_UNSHELVE_OLD_HOST,
+            "/unshelve",
+            ("unknown", "workflow", ["unknown", "unknown"], [None, None]),
+        ),
+        (PROD_CREATE, "/create", ("unknown", "none", [], [])),
     ],
 )
-def test_capacity_records_the_verdict_and_whether_a_host_was_tried(log, want):
-    cap = hv.capacity_of(log)
-    assert (
-        cap["verdict"],
-        cap["flavor"],
-        cap["host_tried"],
+def test_capacity_cause_comes_from_nova_when_the_log_has_it(log, command, want):
+    cap = _cap(log, command)
+    got = (
+        cap["cause"],
         cap["evidence"],
-        cap["attempt"],
-    ) == want
-
-
-def test_capacity_details_come_from_the_failed_request():
-    cap = hv.capacity_of(UNSHELVE_NO_HOST)
-    assert cap["request_id"] == "req-38c26c9d-71ff-4fa0-9b83-daad9b0cd173"
-    assert cap["nova_steps"] == [
-        "unshelve:Error",
-        "schedule_instances:Error",
-        "get_image_info:Success",
-    ]
-    assert cap["fault"] is None
-    assert cap["message"].startswith("no g3.xl capacity on Jetstream2")
-    assert hv.capacity_of(CREATE_HOSTS_FAILED)["fault"].startswith(
-        "500 Exceeded maximum number of retries"
+        [r["outcome"] for r in cap["requests"]],
+        [r.get("hosts") for r in cap["requests"]],
     )
+    assert got == want
+
+
+def test_capacity_keeps_the_fault_flavor_and_message():
+    cap = _cap(CREATE_HOSTS_FAILED, "/create", flavor="g3.xl")
+    assert cap["flavor"] == "g3.large"  # the message's flavor, not the label's
+    assert cap["fault"].startswith("500 Exceeded maximum number of retries")
+    assert cap["message"] == "No capacity available for flavor g3.large"
+    assert (
+        cap["requests"][0]["request_id"] == "req-d5fa86a7-be72-4a3e-be6c-9ae7a4759a81"
+    )
+    assert _cap(UNSHELVE_TIMEOUT, "/unshelve", flavor="g3.xl")["flavor"] == "g3.xl"
 
 
 @pytest.mark.parametrize(
-    "log",
-    [HOST_ERROR, _log(*SCRIPT_ECHO, EXIT), "", None],
-    ids=["host", "echo", "empty", "none"],
+    ("log", "command"),
+    [
+        (UNSHELVE_TIMEOUT, "/shelve"),  # a shelve that ran out of time is not capacity
+        (UNSHELVE_TIMEOUT, "/delete_instance"),
+        (_log(*SCRIPT_ECHO, EXIT), "/create"),
+        (
+            _log(
+                "##[error]Failed to associate 1.2.3.4 with instance-1 after 120s", EXIT
+            ),
+            "/create",
+        ),
+        (_log("##[error]User u has 2/2 instances", EXIT), "/create"),
+        (PROD_CREATE, None),
+    ],
 )
-def test_no_capacity_verdict_means_no_capacity_record(log):
-    assert hv.capacity_of(log) is None
+def test_capacity_is_null_for_anything_else(log, command):
+    assert _cap(log, command) is None
 
 
 def test_error_line_is_the_steps_reason_not_the_exit_code_line():
@@ -1864,36 +1978,155 @@ def test_error_line_is_the_steps_reason_not_the_exit_code_line():
     )
 
 
-def test_rederive_adds_capacity_and_the_real_error_line(tmp_path, cfg, monkeypatch):
+# --- refusals ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        ("User teleaslamellatus has 2/2 instances", "user_instance_limit"),
+        (
+            "User aaronjhoag has 2 open instance requests (limit: 2)",
+            "user_request_limit",
+        ),
+        ("### ⚠️ Cannot proceed with operation", "not_operator"),
+        ("/create refused on closed issue #208", "closed_issue"),
+        ("/create refused on #227: an earlier command is still in flight", "in_flight"),
+        (
+            "Instance instance-220 already exists (SHELVED_OFFLOADED); /create is redundant",
+            "already_exists",
+        ),
+        ("Instance instance-131 does not exist", "no_instance"),
+        (
+            "/email requires an ACTIVE instance; instance-220 is SHELVED_OFFLOADED",
+            "wrong_state",
+        ),
+        (
+            "Instance morpho-cloud-test_instance-425 management not approved",
+            "not_approved",
+        ),
+        ("184461216 has no data share", "no_storage"),
+        ("Unsupported command [/SHELVE]", "unsupported_command"),
+        ("Request opened outside the portal; closed (portal-only mode)", "portal_only"),
+        ("Workshop request validation failed; issue closed", "invalid_request"),
+        ("User amm554 is not an active member of MorphoCloudUsers", "not_member"),
+        ("Workshop organizer amm554 is not a member of MorphoCloudUsers", "not_member"),
+        (
+            "/create attempted before the 12h window opens (now=1 < open=2)",
+            "workshop_window",
+        ),
+    ],
+)
+def test_a_refusal_is_named_by_the_steps_own_message(cfg, error, reason):
+    assert (
+        hv.is_refusal(cfg, {"job": "create", "step": "Create instance"}, "", error)
+        == reason
+    )
+
+
+def test_a_github_error_in_the_authorize_job_is_a_failure(cfg):
+    authorize = {"job": "authorize", "step": "create command"}
+    for error in (
+        "No server is currently available to service your request. Sorry about that.",
+        "Not Found - https://docs.github.com/rest/reactions/reactions#create-reaction-for-an-issue-comment",
+    ):
+        assert hv.is_refusal(cfg, authorize, "", error) is None
+    # with no reason of its own, the authorize job still means refused
+    assert (
+        hv.is_refusal(cfg, authorize, "", "Process completed with exit code 1.")
+        == "job:authorize"
+    )
+    assert hv.is_refusal(cfg, authorize, "", None) == "job:authorize"
+
+
+def _source_messages() -> list[str]:
+    """Every ::error message in MWF's workflows and actions, its shell and
+    expression variables replaced by a sample value."""
+    out = []
+    for p in (ROOT / ".github").rglob("*"):
+        if p.suffix not in (".yml", ".yaml", ".sh", ".py") or not p.is_file():
+            continue
+        for m in re.finditer(r"::error ?::([^\"\n]*)", p.read_text("utf-8", "replace")):
+            msg = re.sub(r"\$\{\{[^}]*\}\}", "u1", m.group(1))
+            msg = re.sub(r"\$\(\([^)]*\)\)|\$\{[^}]*\}|\$[A-Za-z_]\w*", "1", msg)
+            out.append(msg.strip())
+    return out
+
+
+def test_every_refusal_message_is_one_a_workflow_prints(cfg):
+    messages = _source_messages()
+    for reason, regex in cfg.refusal_errors:
+        if reason == "not_operator":  # printed by github/command, not by MWF
+            continue
+        assert any(regex.search(m) for m in messages), reason
+
+
+def test_rederive_replaces_capacity_and_corrects_refusals(tmp_path, cfg, monkeypatch):
     monkeypatch.setattr(
         hv.Store, "commit_push", lambda self, _msg: (self.flush(), True)
     )
     root = tmp_path / "store"
-    rec = _rec(
+    unshelve = _rec(
         3,
         "control-instance.yml",
         "failure",
         failed_job="control",
         failed_step="Control instance",
         error_line="Process completed with exit code 1.",
+        run_started_at="2026-11-10T16:20:02Z",
     )
-    rec["source"]["kind"] = "command"
+    unshelve["command"] = "/unshelve"
+    unshelve["source"]["kind"] = "command"
+    unshelve["capacity"] = {
+        "verdict": "no_capacity",
+        "host_tried": False,
+    }  # #416's shape
+    limit = _rec(
+        4,
+        "create-instance.yml",
+        "failure",
+        failed_job="create",
+        failed_step="Check quota",
+        error_line="User teleaslamellatus has 2/2 instances",
+    )
+    limit["source"]["kind"] = "command"
+    github = _rec(
+        5,
+        "create-instance.yml",
+        "refused",
+        failed_job="authorize",
+        failed_step="create command",
+        error_line="No server is currently available to service your request.",
+    )
+    github["id"] = "instances-5-1"
+    github["refusal_reason"] = "job:authorize"
+    github["signature"] = None
+    github["source"]["kind"] = "command"
     out = root / "outcomes/2026/11/09"
     out.mkdir(parents=True)
-    (out / "instances.jsonl").write_text(json.dumps(rec) + "\n")
+    (out / "instances.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in (unshelve, limit, github))
+    )
     inc = root / "incidents/2026/11/instances-3-1-0"
     inc.mkdir(parents=True)
-    (inc / "incident.json").write_text(json.dumps(rec))
-    (inc / "job.log.gz").write_bytes(_gz(UNSHELVE_NO_HOST))
+    (inc / "incident.json").write_text(json.dumps(unshelve))
+    (inc / "job.log.gz").write_bytes(
+        _gz(_log("  COMMAND: /unshelve") + UNSHELVE_NO_HOST)
+    )
     (inc / "failed-step.log").write_text(UNSHELVE_NO_HOST)
     assert hv.rederive(cfg, root, dry_run=False) == 0
-    for new in (
-        json.loads((out / "instances.jsonl").read_text()),
-        json.loads((inc / "incident.json").read_text()),
-    ):
-        assert new["capacity"]["verdict"] == "no_capacity"
-        assert new["capacity"]["host_tried"] is False
-        assert new["source"]["error_line"].startswith("no g3.xl capacity on Jetstream2")
+    lines = [json.loads(x) for x in (out / "instances.jsonl").read_text().splitlines()]
+    new = json.loads((inc / "incident.json").read_text())
+    assert lines[0] == new
+    assert new["source"]["error_line"].startswith("no g3.xl capacity on Jetstream2")
+    assert new["capacity"]["cause"] == "no_host"
+    assert "verdict" not in new["capacity"]
+    assert (lines[1]["result"], lines[1]["refusal_reason"]) == (
+        "refused",
+        "user_instance_limit",
+    )
+    assert lines[1]["capacity"] is None
+    assert (lines[2]["result"], lines[2]["refusal_reason"]) == ("failure", None)
     after = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
     assert hv.rederive(cfg, root, dry_run=False) == 0
     assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == after
@@ -1917,3 +2150,24 @@ def test_rederive_finds_a_reason_above_the_stored_tail(cfg):
     tail = _log(*[f"poll {i}" for i in range(5)], EXIT)
     new = hv.rederive_record(cfg, rec, whole, tail)
     assert new["source"]["error_line"] == "Maximum wait time (300 seconds) exceeded."
+
+
+def test_nova_evidence_needs_the_run_start_and_a_request_of_this_run():
+    # no run start: the diagnostics block cannot be tied to this run
+    cap = hv.capacity_of(
+        PROD_UNSHELVE + UNSHELVE_NO_HOST,
+        "no g3.xl capacity on Jetstream2 (unshelve request req-5706c9ed-304e-4c0f-b940-b31561cd2255 failed at scheduling).",
+        "/unshelve",
+        None,
+        "g3.xl",
+    )
+    assert (cap["evidence"], cap["fault"]) == ("workflow", None)
+    # every Nova request predates the run: the fault is not this run's
+    cap = hv.capacity_of(
+        CREATE_HOSTS_FAILED,
+        "No capacity available for flavor g3.large",
+        "/create",
+        "2026-11-03T00:00:00Z",
+        "g3.large",
+    )
+    assert (cap["evidence"], cap["fault"], cap["cause"]) == ("none", None, "unknown")

@@ -233,10 +233,59 @@ dropped_report:
   workflow: report-dropped-command.yml
   step: "Tell the user the command was dropped"
 
-# A failed run whose failing job or step is one of these is `refused`, not
-# `failure`: the deliberate exit 1 of an authorize step (not approved, does not
-# exist, in flight, maintenance, unauthorized). PR B's `REFUSED reason=` line
-# makes the reason exact; these names are the fallback.
+# A refusal is a request a workflow declined by design (a per-user limit, the
+# instance's state, a permission), never a failure. The reason comes from, in
+# order: PR B's `REFUSED reason=` line; the failed step's own error line
+# matching refusal_errors (every message below is one a workflow prints when it
+# declines; a test checks each against the workflow source); then the job and
+# step names below, only when the step printed no reason of its own (a GitHub
+# 503 inside the authorize job is a failure).
+refusal_errors:
+  - {
+      reason: user_instance_limit,
+      match: '^User \S+ has \d+/\d+ (course )?instances',
+    }
+  - {
+      reason: user_request_limit,
+      match: '^User \S+ has \d+ open (course )?instance requests',
+    }
+  - {
+      reason: not_member,
+      match:
+        '^(User|Workshop organizer) \S+ is not (an active )?(a )?member of ',
+    }
+  - { reason: not_operator, match: "Cannot proceed with operation" }
+  - { reason: closed_issue, match: '^/\w+ refused on closed issue' }
+  - { reason: in_flight, match: "an earlier command is still in flight" }
+  - {
+      reason: already_exists,
+      match: '^Instance \S+ already exists \(\w+\); /create is redundant',
+    }
+  - {
+      reason: no_instance,
+      match:
+        '^Instance \S+ does not exist$|^/email requires an existing instance',
+    }
+  - { reason: wrong_state, match: "^/email requires an ACTIVE instance" }
+  - {
+      reason: not_approved,
+      match:
+        '^(Instance|Workflow) \S+ management not approved|does not have request
+        approved label',
+    }
+  - { reason: no_storage, match: " has no data share$" }
+  - { reason: unsupported_command, match: '^Unsupported command \[' }
+  - { reason: portal_only, match: "^Request opened outside the portal" }
+  - {
+      reason: invalid_request,
+      match:
+        "^Workshop request validation failed|^Invalid (duration|number of
+        instances)|^Cannot approve",
+    }
+  - {
+      reason: workshop_window,
+      match: "^/create attempted before the 12h window opens",
+    }
 refusal_jobs:
   - authorize
 refusal_steps:
