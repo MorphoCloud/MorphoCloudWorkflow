@@ -473,7 +473,9 @@ jobs:
       # redundant /create on a healthy shelved instance is not a partial
       # provisioning, and /delete_all would take the user's data volume with it
       # (Instances#168). The action sets CREATE_ALREADY_EXISTS in that case and
-      # posts its own targeted guidance instead.
+      # posts its own targeted guidance instead. The retry is /delete_instance,
+      # never /delete_all: a failed create (no capacity included) leaves the
+      # member's data volume in place, and /delete_all would delete it.
       - name: comment (retry guidance on provisioning failure)
         if:
           ${{ failure() && steps.provision.outcome == 'failure' &&
@@ -486,7 +488,7 @@ jobs:
 
             Instance creation did not complete. This is sometimes caused by a transient cloud error. To retry from a clean state, comment the following on this issue, one at a time:
 
-            1. `/delete_all` — removes the partially-created instance, volume, and floating IP
+            1. `/delete_instance` — removes the partially-created instance; your data volume is kept
             2. `/create` — provisions again from scratch
 
             If it fails again after retrying, please tag `@MorphoCloud/morphocloud-admins` for help.
