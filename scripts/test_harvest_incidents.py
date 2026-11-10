@@ -1286,12 +1286,28 @@ NOISE_EXAMPLES = {
         {"_SYSTEMD_UNIT": "morphocloud-intake.service", "_PID": "7"},
         'INFO:     1.2.3.4:5555 - "GET /index.php HTTP/1.1" 404 Not Found',
     ),
+    "httpx-request-ok": (
+        {"_SYSTEMD_UNIT": "morphocloud-intake.service", "_PID": "5"},
+        'INFO:httpx:HTTP Request: GET https://api.github.com/orgs/MorphoCloud/memberships/someone "HTTP/1.1 200 OK"',
+    ),
+    "httpx-membership-pending": (
+        {"_SYSTEMD_UNIT": "morphocloud-intake.service", "_PID": "5"},
+        'INFO:httpx:HTTP Request: GET https://api.github.com/orgs/MorphoCloud/memberships/someone "HTTP/1.1 404 Not Found"',
+    ),
     "copyparty-progress": (
         {"_SYSTEMD_UNIT": "copyparty.service", "_PID": "3"},
         "17:00:01.123 1.2.3.4 4     BTW: got 12 more chunks, 3 left",
     ),
 }
 MUST_SHIP = [
+    (
+        {"_SYSTEMD_UNIT": "morphocloud-intake.service", "_PID": "5"},
+        'INFO:httpx:HTTP Request: GET https://api.github.com/repos/MorphoCloud/Instances/issues/9 "HTTP/1.1 404 Not Found"',
+    ),
+    (
+        {"_SYSTEMD_UNIT": "morphocloud-intake.service", "_PID": "5"},
+        'INFO:httpx:HTTP Request: POST https://api.github.com/app/installations/1/access_tokens "HTTP/1.1 401 Unauthorized"',
+    ),
     (
         {"_SYSTEMD_UNIT": "actions.runner.MorphoCloud-X.r.service", "_PID": "9"},
         "2026-11-05 17:00:41Z: Job reconcile completed with result: Failed",
@@ -1366,3 +1382,29 @@ def test_a_day_read_across_two_calls_gets_one_summary(tmp_path, cfg, monkeypatch
     h.journals(t + 600)
     day4 = (tmp_path / "store/runner/2026/11/04/r/journal.log").read_text()
     assert "cron-job-start=1" in day4
+
+
+def test_reader_file_first_sight_starts_at_the_end(tmp_path):
+    log = tmp_path / "w.log"
+    log.write_text("months of history\n" * 100)
+    allow = tmp_path / "allow"
+    allow.write_text(f"welcomes {log}\n")
+    out = io.StringIO()
+    assert jr.read_file("welcomes", "-", out, str(allow)) == 0
+    assert out.getvalue() == f"##OFFSET {log.stat().st_size}\n"  # no history
+
+
+def test_harvester_asks_for_first_sight_of_a_new_file(tmp_path, cfg, monkeypatch):
+    h = _jh(tmp_path, cfg, [])
+    sent = []
+
+    def call(_host, request, _trailer):
+        sent.append(request)
+        return ([], "1700", None)
+
+    monkeypatch.setattr(h, "host_call", call)
+    st: dict = {}
+    host = {"name": "join", "files": {"welcomes": "/var/log/w.log"}}
+    h.host_files(host, st, "2026/11/10")
+    h.host_files(host, st, "2026/11/10")
+    assert sent == ["file welcomes -", "file welcomes 1700"]

@@ -1855,8 +1855,9 @@ class Harvester:
         saved offset, appended to today's file of that name."""
         offsets = st.setdefault("files", {})
         for name in host.get("files") or {}:
+            at = offsets.get(name)
             lines, new, err = self.host_call(
-                host, f"file {name} {int(offsets.get(name, 0))}", "##OFFSET "
+                host, f"file {name} {'-' if at is None else int(at)}", "##OFFSET "
             )
             if err:
                 log(f"{host['name']} file {name}: {err}")
