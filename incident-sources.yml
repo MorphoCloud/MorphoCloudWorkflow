@@ -126,9 +126,16 @@ test_accounts:
 admins:
   - muratmaga
 
+# Every workflow of every harvested repository is listed here. One that is not
+# is recorded as kind `other` (a failure is an incident, a success a count) and
+# named in state/harvester.json's last_error at every cycle until it is listed,
+# so the watchdog emails about it (test: every MWF workflow is listed; the list
+# below also covers the files that exist only in Instances, Test-Instances or
+# the monitor, checked against the GitHub API on 2026-11-10).
 workflows:
-  # Code: CI and code review in any repository. Counted in the rollups, never
-  # an outcome line, a log or an incident (a red pre-commit is not an incident).
+  # Code: CI and code review in any repository, and Test's E2E harness.
+  # Counted in the rollups, never an outcome line, a log or an incident (a red
+  # pre-commit is not an incident).
   code:
     - ci.yml
     - claude.yml
@@ -139,6 +146,8 @@ workflows:
     - dependabot-updates
     - copilot
     - copilot-pull-request-reviewer
+    - e2e-verify-instance.yml # Test-Instances only
+    - _e2e_perm_check.yml # Test-Instances only
   # A command: one member action, one outcome line, jobs and the full log every time.
   command:
     - control-instance.yml
@@ -154,14 +163,37 @@ workflows:
     - create-workshop.yml
     - approve-workshop.yml
     - update-renew-label.yml
+    - delete-volume.yml # Instances only (not in MWF)
+    - delete-volume-from-workflow.yml # Instances only (not in MWF)
   # An alert: every run is an incident (something asked for the admins).
   alert:
     - admin-alert.yml
     - report-dropped-command.yml
     - on-admin-mention.yml
-  # A sweep: a successful tick is a rollup count; a failed one is an incident.
+  # A sweep, an event handler or a helper: a successful run is a rollup count;
+  # a failed one is an incident.
   sweep:
     - automatic-instance-shelving.yml
+    - automatic-volume-deleting.yml # Instances only (not in MWF)
+    - health-check.yml # morphocloud-monitor
+    - label-portal-request.yml
+    - labels.yml
+    - on-instance-request-opened.yml
+    - portal-only-notice.yml
+    - request-initial-comments.yml
+    - request-labeler.yml
+    - request-notify-admin-workshop.yml
+    - request-notify-admin.yml
+    - runner-setup-helper.yml
+    - update-issue-from-workflow.yml # Test-Instances only
+    - update-issue.yml # Test-Instances only
+    - validate-command-instance.yml
+    - validate-command-workshop.yml
+    - validate-request.yml
+    - enroll-students.yml # course repositories (not harvested)
+    - on-course-request-opened.yml # course repositories (not harvested)
+    - validate-command-course.yml # course repositories (not harvested)
+    - validate-request-course.yml # course repositories (not harvested)
     - close-expired-issues.yml
     - collect-instance-uptime.yml
     - detect-dormant-workflows.yml
@@ -175,22 +207,11 @@ workflows:
     - update-workshop.yml
     - workshop-backfill.yml
 
-# The commands a member can type (issue-commands.md and the workshop and course
-# variants). Until PR B records the command as a fact, the harvester reads the
-# job log for `command_name=<name>` (control-instance) or the first of these
-# words after a slash, and falls back to `command_by_workflow`.
-commands:
-  - create
-  - shelve
-  - unshelve
-  - extend
-  - renew
-  - email
-  - delete_instance
-  - delete_all
-  - delete_volume
-  - approve
-  - unapprove
+# Until PR B records the command as a fact, the harvester reads it from the job
+# log: the typed command (`COMMAND: /unshelve`, record-command-context's step
+# env), else the workflow-started action (`command_name: shelve`), else this
+# table. Never "a command word anywhere in the log": the help comment lists
+# every command (2026-11-10: 538 of 823 commands came out as /delete_all).
 command_by_workflow:
   create-instance.yml: /create
   create-course-instance.yml: /create
@@ -200,6 +221,8 @@ command_by_workflow:
   update-renew-label.yml: /renew
   send-email.yml: /email
   delete-instance-and-volume.yml: /delete_instance
+  delete-volume.yml: /delete_volume
+  delete-volume-from-workflow.yml: /delete_volume
 
 # report-dropped-command runs on every cancelled command run and reports only
 # when it finds a dropped command: its run is `dropped` (an incident) when this

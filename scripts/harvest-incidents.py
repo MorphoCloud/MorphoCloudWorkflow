@@ -56,6 +56,10 @@ Usage:
   harvest-incidents.py --dry-run       read and classify, write nothing
   harvest-incidents.py --backfill 90   record the last 90 days once, by hand,
                                        under the same lock (about two hours)
+  harvest-incidents.py --rederive [--dry-run]
+                                       apply today's rules (command, kind,
+                                       refusal, the day a runner-log line is
+                                       filed under) to what is already stored
 """
 
 from __future__ import annotations
@@ -150,6 +154,29 @@ DISPATCH_RE = re.compile(
 LEGACY_DISPATCH_RE = re.compile(r"^(\S+Z) dispatched (\S+)$")
 TITLE_ISSUE_RE = re.compile(r"(?:#|-)(\d+)$")
 ISSUE_LINE_RE = re.compile(r"issue(?:_number)?=(\d+)")
+# The command as the member typed it: GitHub prints a step's env in the log,
+# and record-command-context's step carries `COMMAND: /unshelve`. A run a
+# workflow started has no typed command; its action is the control-instance
+# input, printed as `command_name: shelve`. Both are anchored to the log line's
+# own timestamp, so the help text the workflow posts (which lists every
+# command, /delete_all included) and the script source GitHub echoes can never
+# match. Nothing else in the log names the command (2026-11-10: the old
+# "first command word anywhere" rule recorded 538 of 823 commands as /delete_all).
+TYPED_COMMAND_RE = re.compile(r"^\S+Z\s+COMMAND: (/\w+)\s*$", re.M)
+ACTION_RE = re.compile(r"^\S+Z\s+command_name: (\w+)\s*$", re.M)
+# report-dropped-command prints the dropped command's context JSON.
+CONTEXT_COMMAND_RE = re.compile(r'^\S+Z\s+"command": "(/\w+)"\s*$', re.M)
+# Logs from before record-command-context (October 2026 and earlier): the
+# authorize job runs github/command once per command it serves; every step but
+# the typed one prints "no command detected in comment". All of them printing
+# it means the comment was not a command at all (94 update-renew-label runs).
+GH_COMMAND_STEP = "##[group]Run github/command@"
+GH_COMMAND_INPUT_RE = re.compile(r"^\S+Z\s+command: (/\w+)\s*$")
+GH_NO_COMMAND = "no command detected"
+# The day a shipped line belongs to: an ISO date at its start (dispatch,
+# fip-police, token-expiry, journal lines) or `[YYYY-MM-DD ` (the runner's _diag).
+LINE_DAY_RE = re.compile(r"^\[?(\d{4})-(\d\d)-(\d\d)[T ]")
+OTHER_KIND = "other"
 
 
 def log(msg: str) -> None:
@@ -196,7 +223,6 @@ class Config:
         self.dropped_report_step = dropped.get("step")
         self.refusal_jobs = set(sources.get("refusal_jobs") or [])
         self.refusal_steps = set(sources.get("refusal_steps") or [])
-        self.commands = list(sources.get("commands") or [])
         self.command_by_workflow = dict(sources.get("command_by_workflow") or {})
         self.runner_logs = list(sources.get("runner_logs") or [])
         self.diag_dir = sources.get("diag_dir")
@@ -231,7 +257,10 @@ class Config:
         return {"short": repo.split("/")[-1].lower(), "instance_prefix": None}
 
     def kind(self, workflow_file: str) -> str:
-        return self.kinds.get(workflow_file, "other")
+        """The listed kind; an unlisted workflow is `other` (a failure is an
+        incident, a success a count) AND is named in last_error until it is
+        listed (unmapped_note), so a new workflow cannot pass unclassified."""
+        return self.kinds.get(workflow_file, OTHER_KIND)
 
 
 def data_dir(here: Path = HERE) -> Path:
@@ -443,6 +472,16 @@ class Store:
         roll["counts"][workflow][result] = roll["counts"][workflow].get(result, 0) + 1
         self._dirty.add(day_path(created_at))
 
+    def recount(self, created_at: str, workflow: str, old: str, new: str) -> None:
+        """--rederive: one recorded run's result changed from old to new."""
+        counts = self._rollup(created_at)["counts"].setdefault(workflow, {})
+        if counts.get(old, 0) > 0:
+            counts[old] -= 1
+            if not counts[old]:
+                del counts[old]
+        counts[new] = counts.get(new, 0) + 1
+        self._dirty.add(day_path(created_at))
+
     def flush(self) -> None:
         for day in sorted(self._dirty):
             roll = self._rollups[day]
@@ -480,6 +519,23 @@ class Store:
 
     def append_jsonl(self, rel: str, obj) -> None:
         self._write(rel, (json.dumps(obj, sort_keys=True) + "\n").encode(), append=True)
+
+    def write_bytes(self, rel: str, data: bytes) -> None:
+        self._write(rel, data)
+
+    def remove(self, rel: str) -> None:
+        """--rederive only: a file, or a directory with its files."""
+        self.writes += 1
+        if self.dry_run:
+            log(f"would remove {rel}")
+            return
+        p = self.rel(rel)
+        if p.is_dir():
+            for child in p.iterdir():
+                child.unlink()
+            p.rmdir()
+        elif p.exists():
+            p.unlink()
 
     def read_json(self, rel: str, default=None):
         p = self.rel(rel)
@@ -772,26 +828,100 @@ def identify(
             im = ISSUE_LINE_RE.search(logtext)
             if im:
                 issue = int(im.group(1))
-    if logtext:
-        cm = re.search(r"command_name=(\w+)", logtext)
-        if cm:
-            command = "/" + cm.group(1)
-        elif cfg.commands:
-            words = "|".join(re.escape(c) for c in cfg.commands)
-            cm = re.search(r"(?<![\w/])/(" + words + r")\b", logtext)
-            if cm:
-                command = "/" + cm.group(1)
     if name is None and issue is not None and kind == "command":
         name = f"{prefix}{issue}"
         name_source = "derived"
-    if command is None:
-        command = cfg.command_by_workflow.get(workflow_file(run))
+    command = command_of(logtext, workflow_file(run), cfg)
     return {
         "issue": issue,
         "name": name,
         "name_source": name_source,
         "command": command,
     }
+
+
+def github_command_match(logtext: str) -> tuple[bool, str | None]:
+    """(the log has github/command steps, the command of the one that did not
+    say GH_NO_COMMAND)."""
+    seen = False
+    asked: str | None = None
+    declined = False
+    for line in logtext.splitlines():
+        if "##[group]Run " in line:
+            if asked and asked != "?" and not declined:
+                return True, asked
+            asked, declined = ("?", False) if GH_COMMAND_STEP in line else (None, False)
+            seen = seen or asked == "?"
+        elif asked == "?":
+            m = GH_COMMAND_INPUT_RE.match(line)
+            if m:
+                asked = m.group(1)
+        elif asked and GH_NO_COMMAND in line:
+            declined = True
+    if asked and asked != "?" and not declined:
+        return True, asked
+    return seen, None
+
+
+def command_of(logtext: str | None, workflow: str, cfg: Config) -> str | None:
+    """The typed command, else the workflow-started action, else the dropped
+    command's context, else the github/command step that matched; when that
+    step ran and nothing matched, no command; with no log line at all, the
+    one command the workflow serves (TYPED_COMMAND_RE says why only these)."""
+    if logtext:
+        for rx, prefix in (
+            (TYPED_COMMAND_RE, ""),
+            (ACTION_RE, "/"),
+            (CONTEXT_COMMAND_RE, ""),
+        ):
+            m = rx.search(logtext)
+            if m:
+                return prefix + m.group(1)
+        ran, matched = github_command_match(logtext)
+        if ran:
+            return matched
+    return cfg.command_by_workflow.get(workflow)
+
+
+def unmapped_note(cfg: Config, seen: set[str], data: dict) -> str | None:
+    """Workflows recorded as `other` because incident-sources.yml does not
+    list them. Kept in the runner-side state until they are listed, so the
+    watchdog's last_error check sees them at every cycle, not only in the
+    cycle that happened to record such a run."""
+    names = set(data.get("unmapped_workflows") or []) | seen
+    names = {n for n in names if n not in cfg.kinds}
+    data["unmapped_workflows"] = sorted(names)
+    if not names:
+        return None
+    return (
+        "workflows not listed in incident-sources.yml (recorded as kind other): "
+        + ", ".join(sorted(names))
+    )
+
+
+def split_by_day(lines: list[str], default: str) -> dict[str, list[str]]:
+    """Each line under the day it carries (LINE_DAY_RE). A `# ` header (a
+    _diag file name) goes with the line after it; any other undated line (a
+    traceback, a JSON status line) stays with the line before it; undated
+    lines with nothing dated before them take `default` (the day shipped).
+    A first read of a long-lived log (the dispatch log from June) so lands
+    in June, not in the day it was read."""
+    days: list[str | None] = []
+    for line in lines:
+        m = LINE_DAY_RE.match(line)
+        days.append(f"{m[1]}/{m[2]}/{m[3]}" if m else None)
+    after = None
+    for i in range(len(lines) - 1, -1, -1):
+        if days[i]:
+            after = days[i]
+        elif lines[i].startswith("# ") and after:
+            days[i] = after
+    out: dict[str, list[str]] = {}
+    current = default
+    for line, day in zip(lines, days):
+        current = day or current
+        out.setdefault(current, []).append(line)
+    return out
 
 
 def workflow_file(run: dict) -> str:
@@ -1223,6 +1353,7 @@ class Harvester:
         self.cursor_moved = False
         self.extras: dict[str, Harvester] = {}
         self.unreadable: dict[str, str] = {}
+        self.unmapped: set[str] = set()
 
     # -- helpers
     def issue(self, number: int) -> dict | None:
@@ -1256,6 +1387,8 @@ class Harvester:
             return False
         workflow = workflow_file(run)
         kind = self.cfg.kind(workflow)
+        if workflow not in self.cfg.kinds:
+            self.unmapped.add(workflow)
         run_id = int(run["id"])
         attempt = int(run.get("run_attempt") or 1)
         created = run.get("created_at") or ""
@@ -1664,7 +1797,12 @@ class Harvester:
             if cut == 0:
                 continue
             text, _ = self.redactor.text(chunk[:cut].decode("utf-8", "replace"))
-            self.store.append_text(f"runner/{day}/{host}/{entry['name']}.log", text)
+            for line_day, part in split_by_day(
+                text.splitlines(keepends=True), day
+            ).items():
+                self.store.append_text(
+                    f"runner/{line_day}/{host}/{entry['name']}.log", "".join(part)
+                )
             offsets[entry["name"]] = offset + cut
             status[entry["name"]] = offset + cut
         if self.cfg.diag_dir:
@@ -1673,7 +1811,7 @@ class Harvester:
                 Path(self.cfg.diag_dir).expanduser(), diag_offsets, self.cfg.diag_match
             )
             if lines:
-                self.ship_capped(f"runner/{day}/{host}/diag.log", lines)
+                self.ship_by_day(host, "diag", lines, day)
             control = self.src.get("control_host")
             if control:
                 status["diag_remote"] = self.remote_diag(control, day)
@@ -1694,6 +1832,11 @@ class Harvester:
                 f"# capped: {DIAG_DAY_CAP} bytes for today; later lines are dropped\n"
             )
         self.store.append_text(rel, text)
+
+    def ship_by_day(self, host: str, name: str, lines: list[str], today: str) -> None:
+        """ship_capped() into the file of the day each line carries."""
+        for day, part in split_by_day(lines, today).items():
+            self.ship_capped(f"runner/{day}/{host}/{name}.log", part)
 
     def remote_diag(self, control: str, day: str) -> str:
         """The control runner's _diag error lines over SSH, from per-file
@@ -1761,7 +1904,7 @@ class Harvester:
                     header = None
                 body.append(line + "\n")
         if body:
-            self.ship_capped(f"runner/{day}/{host}/diag.log", body)
+            self.ship_by_day(host, "diag", body, day)
         offsets.clear()
         offsets.update(new_offsets)
         return "ok"
@@ -1852,7 +1995,8 @@ class Harvester:
 
     def host_files(self, host: dict, st: dict, today: str) -> None:
         """Our services' own log files on the host (`files:`), each from its
-        saved offset, appended to today's file of that name."""
+        saved offset, appended to the file of that name for the day each
+        line carries (today for undated lines)."""
         offsets = st.setdefault("files", {})
         for name in host.get("files") or {}:
             at = offsets.get(name)
@@ -1863,7 +2007,7 @@ class Harvester:
                 log(f"{host['name']} file {name}: {err}")
                 continue
             if lines:
-                self.ship_capped(f"runner/{today}/{host['name']}/{name}.log", lines)
+                self.ship_by_day(host["name"], name, lines, today)
             offsets[name] = int(new)
 
     def journal_keep(self, st: dict, day: str, line: str) -> bool:
@@ -2007,6 +2151,8 @@ class Harvester:
         An extra repository harvested on its own (--backfill --repo) writes
         only its cursor and commits."""
         if self.parent is not None:
+            # --backfill --repo: keep what it saw for the primary's next cycle
+            unmapped_note(self.cfg, self.unmapped, self.parent.local.data)
             if self.cursor_moved:
                 self.store.write_json(
                     self.cursor_rel, {"source_cursor": self.cursor, "repo": self.repo}
@@ -2021,6 +2167,12 @@ class Harvester:
         errors = self.errors + [e for x in extras for e in x.errors]
         if errors and not error:
             error = f"{len(errors)} run(s) could not be recorded; first: {errors[0]}"
+        note = unmapped_note(
+            self.cfg,
+            self.unmapped.union(*(x.unmapped for x in extras)),
+            self.local.data,
+        )
+        error = "; ".join(e for e in (error, note) if e) or None
         for x in extras:
             if x.cursor_moved:
                 self.store.write_json(
@@ -2217,6 +2369,204 @@ def owner_rule(markers: list[str]) -> str | None:
     return None
 
 
+# --- --rederive: today's rules over what is already stored -------------------------------
+
+
+def stored_log(root: Path, rec: dict) -> str | None:
+    """The run's log as the store holds it (an incident's job.log.gz, or
+    logs/<day>/<run>-<attempt>.log.gz), or None."""
+    s = rec["source"]
+    created = s.get("created_at") or ""
+    for rel in (
+        f"incidents/{month_path(created)}/{rec['id']}/job.log.gz",
+        f"logs/{day_path(created)}/{s['run_id']}-{s.get('run_attempt', 1)}.log.gz",
+    ):
+        p = root / rel
+        if p.is_file():
+            return gzip.decompress(p.read_bytes()).decode("utf-8", "replace")
+    return None
+
+
+def rederive_record(cfg: Config, rec: dict, logtext: str | None) -> dict:
+    """The record as record() would write it today, from what it stored:
+    the kind, the command (from the stored log; unchanged without one) and
+    refused-versus-failure. A record that would now become an incident keeps
+    its id (an incident needs the context only a fresh harvest can gather)."""
+    new = json.loads(json.dumps(rec))
+    s = new["source"]
+    workflow = s["workflow_file"]
+    s["kind"] = cfg.kind(workflow)
+    if logtext is not None:
+        new["command"] = command_of(logtext, workflow, cfg)
+    if new["result"] == "failure":
+        failed = (
+            {"job": s.get("failed_job"), "step": s.get("failed_step")}
+            if s.get("failed_job") or s.get("failed_step")
+            else None
+        )
+        reason = is_refusal(cfg, failed, logtext)
+        if reason:
+            new.update(result="refused", refusal_reason=reason, signature=None)
+    result, incident = finalize(
+        cfg, workflow, s["kind"], new["result"], new.get("jobs") or []
+    )
+    new["result"] = result
+    was_incident = rec["id"].endswith("-0")
+    if was_incident and not incident:
+        new["id"] = rec["id"].removesuffix("-0")
+    return new
+
+
+class Rederive:
+    """Apply today's rules to everything already stored, in four passes:
+    outcome lines, incident directories (a run that is no longer an incident
+    keeps its log under logs/), the follow-up lists that name an outcome, and
+    the runner logs (each line into the day it carries). Says what changed;
+    a dry run writes nothing. Running it twice changes nothing the second time."""
+
+    def __init__(self, cfg: Config, root: Path, dry_run: bool):
+        self.cfg = cfg
+        self.root = root
+        self.dry_run = dry_run
+        self.w = Store(root, "rederive", dry_run)
+        self.rollups: dict[str, Store] = {}
+        self.changes: dict[str, int] = {}
+        self.new_by_id: dict[str, dict] = {}
+
+    def count(self, what: str, n: int = 1) -> None:
+        self.changes[what] = self.changes.get(what, 0) + n
+
+    def diff(self, old: dict, new: dict) -> None:
+        for label, get in (
+            ("command", lambda r: r.get("command")),
+            ("kind", lambda r: r["source"]["kind"]),
+            ("result", lambda r: r["result"]),
+        ):
+            if get(old) != get(new):
+                self.count(f"{label} {get(old)} -> {get(new)}")
+
+    def outcomes(self) -> None:
+        for p in sorted(self.root.glob("outcomes/*/*/*/*.jsonl")):
+            kept: list[str] = []
+            dirty = False
+            for line in p.read_text("utf-8").splitlines():
+                if not line.strip():
+                    continue
+                rec = json.loads(line)
+                new = rederive_record(self.cfg, rec, stored_log(self.root, rec))
+                self.new_by_id[rec["id"]] = new
+                if new == rec:
+                    kept.append(line)
+                    continue
+                dirty = True
+                self.diff(rec, new)
+                if new["result"] != rec["result"]:
+                    roll = self.rollups.setdefault(
+                        p.stem, Store(self.root, p.stem, self.dry_run)
+                    )
+                    roll.recount(
+                        rec["source"]["created_at"],
+                        rec["source"]["workflow_file"],
+                        rec["result"],
+                        new["result"],
+                    )
+                if wants_outcome_line(new["source"]["kind"], new["result"]):
+                    kept.append(json.dumps(new, sort_keys=True))
+                else:
+                    self.count(
+                        "outcome line dropped (a count only under today's rules)"
+                    )
+            rel = str(p.relative_to(self.root))
+            if dirty and kept:
+                self.w.write_text(rel, "".join(k + "\n" for k in kept))
+            elif dirty:
+                self.w.remove(rel)
+
+    def incidents(self) -> None:
+        for p in sorted(self.root.glob("incidents/*/*/*/incident.json")):
+            rec = json.loads(p.read_text("utf-8"))
+            rel_dir = str(p.parent.relative_to(self.root))
+            new = rederive_record(self.cfg, rec, stored_log(self.root, rec))
+            if new["id"] == rec["id"]:
+                if new != rec:
+                    self.w.write_json(f"{rel_dir}/incident.json", new)
+                continue
+            s = rec["source"]
+            log_gz = p.parent / "job.log.gz"
+            if log_gz.is_file():
+                self.w.write_bytes(
+                    f"logs/{day_path(s['created_at'])}/{s['run_id']}-{s.get('run_attempt', 1)}.log.gz",
+                    log_gz.read_bytes(),
+                )
+            self.w.remove(rel_dir)
+            self.count(
+                "incident directory removed (no longer an incident; log kept under logs/)"
+            )
+
+    def followups(self) -> None:
+        for p in sorted(self.root.glob("incidents/*/*/*/timeline.json")):
+            data = json.loads(p.read_text("utf-8"))
+            changed = False
+            for fu in data.get("followups") or []:
+                new = self.new_by_id.get(fu.get("id"))
+                if not new:
+                    continue
+                for key, value in (
+                    ("id", new["id"]),
+                    ("command", new.get("command")),
+                    ("result", new["result"]),
+                ):
+                    if fu.get(key) != value:
+                        fu[key] = value
+                        changed = True
+            if changed:
+                self.w.write_json(str(p.relative_to(self.root)), data)
+
+    def runner_logs(self) -> None:
+        targets: dict[str, list[str]] = {}
+        seen: set[str] = set()
+        for p in sorted(self.root.glob("runner/*/*/*/*/*.log")):
+            if p.name == "journal.log":  # filed by line day since it was written
+                continue
+            rel = p.relative_to(self.root)
+            seen.add(str(rel))
+            folder = "/".join(rel.parts[1:4])
+            lines = p.read_text("utf-8", "replace").splitlines(keepends=True)
+            for day, part in split_by_day(lines, folder).items():
+                if day != folder:
+                    self.count("runner log line re-filed under its own day", len(part))
+                target = f"runner/{day}/{p.parent.name}/{p.name}"
+                targets.setdefault(target, []).extend(part)
+        for rel in sorted(set(targets) | seen):
+            text = "".join(targets.get(rel, []))
+            p = self.root / rel
+            if p.is_file() and p.read_text("utf-8", "replace") == text:
+                continue
+            if text:
+                self.w.write_text(rel, text)
+            else:
+                self.w.remove(rel)
+
+    def run(self) -> int:
+        self.outcomes()
+        self.incidents()
+        self.followups()
+        self.runner_logs()
+        for st in self.rollups.values():
+            st.flush()
+        for what, n in sorted(self.changes.items()):
+            log(f"rederive: {n:6d}  {what}")
+        if not self.changes:
+            log("rederive: nothing to change")
+        elif not self.dry_run:
+            self.w.commit_push(f"rederive: {sum(self.changes.values())} change(s)")
+        return 0
+
+
+def rederive(cfg: Config, root: Path, dry_run: bool) -> int:
+    return Rederive(cfg, root, dry_run).run()
+
+
 # --- main -------------------------------------------------------------------------------
 
 
@@ -2239,7 +2589,15 @@ def main(argv: list[str]) -> int:  # noqa: PLR0911 — one early exit per usage 
         metavar="OWNER/NAME",
         help="with --backfill: one of the source's `extra_repos` (class K) instead of the source",
     )
+    ap.add_argument(
+        "--rederive",
+        action="store_true",
+        help="apply today's rules to the records and runner logs already stored",
+    )
     args = ap.parse_args(argv)
+    if args.rederive and args.backfill:
+        print("--rederive and --backfill are separate runs", file=sys.stderr)  # noqa: T201 — CLI usage error
+        return 2
     if args.repo and not args.backfill:
         print("--repo needs --backfill", file=sys.stderr)  # noqa: T201 — CLI usage error
         return 2
@@ -2272,6 +2630,13 @@ def main(argv: list[str]) -> int:  # noqa: PLR0911 — one early exit per usage 
         return 0
 
     cfg = load_config()
+    if args.rederive:
+        try:
+            log(f"rederive {store_dir}{' (dry run)' if args.dry_run else ''}")
+            return rederive(cfg, store_dir, args.dry_run)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            lock.close()
     token = SOURCE_PAT.read_text("utf-8").strip()
     gh = GitHub(token, pace=bool(args.backfill))
     store = Store(store_dir, cfg.source(repo)["short"], args.dry_run)

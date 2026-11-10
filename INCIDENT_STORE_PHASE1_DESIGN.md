@@ -718,6 +718,39 @@ spot named above.
 - The watchdog's two-hour alert for an unreachable host is a change to
   `watchdog.yml` in the store repositories, made at A2's install.
 
+### Audit of the first production month (2026-11-10)
+
+Every November record and stored log was checked against what the run's own log
+says. Three derived values were wrong; everything else (instance, issue, flavor,
+actor_kind, error line, failed step, journals, platform) matched.
+
+- **The command.** The harvester took the first command word anywhere in the
+  log, and the help comment the workflows post lists every command, so 538 of
+  823 command records read `/delete_all`. The command now comes only from lines
+  that carry it: the typed command (`COMMAND: /unshelve`, record-command-
+  context), the workflow-started action (`command_name: shelve`), a dropped
+  command's context, or, in logs from before record-command-context, the
+  github/command step that matched. When every such step said "no command
+  detected" the run has no command (94 `update-renew-label` runs were plain
+  comments recorded as `/renew`); only a log with none of these lines falls back
+  to the workflow's one command.
+- **Kinds.** 30 workflows (13 in Instances, the monitor's `health-check.yml`, 16
+  in Test-Instances, 4 course-only in MWF) had no kind and were `other`; two of
+  them, `delete-volume.yml` and `delete-volume-from-workflow.yml`, are member
+  commands whose successes would have left no record (none happened in
+  November). All are listed now; a test fails for an unlisted MWF workflow, and
+  at run time an unlisted workflow is named in `last_error` at every cycle until
+  it is listed, so the watchdog emails about it.
+- **Runner-log days.** A runner log's first read went into the day it was read
+  (130,000 dispatch-log lines from June onward under 2026-11-09). Every shipped
+  line is now filed under the day it carries.
+- `harvest-incidents.py --rederive [--dry-run]` applies today's rules to what is
+  stored (command, kind, refused-versus-failure, runner-log days) and is
+  idempotent. On a copy of production it changed 689 commands and 16 kinds,
+  turned 3 Validate refusals recorded before that rule existed from incidents
+  into outcomes (their logs kept under `logs/`), and re-filed 161,154 runner-log
+  lines with none lost or duplicated.
+
 ### Open: the watchdog's own clock
 
 The store watchdog did not run once between 17:18Z and at least 19:52Z on
