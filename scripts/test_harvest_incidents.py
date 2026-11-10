@@ -2009,6 +2009,12 @@ def test_error_line_is_the_steps_reason_not_the_exit_code_line():
         ("Unsupported command [/SHELVE]", "unsupported_command"),
         ("Request opened outside the portal; closed (portal-only mode)", "portal_only"),
         ("Workshop request validation failed; issue closed", "invalid_request"),
+        ("User amm554 is not an active member of MorphoCloudUsers", "not_member"),
+        ("Workshop organizer amm554 is not a member of MorphoCloudUsers", "not_member"),
+        (
+            "/create attempted before the 12h window opens (now=1 < open=2)",
+            "workshop_window",
+        ),
     ],
 )
 def test_a_refusal_is_named_by_the_steps_own_message(cfg, error, reason):
@@ -2144,3 +2150,24 @@ def test_rederive_finds_a_reason_above_the_stored_tail(cfg):
     tail = _log(*[f"poll {i}" for i in range(5)], EXIT)
     new = hv.rederive_record(cfg, rec, whole, tail)
     assert new["source"]["error_line"] == "Maximum wait time (300 seconds) exceeded."
+
+
+def test_nova_evidence_needs_the_run_start_and_a_request_of_this_run():
+    # no run start: the diagnostics block cannot be tied to this run
+    cap = hv.capacity_of(
+        PROD_UNSHELVE + UNSHELVE_NO_HOST,
+        "no g3.xl capacity on Jetstream2 (unshelve request req-5706c9ed-304e-4c0f-b940-b31561cd2255 failed at scheduling).",
+        "/unshelve",
+        None,
+        "g3.xl",
+    )
+    assert (cap["evidence"], cap["fault"]) == ("workflow", None)
+    # every Nova request predates the run: the fault is not this run's
+    cap = hv.capacity_of(
+        CREATE_HOSTS_FAILED,
+        "No capacity available for flavor g3.large",
+        "/create",
+        "2026-11-03T00:00:00Z",
+        "g3.large",
+    )
+    assert (cap["evidence"], cap["fault"], cap["cause"]) == ("none", None, "unknown")

@@ -917,7 +917,7 @@ def nova_requests(text: str, since: str) -> tuple[str | None, list[dict]]:
     """The server's fault and the create/unshelve requests Nova shows since
     the run started (newest first), each with its outcome and compute hosts."""
     diag = nova_actions(text)
-    if not diag:
+    if not diag or not since:  # no run start: no way to tell this run's requests
         return None, []
     fault, actions = diag
     reqs = [
@@ -934,7 +934,9 @@ def nova_requests(text: str, since: str) -> tuple[str | None, list[dict]]:
                 if s["step"].startswith("compute_") and s["host_id"]
             }
         )
-    return fault, reqs
+    # The fault is the server's latest; it belongs to this run only when one
+    # of this run's requests is there.
+    return (fault if reqs else None), reqs
 
 
 def run_cause(said: str, requests: list[dict]) -> str:
