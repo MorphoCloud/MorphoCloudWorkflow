@@ -1214,3 +1214,23 @@ def test_reader_refuses_when_it_cannot_see_the_system_journal(monkeypatch):
     )
     monkeypatch.setenv("SSH_ORIGINAL_COMMAND", "journal - none")
     assert jr.main() == 2  # noqa: PLR2004 — refused, nothing read
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "dynamic/dependabot/dependabot-updates",
+        "dynamic/copilot-swe-agent/copilot",
+        "dynamic/copilot-pull-request-reviewer/copilot-pull-request-reviewer",
+        ".github/workflows/claude-code-review.yml",
+    ],
+)
+def test_github_synthetic_runs_are_code(cfg, path):
+    """The `path` values GitHub returned for these runs on 2026-11-10."""
+    assert cfg.kind(hv.workflow_file({"path": path})) == "code"
+
+
+def test_journal_installer_rejects_quote_breaking_input():
+    text = (SCRIPTS / "install-journal-reader.sh").read_text()
+    assert "awk '{print $1, $2}'" in text  # the key comment never reaches the host
+    assert "^/[A-Za-z0-9._/-]{1,255}$" in text  # no quote can appear in a path

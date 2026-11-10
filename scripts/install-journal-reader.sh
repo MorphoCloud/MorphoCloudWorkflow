@@ -37,12 +37,18 @@ READER="$MWF/scripts/mc-journal-read.py"
 ALLOW=""
 for kv in "$@"; do
   name="${kv%%=*}"; path="${kv#*=}"
-  [[ "$name" =~ ^[A-Za-z0-9_-]{1,64}$ && "$path" == /* ]] || { echo "ERROR: bad file entry '$kv'"; exit 1; }
+  # Both end up inside a single-quoted string of a root command on the host:
+  # only these characters, so nothing can close the quote.
+  [[ "$name" =~ ^[A-Za-z0-9_-]{1,64}$ && "$path" =~ ^/[A-Za-z0-9._/-]{1,255}$ ]] \
+    || { echo "ERROR: bad file entry '$kv' (name: letters, digits, _ -; path: absolute, letters, digits, . _ / -)"; exit 1; }
   ALLOW+="$name $path"$'\n'
 done
 
-PUB="$(ssh -o BatchMode=yes "$RUNNER" 'cat ~/.ssh/id_ed25519.pub')"
-[[ "$PUB" == ssh-ed25519\ * ]] || { echo "ERROR: no ed25519 public key on $RUNNER"; exit 1; }
+# Only the key type and the base64 key are kept (the comment is dropped), and
+# both are checked, because the key line is written by a root command on the
+# host inside single quotes.
+PUB="$(ssh -o BatchMode=yes "$RUNNER" 'cat ~/.ssh/id_ed25519.pub' | awk '{print $1, $2}')"
+[[ "$PUB" =~ ^ssh-ed25519\ [A-Za-z0-9+/]+={0,2}$ ]] || { echo "ERROR: no valid ed25519 public key on $RUNNER"; exit 1; }
 KEYLINE="restrict,command=\"/usr/bin/python3 /usr/local/lib/morphocloud/mc-journal-read.py\" $PUB"
 
 echo ">> Installing the journal reader on $ADMIN (runner $RUNNER reaches it at $ADDR)"

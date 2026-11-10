@@ -60,7 +60,14 @@ ssh "$RUNNER" "
   chmod +x ~/harvest-incidents.py ~/mc-journal-read.py ~/venv/bin/openstack-ro
   # class I: the runner reads its own system journal (cron picks the group up
   # at its next job); other hosts are read through install-journal-reader.sh
-  id -nG | grep -qw systemd-journal || sudo -n usermod -aG systemd-journal \$(whoami)
+  # Without it the reader refuses and every cycle records this runner as
+  # unreachable; stop the install here, loudly, rather than install that.
+  if ! id -nG | grep -qw systemd-journal; then
+    sudo -n usermod -aG systemd-journal \$(whoami) || {
+      echo 'ERROR: cannot add this account to systemd-journal (needs passwordless sudo); install stopped'
+      exit 1
+    }
+  fi
   chmod 600 ~/.config/morphocloud/*.pat
   if [[ ! -d ~/incidents-store/.git ]]; then
     git -c credential.helper='!f() { test \"\$1\" = get && printf \"username=x-access-token\npassword=%s\n\" \"\$(tr -d \"\\r\\n\" < ~/.config/morphocloud/harvest-store.pat)\"; }; f' \
