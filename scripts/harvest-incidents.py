@@ -1911,12 +1911,15 @@ class Harvester:
                 return False
         return True
 
-    def journal_summaries(self, host: str, st: dict, today: str) -> None:
-        """One line per finished day: firewall blocks (count, top ports, top
-        source networks) and what each noise filter removed, so a scan stays
-        visible and a filter that grows greedy shows."""
+    def journal_summaries(self, host: str, st: dict, upto: str) -> None:
+        """One line per day read to its end: firewall blocks (count, top
+        ports, top source networks) and what each noise filter removed, so a
+        scan stays visible and a filter that grows greedy shows. `upto` is the
+        day of the last line read (today once caught up): a day is summarized
+        only when the read has moved past it, so a day read across several
+        calls (a first sight) gets one complete line, not several partial ones."""
         days = sorted(set(st["ufw"]) | set(st["noise"]))
-        for day in [d for d in days if d < today]:
+        for day in [d for d in days if d < upto]:
             u = st["ufw"].pop(day, None) or {"total": 0, "dpt": {}, "src": {}}
             n = st["noise"].pop(day, None) or {}
 
@@ -1968,7 +1971,9 @@ class Harvester:
             for day, kept in sorted(by_day.items()):
                 self.ship_capped(f"runner/{day}/{name}/journal.log", kept)
             st["cursor"] = cursor
-            self.journal_summaries(name, st, today)
+            read_to = max((day_path(x) for x in lines if x[:4].isdigit()), default=None)
+            # caught up (nothing new) means every earlier day is complete
+            self.journal_summaries(name, st, read_to or today)
             self.host_files(host, st, today)
             status[name] = "ok"
         return status
