@@ -564,9 +564,11 @@ of the 18 user shares on the data portal were dead: still listed as mounted,
 blocklisted the portal's sessions (kernel: `mds7 rejected session`, about
 20:00Z). The portal's check saw the gap at 19:42Z, then stopped flagging it once
 the dead mounts showed as mounted again. Its alert emails all failed with
-Dynadot's `524 You sent it too frequently`. Every MorphoCloud server VM was
-`PAUSED` by Jetstream2 for hours. None of it reached the store, and the store as
-designed could not have recorded it.
+Dynadot's `524 You sent it too frequently`. Five of the six MorphoCloud server
+VMs (both production runners, the join and website server, the Test runner and
+the test join VM) were `PAUSED` by Jetstream2 for hours; the data portal stayed
+running. None of it reached the store, and the store as designed could not have
+recorded it.
 
 **Root cause in this design.** The evidence inventory was swept from our code:
 every log line, table and file our scripts write. That cannot find what our code
@@ -584,7 +586,7 @@ left out only by an explicit, written exclusion.
 | Class | Evidence                                                                                                               | New inventory items |
 | ----- | ---------------------------------------------------------------------------------------------------------------------- | ------------------- |
 | I     | the system journal of **every MorphoCloud server VM**: all lines from our own units, `warning` or worse from the rest  | I1–I3               |
-| J     | **platform state**: every server VM's Nova state and every self-hosted runner's online status, on each change          | J1–J2               |
+| J     | **platform state**: every server VM's Nova state on each change, and each runner's liveness read from its own host     | J1–J2               |
 | K     | the workflow runs of **every MorphoCloud repository** that acts on users or infrastructure, not only the two sources   | K1                  |
 | R1    | rule: a health check exercises the resource (reads the share, opens the page), never only its state (mounted, running) | (emitter change)    |
 | R2    | rule: every outbound email writes one result line, sent or failed, with the server's reply, wherever it is sent from   | (emitter change)    |
@@ -598,14 +600,14 @@ verifies a key reaches them.
 
 ### New inventory items
 
-| Item | Evidence                                                                                                                                                                                                                                                                                                            |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| I1   | each host's journal from a saved cursor (`journalctl --after-cursor`, so a line ships once): every line of the units `incident-sources.yml` lists for that host; `warning` or worse from everything else, minus the noise list (I3)                                                                                 |
-| I2   | per host per cycle: reachable or not. An unreachable host is a line in its day file and a count in `state/harvester.json`; the watchdog alerts when a host has been unreachable for two hours                                                                                                                       |
-| I3   | the noise list, in `incident-sources.yml`, each entry with the count it removed that day so a filter that grows too greedy shows: `[UFW BLOCK]` (~900 lines per host per 8 h), PipeWire `jackdbus`, Exosphere `automount-volume@loop*`, `networkd-dispatcher`                                                       |
-| J1   | each server VM's `status`, `OS-EXT-STS:vm_state`, `task_state`, power state, through `openstack-ro server list`, one line per change in `platform/YYYY/MM/DD.jsonl` (on 2026-11-09: `ACTIVE` to `PAUSED` at 17:54Z for six VMs)                                                                                     |
-| J2   | each self-hosted runner's GitHub status (`online`, `offline`, `busy`), one line per change in the same file                                                                                                                                                                                                         |
-| K1   | runs of every org repository except a deny-list of code-only repositories (their CI): today the course repositories (`MC-*`, own runner, 128 runs a week), `morphocloud-monitor` (hourly join health check, opens outage issues), `MorphoCloudAnalytics`, `MorphoCloudCourseTemplate`, `morphocloud-intake-backups` |
+| Item | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| I1   | each host's journal from a saved cursor (`journalctl --after-cursor`, so a line ships once): every line of the units `incident-sources.yml` lists for that host; `warning` or worse from everything else, minus the noise list (I3)                                                                                                                                                                                                                                                      |
+| I2   | per host per cycle: reachable or not. An unreachable host is a line in its day file and a count in `state/harvester.json`; the watchdog alerts when a host has been unreachable for two hours                                                                                                                                                                                                                                                                                            |
+| I3   | the noise list, in `incident-sources.yml`, each entry with the count it removed that day so a filter that grows too greedy shows: PipeWire `jackdbus`, Exosphere `automount-volume@loop*`, `networkd-dispatcher`. Firewall blocks (`[UFW BLOCK]`, ~900 lines per host per 8 h) are not dropped but summarized: one line per host per day with the count, the ten most-hit destination ports and the ten most frequent source /24 networks, so a scan stays visible without the raw lines |
+| J1   | each server VM's `status`, `OS-EXT-STS:vm_state`, `task_state`, power state, through `openstack-ro server list`, one line per change in `platform/YYYY/MM/DD.jsonl` (on 2026-11-09: `ACTIVE` to `PAUSED` by about 17:54Z for five of the six; the data portal stayed `ACTIVE`)                                                                                                                                                                                                           |
+| J2   | each self-hosted runner's liveness, read from its host rather than GitHub's API: the runner service unit ships in full through I1 (start, stop, crash, connection errors), the VM's state through J1, GitHub-side disconnects through F5 (`_diag`), and a run left waiting for a runner through A1 (`queued_seconds`)                                                                                                                                                                    |
+| K1   | runs of every org repository except a deny-list of code-only repositories (their CI): today the course repositories (`MC-*`, own runner, 128 runs a week), `morphocloud-monitor` (hourly join health check, opens outage issues), `MorphoCloudAnalytics`, `MorphoCloudCourseTemplate`, `morphocloud-intake-backups`                                                                                                                                                                      |
 
 ### How each class is built
 
@@ -635,10 +637,13 @@ after the noise list and under 20 on each other host, so well under 1 MB a day
 in total.
 
 **J, platform state (PR A2, harvester).** One `openstack-ro server list` per
-cycle for the source's allocation, kept to the hosts above, and one GitHub
-runners listing per source repository. Written only on change, so a quiet day
-writes nothing. The GitHub listing needs `Administration: read` on the source
-PATs (a credential change for the maintainer).
+cycle for the source's allocation, kept to the hosts above, written only on
+change, so a quiet day writes nothing. Runner liveness (J2) comes from the
+hosts, not from GitHub's runners API: that API needs `Administration: read`, and
+a fine-grained PAT applies one permission set to every repository it is granted
+(see "Credentials PR A needs"), so with K's organization-wide grant it would
+hand administration read on every repository. No new GitHub permission is
+needed.
 
 **K, every repository (PR A2, harvester).** `sources:` becomes the whole
 organization minus `deny:`, read once a cycle from the org's repository list, so
@@ -650,11 +655,11 @@ call per repository per cycle, a few hundred calls an hour on a 5,000 limit.
 
 **R1, checks that exercise the resource.** The portal's share check reads each
 share (a `stat` and a directory listing under a timeout) and logs one line per
-failure and per recovery; that line reaches the store through I1 (and as G9 when
-PR C ships). Every other health check is audited against R1 in the PR that
-touches it, with the result as a table in that PR: today `morphocloud-monitor`'s
-`/healthz`, the in-job Jetstream2 check (B13) and the reconcile sweep's
-reachability test.
+failure and per recovery; that line reaches the store through I1 (and as G9 of
+the plan's evidence inventory, `INCIDENT_STORE_PLAN.md`, when PR C ships). Every
+other health check is audited against R1 in the PR that touches it, with the
+result as a table in that PR: today `morphocloud-monitor`'s `/healthz`, the
+in-job Jetstream2 check (B13) and the reconcile sweep's reachability test.
 
 **R2, mail result lines.** One line per send at every sender:
 `<UTC> MAIL result=ok|FAILED to=<count> subject=<subject> reply=<SMTP reply>`.
