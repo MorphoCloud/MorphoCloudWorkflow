@@ -80,11 +80,32 @@ deny_repos:
 # Firewall blocks ([UFW BLOCK]) are not here: they get their own daily summary
 # (count, top ports, top source networks) in the harvester.
 journal_noise:
+  # Every pattern is written against the READER's line format,
+  #   <UTC time> <unit or identifier>[<pid>] p<priority>: <message>
+  # (mc-journal-read.py line_of), not syslog's; each entry has an example in
+  # test_harvest_incidents.py that is formatted by line_of itself.
   - { name: pipewire-jackdbus, match: "jackdbus" }
   - { name: exosphere-automount, match: "automount-volume@loop" }
   - { name: networkd-dispatcher, match: "networkd-dispatcher" }
-  - { name: cron-job-start, match: 'CRON\[\d+\]: \(\S+\) CMD \(' }
+  - { name: cron-job-start, match: 'cron\.service\S* p\d+: \(\S+\) CMD \(' }
   - { name: cron-session, match: 'pam_unix\(cron:session\)' }
+  # the runner's per-job lines duplicate the run records; a FAILED job still ships
+  - name: runner-job-start
+    match: 'actions\.runner\.\S+ p\d+: \S+ \S+: Running job: '
+  - name: runner-job-succeeded
+    match:
+      'actions\.runner\.\S+ p\d+: \S+ \S+: Job \S+ completed with result:
+      Succeeded'
+  # web access lines of our apps (uvicorn) with a 2xx, 3xx or 4xx status: health
+  # checks and scanners. A 5xx still ships. Keeps client addresses out of the store.
+  - name: http-access-not-5xx
+    match: 'INFO: +\S+ - "[A-Z]+ \S+ HTTP/[\d.]+" [234]\d\d '
+  # copyparty's upload progress (it logs everything at info); keeps users' file
+  # names out of the store. Its errors still ship.
+  - name: copyparty-progress
+    match:
+      'copyparty\.service\S* p\d+: .*(BTW: got \d+ more chunks|LOG:
+      (POST|GET|PUT|writing) )'
 
 # actor_kind rules (plan, "Classify"): rule 2 bots, rule 3 test accounts,
 # rule 4 admins (unless the admin opened the issue), rule 5 everyone else.

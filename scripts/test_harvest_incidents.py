@@ -1234,3 +1234,122 @@ def test_journal_installer_rejects_quote_breaking_input():
     text = (SCRIPTS / "install-journal-reader.sh").read_text()
     assert "awk '{print $1, $2}'" in text  # the key comment never reaches the host
     assert "^/[A-Za-z0-9._/-]{1,255}$" in text  # no quote can appear in a path
+
+
+# One example per noise entry, each FORMATTED BY THE READER ITSELF: a pattern
+# written for another log format (syslog's `CRON[123]:`) cannot pass. Every
+# entry in incident-sources.yml must have an example here, and must not match
+# the lines below that have to keep shipping.
+NOISE_EXAMPLES = {
+    "pipewire-jackdbus": (
+        {"_SYSTEMD_UNIT": "user@1002.service"},
+        "mod.jackdbus-detect: Failed to receive jackdbus reply",
+    ),
+    "exosphere-automount": (
+        {"_SYSTEMD_UNIT": "init.scope"},
+        "automount-volume@loop3.service: Failed with result 'exit-code'.",
+    ),
+    "networkd-dispatcher": (
+        {"_SYSTEMD_UNIT": "networkd-dispatcher.service"},
+        "Unknown state for interface",
+    ),
+    "cron-job-start": (
+        {"_SYSTEMD_UNIT": "cron.service", "_PID": "2628358"},
+        "(root) CMD (/opt/system_load_json.py > /dev/console)",
+    ),
+    "cron-session": (
+        {"_SYSTEMD_UNIT": "cron.service", "_PID": "1"},
+        "pam_unix(cron:session): session opened for user root(uid=0) by root(uid=0)",
+    ),
+    "runner-job-start": (
+        {"_SYSTEMD_UNIT": "actions.runner.MorphoCloud-X.r.service", "_PID": "9"},
+        "2026-11-05 17:00:01Z: Running job: follow-through",
+    ),
+    "runner-job-succeeded": (
+        {"_SYSTEMD_UNIT": "actions.runner.MorphoCloud-X.r.service", "_PID": "9"},
+        "2026-11-05 17:00:41Z: Job follow-through completed with result: Succeeded",
+    ),
+    "http-access-not-5xx": (
+        {"_SYSTEMD_UNIT": "morphocloud-intake.service", "_PID": "7"},
+        'INFO:     1.2.3.4:5555 - "GET /index.php HTTP/1.1" 404 Not Found',
+    ),
+    "copyparty-progress": (
+        {"_SYSTEMD_UNIT": "copyparty.service", "_PID": "3"},
+        "17:00:01.123 1.2.3.4 4     BTW: got 12 more chunks, 3 left",
+    ),
+}
+MUST_SHIP = [
+    (
+        {"_SYSTEMD_UNIT": "actions.runner.MorphoCloud-X.r.service", "_PID": "9"},
+        "2026-11-05 17:00:41Z: Job reconcile completed with result: Failed",
+    ),
+    (
+        {"_SYSTEMD_UNIT": "actions.runner.MorphoCloud-X.r.service", "_PID": "9"},
+        "2026-11-05 17:00:41Z: Runner connect error: The HTTP request timed out",
+    ),
+    (
+        {"_SYSTEMD_UNIT": "mc-data-portal.service", "_PID": "7"},
+        'INFO:     1.2.3.4:5555 - "POST /share/reset HTTP/1.1" 500 Internal Server Error',
+    ),
+    (
+        {"_SYSTEMD_UNIT": "cron.service", "_PID": "7"},
+        "(CRON) info (No MTA installed, discarding output)",
+    ),
+    (
+        {"_TRANSPORT": "kernel"},
+        "libceph: mds7 (1)10.0.0.1:6800 socket closed (con state OPEN)",
+    ),
+    (
+        {"_SYSTEMD_UNIT": "copyparty.service", "_PID": "3"},
+        "17:00:01.123 1.2.3.4 4     ERROR: disk full writing upload",
+    ),
+]
+
+
+def _formatted(fields: dict, msg: str) -> str:
+    return jr.line_of(
+        {
+            "__REALTIME_TIMESTAMP": "1762362000000000",
+            "PRIORITY": "6",
+            "MESSAGE": msg,
+            **fields,
+        }
+    )
+
+
+def test_every_noise_entry_matches_a_reader_formatted_example(cfg):
+    names = [n for n, _ in cfg.journal_noise]
+    assert sorted(names) == sorted(NOISE_EXAMPLES), (
+        "add an example for each noise entry"
+    )
+    for name, rx in cfg.journal_noise:
+        line = _formatted(*NOISE_EXAMPLES[name])
+        assert rx.search(line), (name, line)
+
+
+@pytest.mark.parametrize(("fields", "msg"), MUST_SHIP)
+def test_lines_that_matter_survive_the_noise_list(cfg, fields, msg):
+    line = _formatted(fields, msg)
+    hit = [n for n, rx in cfg.journal_noise if rx.search(line)]
+    assert not hit, (hit, line)
+
+
+def test_a_day_read_across_two_calls_gets_one_summary(tmp_path, cfg, monkeypatch):
+    h = _jh(tmp_path, cfg, [{"name": "r", "ssh": "local", "units": ["x"]}])
+    cron = "cron.service[1] p6: (root) CMD (x)\n"
+    replies = [
+        ([f"2026-11-03T10:00:00Z {cron}"], "s=1", None),  # first chunk: Nov 3 only
+        ([f"2026-11-03T20:00:00Z {cron}", f"2026-11-04T01:00:00Z {cron}"], "s=2", None),
+        ([], "s=2", None),  # caught up
+    ]
+    monkeypatch.setattr(h, "host_call", lambda *_a: replies.pop(0))
+    t = hv.parse_ts("2026-11-10T02:00:00Z")
+    h.journals(t)
+    assert not (tmp_path / "store/runner/2026/11/03/r/journal.log").exists()
+    h.journals(t + 300)
+    day3 = (tmp_path / "store/runner/2026/11/03/r/journal.log").read_text()
+    assert day3.count("# daily summary") == 1
+    assert "cron-job-start=2" in day3
+    h.journals(t + 600)
+    day4 = (tmp_path / "store/runner/2026/11/04/r/journal.log").read_text()
+    assert "cron-job-start=1" in day4
