@@ -371,13 +371,14 @@ all expire 2027-11-10):
 | `MAIL_USERNAME`, `MAIL_PASSWORD`, `ADMIN_EMAILS` | the same values `admin-alert.yml` uses (set 2026-11-09)         | secrets and variable on both store repositories; verified with one sandbox watchdog email |
 | HMAC key (`hmac.key`)                            | 32 random bytes                                                 | PR B's concern; PR A fails closed without it (`[email]`)                                  |
 
-**Amended by the coverage amendment (K1, PR A2):** the production source token
-`GH_MorphoCloud-incidents-source` is re-issued for **all repositories of the
-organization**, with the same two permissions (Actions:read, Issues:read). Its
-blast radius grows from one repository to read access on every org repository's
-runs, logs and issues, private ones included; it still cannot write anywhere.
-The Test source token is unchanged: the Test harvester keeps harvesting
-`Test-Instances` only.
+**Amended by the coverage amendment (K1, decided 2026-11-10):** the production
+source token `GH_MorphoCloud-incidents-source` is scoped to **"Only select
+repositories": `Instances` and `morphocloud-monitor`**, with the same two
+permissions (Actions:read, Issues:read). An organization-wide grant was proposed
+and rejected by the maintainer: it would give read access to every private
+repository's logs and issues, including ones holding user data
+(`morphocloud-intake-backups`). The Test source token is unchanged
+(`Test-Instances` only).
 
 Issues:write on the store is unused until Phase 2 (verdict issues) but is
 granted now so the PAT is not re-issued in two weeks. No token has Actions write
@@ -595,7 +596,7 @@ left out only by an explicit, written exclusion.
 | ----- | ---------------------------------------------------------------------------------------------------------------------- | ------------------- |
 | I     | the system journal of **every MorphoCloud server VM**: all lines from our own units, `warning` or worse from the rest  | I1–I3               |
 | J     | **platform state**: every server VM's Nova state on each change, and each runner's liveness read from its own host     | J1–J2               |
-| K     | the workflow runs of **every MorphoCloud repository** that acts on users or infrastructure, not only the two sources   | K1                  |
+| K     | the workflow runs of the **other repositories that watch MorphoCloud**, by explicit list (today the join monitor)      | K1                  |
 | R1    | rule: a health check exercises the resource (reads the share, opens the page), never only its state (mounted, running) | (emitter change)    |
 | R2    | rule: every outbound email writes one result line, sent or failed, with the server's reply, wherever it is sent from   | (emitter change)    |
 
@@ -608,14 +609,14 @@ verifies a key reaches them.
 
 ### New inventory items
 
-| Item | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| I1   | each host's journal from a saved cursor (`journalctl --after-cursor`, so a line ships once): every line of the units `incident-sources.yml` lists for that host; `warning` or worse from everything else, minus the noise list (I3)                                                                                                                                                                                                                                                      |
-| I2   | per host per cycle: reachable or not. An unreachable host is a line in its day file and a count in `state/harvester.json`; the watchdog alerts when a host has been unreachable for two hours                                                                                                                                                                                                                                                                                            |
-| I3   | the noise list, in `incident-sources.yml`, each entry with the count it removed that day so a filter that grows too greedy shows: PipeWire `jackdbus`, Exosphere `automount-volume@loop*`, `networkd-dispatcher`. Firewall blocks (`[UFW BLOCK]`, ~900 lines per host per 8 h) are not dropped but summarized: one line per host per day with the count, the ten most-hit destination ports and the ten most frequent source /24 networks, so a scan stays visible without the raw lines |
-| J1   | each server VM's `status`, `OS-EXT-STS:vm_state`, `task_state`, power state, through `openstack-ro server list`, one line per change in `platform/YYYY/MM/DD.jsonl` (on 2026-11-09: `ACTIVE` to `PAUSED` by about 17:54Z for five of the six; the data portal stayed `ACTIVE`)                                                                                                                                                                                                           |
-| J2   | each self-hosted runner's liveness, read from its host rather than GitHub's API: the runner service unit ships in full through I1 (start, stop, crash, connection errors), the VM's state through J1, GitHub-side disconnects through F5 (`_diag`), and a run left waiting for a runner through A1 (`queued_seconds`)                                                                                                                                                                    |
-| K1   | runs of every org repository except a deny-list of code-only repositories (their CI): today the course repositories (`MC-*`, own runner, 128 runs a week), `morphocloud-monitor` (hourly join health check, opens outage issues), `MorphoCloudAnalytics`, `MorphoCloudCourseTemplate`, `morphocloud-intake-backups`                                                                                                                                                                      |
+| Item | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| I1   | each host's journal from a saved cursor (`journalctl --after-cursor`, so a line ships once): every line of the units `incident-sources.yml` lists for that host; `warning` or worse from everything else, minus the noise list (I3)                                                                                                                                                                                                                                                                      |
+| I2   | per host per cycle: reachable or not. An unreachable host is a line in its day file and a count in `state/harvester.json`; the watchdog alerts when a host has been unreachable for two hours                                                                                                                                                                                                                                                                                                            |
+| I3   | the noise list, in `incident-sources.yml`, each entry with the count it removed that day so a filter that grows too greedy shows: PipeWire `jackdbus`, Exosphere `automount-volume@loop*`, `networkd-dispatcher`. Firewall blocks (`[UFW BLOCK]`, ~900 lines per host per 8 h) are not dropped but summarized: one line per host per day with the count, the ten most-hit destination ports and the ten most frequent source /24 networks, so a scan stays visible without the raw lines                 |
+| J1   | each server VM's `status`, `OS-EXT-STS:vm_state`, `task_state`, power state, through `openstack-ro server list`, one line per change in `platform/YYYY/MM/DD.jsonl` (on 2026-11-09: `ACTIVE` to `PAUSED` by about 17:54Z for five of the six; the data portal stayed `ACTIVE`)                                                                                                                                                                                                                           |
+| J2   | each self-hosted runner's liveness, read from its host rather than GitHub's API: the runner service unit ships in full through I1 (start, stop, crash, connection errors), the VM's state through J1, GitHub-side disconnects through F5 (`_diag`), and a run left waiting for a runner through A1 (`queued_seconds`)                                                                                                                                                                                    |
+| K1   | runs of each repository in the source's `extra_repos`: today only `morphocloud-monitor` (hourly join health check from outside JS2; opens and closes outage issues). Not harvested, by the maintainer's decision: course repositories (their own thing; their failure modes are MorphoCloud's), repositories holding user data (`morphocloud-intake-backups`), source, template, CI-only and documentation repositories, and `MorphoCloudAnalytics` (left out for now; one line and a token edit to add) |
 
 ### How each class is built
 
@@ -649,19 +650,16 @@ cycle for the source's allocation, kept to the hosts above, written only on
 change, so a quiet day writes nothing. Runner liveness (J2) comes from the
 hosts, not from GitHub's runners API: that API needs `Administration: read`, and
 a fine-grained PAT applies one permission set to every repository it is granted
-(see "Credentials PR A needs"), so with K's organization-wide grant it would
-hand administration read on every repository. No new GitHub permission is
-needed.
+(see "Credentials PR A needs"), so it would hand administration read on every
+repository the token reads. No new GitHub permission is needed.
 
-**K, every repository (PR A2, harvester).** `sources:` becomes the whole
-organization minus `deny:`, read once a cycle from the org's repository list, so
-a new course repository is harvested from its first run. Unknown workflows are
-kind `other` (counted; a failure is an incident), as today. K applies to the
-production harvester; the production source PAT is re-issued for **all**
-repositories of the organization (read-only Actions and Issues; see "Credentials
-PR A needs"), or a new repository would be invisible to it. Cost: about one
-listing call per repository per cycle, a few hundred calls an hour on a 5,000
-limit.
+**K, listed repositories (PR A2, harvester).** The source names them under
+`extra_repos` in `incident-sources.yml`; each is harvested in the same cycle
+with its own cursor. A listed repository the token cannot read (a 404) is named
+in `repos_unreadable`, never taken for "no runs", and `install-harvester.sh`
+checks every listed repository with the token at install. Adding one is a line
+in that list plus adding it to the token. Cost: three API calls per cycle per
+repository.
 
 **R1, checks that exercise the resource.** The portal's share check reads each
 share (a `stat` and a directory listing under a timeout) and logs one line per
@@ -683,7 +681,7 @@ spot named above.
 
 | Piece                                                                                                       | PR                              | Order             |
 | ----------------------------------------------------------------------------------------------------------- | ------------------------------- | ----------------- |
-| I, J, K in the harvester; `hosts:`, `deny:`, noise list; `mcjournal` installer                              | **PR A2** (MorphoCloudWorkflow) | next, before PR B |
+| I, J, K in the harvester; `hosts:`, `extra_repos:`, noise list; `mcjournal` installer                       | **PR A2** (MorphoCloudWorkflow) | next, before PR B |
 | R1 and R2 on the portal                                                                                     | PR C (morphocloud-data-portal)  | with PR C         |
 | R2 in the join app and `morphocloud-monitor`                                                                | one small PR in each repository | after A2          |
 | R2 in the workflows                                                                                         | PR B                            | with PR B         |
@@ -691,21 +689,18 @@ spot named above.
 
 ### As built (PR A2, 2026-11-10)
 
-- **CI and code review are a kind, not a deny-list.** MorphoCloudWorkflow, the
-  course template, the monitor, the analytics repository and the Apps Script
-  repository all run operational workflows next to their CI, so a repository
-  deny-list would lose real runs. Workflow kind `code` (`ci.yml`, `claude*.yml`,
-  `smoke-test.yml`, `validate.yml`, `release.yml`, Dependabot, Copilot) is
-  counted in the rollups and is never an outcome line, a log or an incident, in
-  every repository. `deny_repos` holds only the Test environment's three
-  (`Test-Instances`, `Incidents-sandbox`, `MorphoCloudE2ETests`).
-- **K:** an extra repository seen for the first time is read seven days back in
-  the cycle; older history is `--backfill N --repo OWNER/NAME`. Its cursor is
-  `state/cursors/<short>.json`; `state/harvester.json` lists every extra
-  repository's cursor and `repos_unreadable`. The organization list is re-read
-  hourly. A repository the token cannot see is never listed, so
-  `install-harvester.sh` compares the token's view with the maintainer's and
-  names any repository missing from it.
+- **CI and code review are a kind.** Workflow kind `code` (`ci.yml`,
+  `claude*.yml`, `smoke-test.yml`, `validate.yml`, `release.yml`, Dependabot,
+  Copilot) is counted in the rollups and is never an outcome line, a log or an
+  incident (a red pre-commit in Instances is not an incident).
+- **K, by explicit list (maintainer, 2026-11-10).** PR A2 first harvested the
+  whole organization minus a deny-list; the maintainer narrowed it before the
+  production install: only `morphocloud-monitor` next to the source, the token
+  scoped to those two repositories. An extra repository seen for the first time
+  is read seven days back in the cycle; older history is
+  `--backfill N --repo OWNER/NAME`. Its cursor is `state/cursors/<short>.json`;
+  `state/harvester.json` lists every extra repository's cursor and
+  `repos_unreadable`.
 - **I:** our services' log files outside the journal ship too (the welcome-
   email cron's `send-welcomes.log`, which carries `Internal Server Error` lines,
   and the Jetstream2 notifier's log on the join server), through a second

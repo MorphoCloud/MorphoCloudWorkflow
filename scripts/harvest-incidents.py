@@ -26,8 +26,8 @@ One cycle, in order:
 7. every new byte of the runner-side logs, and the error lines of the Actions
    runner's own _diag files;
    (coverage amendment, INCIDENT_STORE_PHASE1_DESIGN.md)
-   K. steps 1-4 and 6 for every other repository of the organization when the
-      source has `harvest_org: true`, minus `deny_repos`;
+   K. steps 1-4 and 6 for each repository the source lists under
+      `extra_repos` (production: the join health monitor);
    I. the system journal of every host the source lists, from a saved cursor,
       through mc-journal-read.py (locally, or as the read-only `mcjournal`
       account's forced command over SSH);
@@ -113,10 +113,9 @@ DIAG_DAY_CAP = 2_000_000
 # How much of each runner log the DISPATCH join reads. Production's dispatch
 # log is 8 MB for five months, so 32 MB covers a 90-day backfill with room.
 DISPATCH_LOG_TAIL = 32_000_000
-# Coverage amendment (class K): a repository seen for the first time is read
+# Coverage amendment (class K): an extra repository seen for the first time is read
 # from this far back in the cycle itself; older history is a --backfill --repo.
 EXTRA_FIRST_SIGHT = 7 * 86400
-ORG_LIST_EVERY = 3600  # the organization's repository list is re-read hourly
 # Class I: the journal reader on each host (mc-journal-read.py) is given this
 # long; an unreachable or slow host is recorded and retried next cycle.
 JOURNAL_TIMEOUT = 180
@@ -205,9 +204,7 @@ class Config:
         self.grafana = sources.get("grafana") or {}
         self.access = sources.get("access_outages") or {}
         self.github_status = sources.get("github_status")
-        # Coverage amendment: K (every org repository), I (host journals)
-        self.org = sources.get("org")
-        self.deny_repos = set(sources.get("deny_repos") or [])
+        # Coverage amendment: I (host journals)
         self.journal_noise = [
             (n["name"], re.compile(n["match"]))
             for n in sources.get("journal_noise") or []
@@ -1769,43 +1766,14 @@ class Harvester:
         offsets.update(new_offsets)
         return "ok"
 
-    # -- class K: every repository of the organization ----------------------
-    def org_repos(self, now: float) -> list[str]:
-        """Every repository of the organization except the deny list and the
-        primary source, when this source has `harvest_org: true`. Re-listed
-        hourly; the list is kept runner-side. A repository the token cannot
-        see is not listed at all, so install-harvester.sh compares this count
-        with the maintainer's own at install."""
-        if not self.cfg.org or not self.src.get("harvest_org"):
-            return []
-        cache = self.local.data.setdefault("org_repos", {"at": 0, "repos": []})
-        if (
-            not cache.get("repos")
-            or now - float(cache.get("at") or 0) >= ORG_LIST_EVERY
-        ):
-            names: list[str] = []
-            for page in range(1, MAX_PAGES + 1):
-                data = (
-                    self.gh.get(
-                        f"/orgs/{self.cfg.org}/repos",
-                        {"type": "all", "per_page": PAGE, "page": page},
-                    )
-                    or []
-                )
-                names += [
-                    r["full_name"]
-                    for r in data
-                    if not r.get("archived") and not r.get("disabled")
-                ]
-                if len(data) < PAGE:
-                    break
-            if names:
-                cache.update(at=now, repos=sorted(names))
-        return [
-            r
-            for r in cache.get("repos") or []
-            if r != self.repo and r not in self.cfg.deny_repos
-        ]
+    # -- class K: the other repositories this source lists -------------------
+    def extra_repos(self) -> list[str]:
+        """The repositories this source lists under `extra_repos` (production:
+        the join health monitor). An explicit list, by the maintainer's
+        decision of 2026-11-10: course repositories and repositories holding
+        user data are not harvested, and the source token is scoped to
+        exactly these repositories."""
+        return [r for r in self.src.get("extra_repos") or [] if r != self.repo]
 
     def extra(self, repo: str) -> Harvester:
         if repo not in self.extras:
@@ -1827,9 +1795,14 @@ class Harvester:
         """Steps 1-4 and 6 of a cycle for each extra repository, each one
         contained: a repository that fails is named in state/harvester.json
         (`repos_unreadable`) and retried next cycle; the others go on."""
-        for repo in self.org_repos(now):
+        for repo in self.extra_repos():
             x = self.extra(repo)
             try:
+                # a repository the token cannot read answers 404, which the
+                # run listing would take for "no runs": name it instead
+                if self.gh.get(f"/repos/{repo}") is None:
+                    msg = "not readable with the source token (404)"
+                    raise LookupError(msg)
                 x.new_runs(now)
                 x.watch()
                 x.lookback(now)
@@ -2263,7 +2236,7 @@ def main(argv: list[str]) -> int:  # noqa: PLR0911 — one early exit per usage 
     ap.add_argument(
         "--repo",
         metavar="OWNER/NAME",
-        help="with --backfill: an extra repository of the organization (class K) instead of the source",
+        help="with --backfill: one of the source's `extra_repos` (class K) instead of the source",
     )
     args = ap.parse_args(argv)
     if args.repo and not args.backfill:
