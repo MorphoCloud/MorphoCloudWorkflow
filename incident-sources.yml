@@ -11,9 +11,14 @@ sources:
     short: instances # the store's per-repository file name and incident-id prefix
     instance_prefix: "instance-" # production servers are instance-<issue>
     control_host: null # exouser@<ip> of the second (control) runner, for its _diag logs over SSH
-    # Coverage amendment, class K: also harvest every other repository of
-    # `org` except `deny_repos` (production only; Test keeps one repository).
-    harvest_org: true
+    # Coverage amendment, class K: other repositories harvested with this
+    # source, by explicit list (maintainer, 2026-11-10): the join health
+    # monitor only. Course repositories are their own thing and their failure
+    # modes are MorphoCloud's; repositories holding user data
+    # (morphocloud-intake-backups) are never harvested. The source token is
+    # scoped to exactly Instances + these. Adding one = this list + the token.
+    extra_repos:
+      - MorphoCloud/morphocloud-monitor
     # Classes I and J: every MorphoCloud server VM of this environment. `ssh`
     # is `local` (the acquire runner itself) or the read-only account that
     # install-journal-reader.sh creates; `nova` is the server's name in
@@ -65,15 +70,6 @@ sources:
         nova: mc-join-test
         ssh: mcjournal@10.1.158.175
         units: [morphocloud-intake.service, nginx.service, cron.service]
-
-# Class K: the organization, and the repositories production does NOT harvest:
-# the Test environment's own (the Test harvester covers Test-Instances).
-# MorphoDepot is a separate project and has no repository here.
-org: MorphoCloud
-deny_repos:
-  - MorphoCloud/Test-Instances
-  - MorphoCloud/Incidents-sandbox
-  - MorphoCloud/MorphoCloudE2ETests
 
 # Class I: journal lines counted per day instead of stored (each entry's count
 # goes in the host's daily summary line, so a filter that grows greedy shows).

@@ -23,8 +23,6 @@
 #   MWF_SOURCE_REPO           default MorphoCloud/Instances (Test: MorphoCloud/Test-Instances)
 #   MWF_STORE_REPO            default MorphoCloud/Incidents (Test: MorphoCloud/Incidents-sandbox)
 #   MWF_OS_CLOUD              default BIO180006_IU (Test: BIO240357_IU); --outside-block only
-#   MWF_ADMIN_GH              the maintainer's gh account (default muratmaga), whose view of
-#                             the organization the source token's is compared with
 set -euo pipefail
 
 RUNNER="${1:?usage: install-harvester.sh <user@host> [--outside-block]}"
@@ -35,7 +33,6 @@ STORE_TOKEN="${MWF_HARVEST_STORE_TOKEN:-$HOME/.ssh/GH_MorphoCloud-incidents-stor
 SOURCE_REPO="${MWF_SOURCE_REPO:-MorphoCloud/Instances}"
 STORE_REPO="${MWF_STORE_REPO:-MorphoCloud/Incidents}"
 OS_CLOUD_NAME="${MWF_OS_CLOUD:-BIO180006_IU}"
-ADMIN_GH="${MWF_ADMIN_GH:-muratmaga}"  # the maintainer's gh account, for the class K visibility check
 
 for f in "$MWF/scripts/harvest-incidents.py" "$MWF/scripts/mc-journal-read.py" "$MWF/scripts/openstack-ro" "$MWF/incident-sources.yml" \
          "$MWF/incident-signatures.yml" "$MWF/.github/actions/record-facts/redact.sed" \
@@ -89,22 +86,28 @@ ssh "$RUNNER" '
     echo "  $f.pat -> ${exp:-FAILED (token invalid or gh missing)}"
   done'
 
-if [[ "$SOURCE_REPO" == "MorphoCloud/Instances" ]]; then
-  # Class K: a repository the source token cannot see is never listed, so it
-  # would be missing without any error. Compare with the maintainer's view.
-  echo ">> Class K: repositories the source token sees vs the maintainer's ($ADMIN_GH) ..."
-  LIST='/orgs/MorphoCloud/repos?type=all&per_page=100'
-  JQ='.[] | select(.archived|not) | .full_name'
-  MINE="$(GH_TOKEN="$(gh auth token --user "$ADMIN_GH")" gh api --paginate "$LIST" --jq "$JQ" | sort)"
-  THEIRS="$(ssh "$RUNNER" "GH_TOKEN=\$(tr -d '\r\n' < ~/.config/morphocloud/harvest-source.pat) gh api --paginate '$LIST' --jq '$JQ'" | sort)"
-  MISSING="$(comm -23 <(echo "$MINE") <(echo "$THEIRS"))"
-  if [[ -n "$MISSING" ]]; then
-    echo "  WARNING: the source token cannot see these repositories; re-issue it for ALL repositories:"
-    echo "$MISSING" | sed 's/^/    /'
-  else
-    echo "  OK: the token sees all $(echo "$MINE" | grep -c .) repositories"
-  fi
-fi
+# Class K: the source token must read the source and every repository the
+# source lists under extra_repos, and nothing tells us otherwise at run time
+# but a 404; check each one now.
+echo ">> Repositories the source token must read (source + extra_repos) ..."
+ssh "$RUNNER" "MWF_SOURCE_REPO=$SOURCE_REPO ~/venv/bin/python - <<'PY'
+import json, os, urllib.error, urllib.request, yaml
+src = os.environ['MWF_SOURCE_REPO']
+cfg = yaml.safe_load(open(os.path.expanduser('~/incident-sources.yml')))
+repos = [src] + list(cfg['sources'][src].get('extra_repos') or [])
+tok = open(os.path.expanduser('~/.config/morphocloud/harvest-source.pat')).read().strip()
+bad = 0
+for r in repos:
+    req = urllib.request.Request('https://api.github.com/repos/' + r + '/actions/runs?per_page=1',
+                                 headers={'Authorization': 'Bearer ' + tok, 'User-Agent': 'install-harvester'})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            print('  OK   ', r, '(', json.load(resp).get('total_count'), 'runs )')
+    except urllib.error.HTTPError as e:
+        bad += 1
+        print('  FAIL ', r, 'HTTP', e.code, '- add it to the token (Only select repositories)')
+raise SystemExit(1 if bad else 0)
+PY" || echo "  WARNING: the harvester will name these repositories in repos_unreadable until the token is fixed"
 
 if [[ "$OUTSIDE_BLOCK" == "--outside-block" ]]; then
   # The same line check-workflow-clock.py renders into the managed block (its

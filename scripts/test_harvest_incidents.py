@@ -1143,30 +1143,43 @@ def test_platform_writes_only_transitions(tmp_path, cfg, monkeypatch):
     assert rows[1]["at"] == "2026-11-09T18:00:00Z"
 
 
-def test_org_repos_excludes_the_source_and_the_deny_list_and_caches(tmp_path, cfg):
+def test_extra_repos_is_the_explicit_list_and_production_lists_only_the_monitor(
+    tmp_path, cfg
+):
     h = _jh(tmp_path, cfg, [])
-    h.repo, h.src = "MorphoCloud/Instances", {"short": "instances", "harvest_org": True}
-    calls = []
+    h.repo = "MorphoCloud/Instances"
+    h.src = {
+        "short": "instances",
+        "extra_repos": ["MorphoCloud/Instances", "MorphoCloud/x"],
+    }
+    assert h.extra_repos() == ["MorphoCloud/x"]  # never the source itself
+    # the maintainer's scope (2026-11-10): no course repositories, no user data
+    prod = cfg.raw["sources"]["MorphoCloud/Instances"]["extra_repos"]
+    assert prod == ["MorphoCloud/morphocloud-monitor"]
+    assert "extra_repos" not in cfg.raw["sources"]["MorphoCloud/Test-Instances"]
 
-    def get(path, params=None):
-        calls.append((path, params))
-        return [
-            {"full_name": "MorphoCloud/Instances"},
-            {"full_name": "MorphoCloud/Test-Instances"},
-            {"full_name": "MorphoCloud/MC-PCOM-ONC-101"},
-            {"full_name": "MorphoCloud/old", "archived": True},
-        ]
 
-    h.gh = SimpleNamespace(get=get)
-    assert h.org_repos(1000.0) == ["MorphoCloud/MC-PCOM-ONC-101"]
-    assert h.org_repos(1000.0 + 60) == ["MorphoCloud/MC-PCOM-ONC-101"]
-    assert len(calls) == 1  # re-listed hourly, not every cycle
+def test_a_listed_repository_the_token_cannot_read_is_named(tmp_path, cfg, monkeypatch):
+    h = _jh(tmp_path, cfg, [])
+    h.repo, h.extras, h.unreadable = "MorphoCloud/Instances", {}, {}
+    h.src = {"short": "instances", "extra_repos": ["MorphoCloud/hidden"]}
+    h.gh = SimpleNamespace(get=lambda *_a, **_k: None)  # 404
+    called = []
+    monkeypatch.setattr(
+        h,
+        "extra",
+        lambda repo: SimpleNamespace(new_runs=lambda _n: called.append(repo)),
+    )
+    h.extras_cycle(1000.0)
+    assert called == []  # never mistaken for "no runs"
+    assert "not readable" in h.unreadable["MorphoCloud/hidden"]
 
 
 def test_one_failing_repository_does_not_stop_the_others(tmp_path, cfg, monkeypatch):
     h = _jh(tmp_path, cfg, [])
     h.extras, h.unreadable = {}, {}
-    monkeypatch.setattr(h, "org_repos", lambda _now: ["MorphoCloud/A", "MorphoCloud/B"])
+    monkeypatch.setattr(h, "extra_repos", lambda: ["MorphoCloud/A", "MorphoCloud/B"])
+    h.gh = SimpleNamespace(get=lambda *_a, **_k: {"full_name": "x"})
     seen = []
 
     def fake_extra(repo):
