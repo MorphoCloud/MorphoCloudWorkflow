@@ -758,9 +758,9 @@ def test_ship_diag_caps_a_day_once(tmp_path, monkeypatch):
     h.store = hv.Store(tmp_path / "store", "instances", dry_run=False)
     h.redactor = SimpleNamespace(text=lambda t: (t, 0))
     rel = "runner/2026/11/09/host/diag.log"
-    h.ship_diag(rel, ["# A.log\n", "ERR one\n"])  # 16 bytes, under the cap
-    h.ship_diag(rel, ["# B.log\n", "ERR two is longer than the rest\n"])  # crosses it
-    h.ship_diag(rel, ["# C.log\n", "ERR three\n"])  # dropped
+    h.ship_capped(rel, ["# A.log\n", "ERR one\n"])  # 16 bytes, under the cap
+    h.ship_capped(rel, ["# B.log\n", "ERR two is longer than the rest\n"])  # crosses it
+    h.ship_capped(rel, ["# C.log\n", "ERR three\n"])  # dropped
     text = (tmp_path / "store" / rel).read_text()
     assert text.startswith(
         "# A.log\nERR one\n# B.log\nERR two is longer than the rest\n"
@@ -927,3 +927,290 @@ def test_too_fresh_runs_wait_for_the_next_cycle():
     assert hv.too_fresh({"created_at": "2026-11-09T07:15:02Z"}, now)
     assert hv.too_fresh({"created_at": "2026-11-09T07:13:10Z"}, now)
     assert not hv.too_fresh({"created_at": "2026-11-09T07:12:50Z"}, now)
+
+
+# --- coverage amendment: classes I, J, K -------------------------------------------
+
+jr = load("mc-journal-read.py", "journal_reader")
+
+
+def _entry(us: int, msg: str, **kw) -> str:
+    e = {"__REALTIME_TIMESTAMP": str(us), "__CURSOR": f"s=x;i={us}", "MESSAGE": msg}
+    e.update(kw)
+    return json.dumps(e) + "\n"
+
+
+class _FakeJournal:
+    """subprocess.Popen stand-in for journalctl -o json."""
+
+    def __init__(self, lines: list[str], rc: int = 0):
+        self.lines, self.rc, self.argv = lines, rc, None
+
+    def __call__(self, argv, **_kw):
+        self.argv = argv
+        self.stdout = iter(self.lines)
+        return self
+
+    def terminate(self):
+        return None
+
+    def wait(self, timeout=None):  # noqa: ARG002 — Popen's signature
+        return self.rc
+
+
+def test_reader_accepts_only_its_two_forms():
+    assert jr.parse_request("journal - actions.runner.*,cron.service") == (
+        "-",
+        ["actions.runner.*", "cron.service"],
+    )
+    assert jr.parse_request("journal s=ab;i=12 none") == ("s=ab;i=12", ["none"])
+    for bad in (
+        "journal - a;rm -rf /",
+        "journal $(id) x",
+        "bash -c id",
+        "journal - x extra",
+        "",
+    ):
+        assert jr.parse_request(bad) is None, bad
+
+
+def test_reader_ships_warnings_kernel_and_listed_units_only(monkeypatch):
+    lines = [
+        _entry(
+            1_700_000_000_000_000, "routine", PRIORITY="6", _SYSTEMD_UNIT="gdm.service"
+        ),
+        _entry(
+            1_700_000_001_000_000, "disk full", PRIORITY="3", _SYSTEMD_UNIT="x.service"
+        ),
+        _entry(
+            1_700_000_002_000_000,
+            "libceph: mds7 rejected session",
+            PRIORITY="6",
+            _TRANSPORT="kernel",
+        ),
+        _entry(
+            1_700_000_003_000_000,
+            "mail 524 too frequently",
+            PRIORITY="6",
+            _SYSTEMD_UNIT="mc-data-portal.service",
+        ),
+    ]
+    fake = _FakeJournal(lines)
+    monkeypatch.setattr(jr.subprocess, "Popen", fake)
+    out = io.StringIO()
+    last, n, rc = jr.read(["--after-cursor=s=x;i=1"], ["mc-data-*.service"], "c0", out)
+    text = out.getvalue()
+    assert (n, rc) == (4, 0)
+    assert last == "s=x;i=1700000003000000"
+    assert "routine" not in text
+    assert "disk full" in text
+    assert "mds7 rejected" in text
+    assert "524" in text
+    assert text.startswith("2023-11-14T22:13:21Z x.service p3: disk full")
+
+
+def test_reader_stops_at_budget_and_resumes_from_last_read(monkeypatch):
+    lines = [_entry(1_700_000_000_000_000 + i, f"m{i}", PRIORITY="3") for i in range(5)]
+    monkeypatch.setattr(jr.subprocess, "Popen", _FakeJournal(lines))
+    monkeypatch.setattr(jr, "BUDGET", -1)  # out of time after the first entry
+    out = io.StringIO()
+    last, n, rc = jr.read([], [], "c0", out)
+    assert (n, rc) == (1, 0)
+    assert last == "s=x;i=1700000000000000"
+    assert out.getvalue().count("\n") == 1
+
+
+def test_reader_file_form_reads_only_the_allowlist(tmp_path):
+    log = tmp_path / "w.log"
+    log.write_text("one\ntwo\npart")
+    allow = tmp_path / "allow"
+    allow.write_text(f"welcomes {log}\nbad name /etc/shadow\n")
+    out = io.StringIO()
+    assert jr.read_file("welcomes", "0", out, str(allow)) == 0
+    assert out.getvalue() == "one\ntwo\n##OFFSET 8\n"
+    out = io.StringIO()
+    assert jr.read_file("welcomes", "999", out, str(allow)) == 0  # rotated: from 0
+    assert out.getvalue().endswith("##OFFSET 8\n")
+    assert jr.read_file("shadow", "0", io.StringIO(), str(allow)) == 2  # noqa: PLR2004
+    assert jr.read_file("welcomes", "-1", io.StringIO(), str(allow)) == 2  # noqa: PLR2004
+
+
+def test_code_kind_is_counted_never_evidence(cfg):
+    assert cfg.kind("claude-code-review.yml") == "code"
+    assert not hv.needs_detail("code", "failure")
+    assert not hv.wants_outcome_line("code", "failure")
+    assert hv.finalize(cfg, "ci.yml", "code", "failure", []) == ("failure", False)
+
+
+def _jh(tmp_path, cfg, hosts):
+    h = hv.Harvester.__new__(hv.Harvester)
+    h.cfg = cfg
+    h.store = hv.Store(tmp_path / "store", "instances", dry_run=False)
+    h.local = hv.Local(tmp_path / "local.json", dry_run=False)
+    h.redactor = SimpleNamespace(text=lambda t: (t, 0))
+    h.src = {"short": "instances", "hosts": hosts}
+    return h
+
+
+def test_journals_file_lines_by_day_summarize_firewall_and_noise(
+    tmp_path, cfg, monkeypatch
+):
+    h = _jh(
+        tmp_path, cfg, [{"name": "portal", "ssh": "mcjournal@10.1.1.1", "units": ["x"]}]
+    )
+    replies = [
+        (
+            [
+                "2026-11-09T20:00:00Z kernel p6: libceph: mds7 rejected session\n",
+                "2026-11-09T20:00:01Z kernel p4: [UFW BLOCK] IN=ens3 SRC=1.2.3.4 DST=x PROTO=TCP DPT=23 \n",
+                "2026-11-09T20:00:02Z user@1002.service p4: jackdbus: Failed\n",
+                "2026-11-10T01:00:00Z mc-data-portal.service p6: share 14 unreadable\n",
+            ],
+            "s=next",
+            None,
+        )
+    ]
+    monkeypatch.setattr(h, "host_call", lambda *_a: replies.pop(0))
+    status = h.journals(hv.parse_ts("2026-11-10T02:00:00Z"))
+    assert status == {"portal": "ok"}
+    day9 = (tmp_path / "store/runner/2026/11/09/portal/journal.log").read_text()
+    day10 = (tmp_path / "store/runner/2026/11/10/portal/journal.log").read_text()
+    assert "mds7 rejected session" in day9
+    assert "UFW" not in day9.split("# daily")[0]
+    assert "jackdbus" not in day9.split("# daily")[0]
+    assert "firewall blocks 1; top ports 23x1; top sources 1.2.3.0/24x1" in day9
+    assert "noise removed pipewire-jackdbus=1" in day9
+    assert "share 14 unreadable" in day10
+    assert h.local.data["journal"]["portal"]["cursor"] == "s=next"
+
+
+def test_journals_record_a_host_going_down_once_and_coming_back(
+    tmp_path, cfg, monkeypatch
+):
+    h = _jh(
+        tmp_path, cfg, [{"name": "join", "ssh": "mcjournal@10.0.0.9", "units": ["x"]}]
+    )
+    replies = [([], "", "timed out"), ([], "", "timed out"), ([], "s=1", None)]
+    monkeypatch.setattr(h, "host_call", lambda *_a: replies.pop(0))
+    t = hv.parse_ts("2026-11-09T18:00:00Z")
+    assert h.journals(t)["join"] == "unreachable since 2026-11-09T18:00:00Z"
+    assert h.journals(t + 300)["join"] == "unreachable since 2026-11-09T18:00:00Z"
+    assert h.journals(t + 600)["join"] == "ok"
+    text = (tmp_path / "store/runner/2026/11/09/join/journal.log").read_text()
+    assert text.count("unreachable") == 1
+    assert "reachable again" in text
+    assert (
+        h.local.data["journal"]["join"]["cursor"] == "s=1"
+    )  # never advanced while down
+
+
+def test_platform_writes_only_transitions(tmp_path, cfg, monkeypatch):
+    h = _jh(tmp_path, cfg, [{"name": "runner", "nova": "morphocloud-instances-runner"}])
+    monkeypatch.setenv("OS_CLOUD", "X")
+    states = [
+        [
+            {
+                "Name": "morphocloud-instances-runner",
+                "Status": "ACTIVE",
+                "Power State": "Running",
+            }
+        ],
+        [
+            {
+                "Name": "morphocloud-instances-runner",
+                "Status": "ACTIVE",
+                "Power State": "Running",
+            }
+        ],
+        [
+            {
+                "Name": "morphocloud-instances-runner",
+                "Status": "PAUSED",
+                "Power State": "Paused",
+            }
+        ],
+    ]
+    monkeypatch.setattr(hv, "ro_json", lambda *_a: states.pop(0))
+    t = hv.parse_ts("2026-11-09T17:50:00Z")
+    for i in range(3):
+        assert h.platform(t + 300 * i) == "ok"
+    rows = [
+        json.loads(x)
+        for x in (tmp_path / "store/platform/2026/11/09.jsonl").read_text().splitlines()
+    ]
+    assert [r["to"]["status"] for r in rows] == ["ACTIVE", "PAUSED"]
+    assert rows[1]["from"]["status"] == "ACTIVE"
+    assert rows[1]["at"] == "2026-11-09T18:00:00Z"
+
+
+def test_org_repos_excludes_the_source_and_the_deny_list_and_caches(tmp_path, cfg):
+    h = _jh(tmp_path, cfg, [])
+    h.repo, h.src = "MorphoCloud/Instances", {"short": "instances", "harvest_org": True}
+    calls = []
+
+    def get(path, params=None):
+        calls.append((path, params))
+        return [
+            {"full_name": "MorphoCloud/Instances"},
+            {"full_name": "MorphoCloud/Test-Instances"},
+            {"full_name": "MorphoCloud/MC-PCOM-ONC-101"},
+            {"full_name": "MorphoCloud/old", "archived": True},
+        ]
+
+    h.gh = SimpleNamespace(get=get)
+    assert h.org_repos(1000.0) == ["MorphoCloud/MC-PCOM-ONC-101"]
+    assert h.org_repos(1000.0 + 60) == ["MorphoCloud/MC-PCOM-ONC-101"]
+    assert len(calls) == 1  # re-listed hourly, not every cycle
+
+
+def test_one_failing_repository_does_not_stop_the_others(tmp_path, cfg, monkeypatch):
+    h = _jh(tmp_path, cfg, [])
+    h.extras, h.unreadable = {}, {}
+    monkeypatch.setattr(h, "org_repos", lambda _now: ["MorphoCloud/A", "MorphoCloud/B"])
+    seen = []
+
+    def fake_extra(repo):
+        def boom(_now):
+            msg = "HTTP 403"
+            raise RuntimeError(msg)
+
+        def fine(_now):
+            seen.append(repo)
+
+        return SimpleNamespace(
+            new_runs=boom if repo.endswith("A") else fine,
+            watch=lambda: None,
+            lookback=lambda _n: None,
+            followups=lambda _n: None,
+        )
+
+    monkeypatch.setattr(h, "extra", fake_extra)
+    h.extras_cycle(1000.0)
+    assert seen == ["MorphoCloud/B"]
+    assert "HTTP 403" in h.unreadable["MorphoCloud/A"]
+
+
+def test_every_host_entry_is_complete(cfg):
+    for repo, src in cfg.raw["sources"].items():
+        hosts = src.get("hosts") or []
+        assert hosts, f"{repo} lists no hosts"
+        assert sum(1 for x in hosts if x.get("ssh") == "local") == 1, repo
+        for host in hosts:
+            assert host.get("name"), host
+            assert host.get("nova"), host
+            assert host.get("units"), host
+            assert host["ssh"] == "local" or host["ssh"].startswith("mcjournal@"), host
+            assert jr.UNITS_RE.match(",".join(host["units"])), host
+            for name, path in (host.get("files") or {}).items():
+                assert jr.NAME_RE.match(name), name
+                assert path.startswith("/"), path
+
+
+def test_reader_refuses_when_it_cannot_see_the_system_journal(monkeypatch):
+    monkeypatch.setattr(jr.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(jr.os, "getgroups", lambda: [1000])
+    monkeypatch.setattr(
+        jr.grp, "getgrgid", lambda _g: SimpleNamespace(gr_name="exouser")
+    )
+    monkeypatch.setenv("SSH_ORIGINAL_COMMAND", "journal - none")
+    assert jr.main() == 2  # noqa: PLR2004 — refused, nothing read

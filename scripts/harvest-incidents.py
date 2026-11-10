@@ -25,6 +25,13 @@ One cycle, in order:
    events and the later outcomes on the same issue appended;
 7. every new byte of the runner-side logs, and the error lines of the Actions
    runner's own _diag files;
+   (coverage amendment, INCIDENT_STORE_PHASE1_DESIGN.md)
+   K. steps 1-4 and 6 for every other repository of the organization when the
+      source has `harvest_org: true`, minus `deny_repos`;
+   I. the system journal of every host the source lists, from a saved cursor,
+      through mc-journal-read.py (locally, or as the read-only `mcjournal`
+      account's forced command over SSH);
+   J. the Nova state of those hosts, a line on every change;
 8. one commit and one push, only when something changed. The cursor moves with
    every sweep tick on production, so a store that has not changed for two
    hours means the harvester stopped OR the runner's clock stopped; the store's
@@ -106,6 +113,17 @@ DIAG_DAY_CAP = 2_000_000
 # How much of each runner log the DISPATCH join reads. Production's dispatch
 # log is 8 MB for five months, so 32 MB covers a 90-day backfill with room.
 DISPATCH_LOG_TAIL = 32_000_000
+# Coverage amendment (class K): a repository seen for the first time is read
+# from this far back in the cycle itself; older history is a --backfill --repo.
+EXTRA_FIRST_SIGHT = 7 * 86400
+ORG_LIST_EVERY = 3600  # the organization's repository list is re-read hourly
+# Class I: the journal reader on each host (mc-journal-read.py) is given this
+# long; an unreachable or slow host is recorded and retried next cycle.
+JOURNAL_TIMEOUT = 180
+JOURNAL_READER = HERE / "mc-journal-read.py"
+UFW_SRC_RE = re.compile(r"\bSRC=(\d+\.\d+\.\d+)\.\d+")
+UFW_DPT_RE = re.compile(r"\bDPT=(\d+)")
+TOP_N = 10
 TAIL_LINES = 200
 PAGE = 100
 MAX_PAGES = 10  # the API caps a filtered listing at 1,000 runs
@@ -187,6 +205,13 @@ class Config:
         self.grafana = sources.get("grafana") or {}
         self.access = sources.get("access_outages") or {}
         self.github_status = sources.get("github_status")
+        # Coverage amendment: K (every org repository), I (host journals)
+        self.org = sources.get("org")
+        self.deny_repos = set(sources.get("deny_repos") or [])
+        self.journal_noise = [
+            (n["name"], re.compile(n["match"]))
+            for n in sources.get("journal_noise") or []
+        ]
         self.signature_version = signatures.get("version", 0)
         self.signatures = [
             (s["signature"], s["field"], re.compile(s["match"]))
@@ -199,6 +224,14 @@ class Config:
             msg = f"{repo} is not in incident-sources.yml"
             raise ValueError(msg)
         return src
+
+    def extra_source(self, repo: str) -> dict:
+        """A repository harvested under class K: listed in `sources` when it
+        needs settings, else defaults (no instance prefix, no hosts)."""
+        listed = (self.raw.get("sources") or {}).get(repo)
+        if listed:
+            return listed
+        return {"short": repo.split("/")[-1].lower(), "instance_prefix": None}
 
     def kind(self, workflow_file: str) -> str:
         return self.kinds.get(workflow_file, "other")
@@ -537,6 +570,20 @@ class Local:
         tmp.replace(self.path)
 
 
+class LocalView:
+    """One extra repository's slice of the runner-side state (its watch list
+    and lookback stamp), kept inside the main Local under `repos`. The main
+    Local saves it."""
+
+    def __init__(self, local: Local, repo: str):
+        self.data = local.data.setdefault("repos", {}).setdefault(
+            repo, {"watch": {}, "lookback_at": 0}
+        )
+
+    def save(self) -> None:
+        return
+
+
 # --- what one run is -------------------------------------------------------
 
 
@@ -548,7 +595,10 @@ def base_result(conclusion: str | None) -> str:
 
 def needs_detail(kind: str, result: str) -> bool:
     """Jobs and the full log: every command and alert run that ran, and every
-    run that did not succeed. A skipped run is a count only (A1)."""
+    run that did not succeed. A skipped run is a count only (A1), and so is
+    every run of kind `code` (CI and code review: counted, never evidence)."""
+    if kind == "code":
+        return False
     return result not in ("success", "skipped") or (
         kind in ("command", "alert") and result == "success"
     )
@@ -571,6 +621,8 @@ def finalize(
             for s in j.get("steps") or []
         )
         return ("dropped", True) if reported else ("success", False)
+    if kind == "code":
+        return result, False
     if result == "success":
         return result, kind == "alert"
     if result in ("skipped", "refused"):
@@ -580,7 +632,9 @@ def finalize(
 
 def wants_outcome_line(kind: str, result: str) -> bool:
     """One line per command run and per run that did not succeed; skipped
-    runs and successful sweeps are rollup counts."""
+    runs, successful sweeps and every `code` run are rollup counts."""
+    if kind == "code":
+        return False
     return (kind == "command" and result != "skipped") or result not in (
         "success",
         "skipped",
@@ -1129,14 +1183,20 @@ class Harvester:
         repo: str,
         gh: GitHub,
         store: Store,
-        local: Local,
+        local: Local | LocalView,
         redactor: Redactor,
         dry_run: bool,
         backfill: bool = False,
+        parent: Harvester | None = None,
     ):
         self.cfg = cfg
         self.repo = repo
-        self.src = cfg.source(repo)
+        # parent set = an extra repository (class K) harvested inside the
+        # primary's cycle: it shares the API client, the feeds and the
+        # dispatch index, keeps its own cursor file, and never writes the
+        # heartbeat (state/harvester.json) itself.
+        self.parent = parent
+        self.src = cfg.extra_source(repo) if parent else cfg.source(repo)
         self.short = self.src["short"]
         self.prefix = self.src.get("instance_prefix") or "instance-"
         self.gh = gh
@@ -1145,18 +1205,27 @@ class Harvester:
         self.redactor = redactor
         self.dry_run = dry_run
         self.backfill = backfill
-        self.feeds = Feeds(cfg)
-        self.dispatches = Dispatches(
-            [Path(str(entry["path"])).expanduser() for entry in cfg.runner_logs]
+        self.feeds = parent.feeds if parent else Feeds(cfg)
+        self.dispatches = (
+            parent.dispatches
+            if parent
+            else Dispatches(
+                [Path(str(entry["path"])).expanduser() for entry in cfg.runner_logs]
+            )
         )
         self._issues: dict[int, dict | None] = {}
         self.runs_recorded = 0
         self.incidents_recorded = 0
         self.errors: list[str] = []
-        self.cursor: str = (store.read_json("state/cursors.json") or {}).get(
+        self.cursor_rel = (
+            f"state/cursors/{self.short}.json" if parent else "state/cursors.json"
+        )
+        self.cursor: str = (store.read_json(self.cursor_rel) or {}).get(
             "source_cursor"
         ) or ""
         self.cursor_moved = False
+        self.extras: dict[str, Harvester] = {}
+        self.unreadable: dict[str, str] = {}
 
     # -- helpers
     def issue(self, number: int) -> dict | None:
@@ -1444,9 +1513,12 @@ class Harvester:
     # -- the steps of a cycle
     def new_runs(self, now: float) -> None:
         if not self.cursor:
-            self.cursor = to_iso(now - OVERLAP)
+            back = EXTRA_FIRST_SIGHT if self.parent else OVERLAP
+            self.cursor = to_iso(now - back)
             self.cursor_moved = True
-            log(f"no cursor: starting at {self.cursor} (run --backfill for history)")
+            log(
+                f"{self.repo}: no cursor, starting at {self.cursor} (run --backfill for history)"
+            )
         start = parse_ts(self.cursor) - OVERLAP
         runs: list[dict] = []
         while start < now:
@@ -1604,16 +1676,17 @@ class Harvester:
                 Path(self.cfg.diag_dir).expanduser(), diag_offsets, self.cfg.diag_match
             )
             if lines:
-                self.ship_diag(f"runner/{day}/{host}/diag.log", lines)
+                self.ship_capped(f"runner/{day}/{host}/diag.log", lines)
             control = self.src.get("control_host")
             if control:
                 status["diag_remote"] = self.remote_diag(control, day)
         return status
 
-    def ship_diag(self, rel: str, lines: list[str]) -> None:
-        """Append redacted _diag lines to the day's file, up to DIAG_DAY_CAP:
-        the chunk that crosses the cap is written with a marker line after it,
-        and later chunks are dropped until the next day's file."""
+    def ship_capped(self, rel: str, lines: list[str]) -> None:
+        """Append redacted lines (_diag, host journals) to the day's file, up
+        to DIAG_DAY_CAP: the chunk that crosses the cap is written with a
+        marker line after it, and later chunks are dropped until the next
+        day's file."""
         p = self.store.rel(rel)
         size = p.stat().st_size if p.is_file() else 0
         if size >= DIAG_DAY_CAP:
@@ -1691,19 +1764,296 @@ class Harvester:
                     header = None
                 body.append(line + "\n")
         if body:
-            self.ship_diag(f"runner/{day}/{host}/diag.log", body)
+            self.ship_capped(f"runner/{day}/{host}/diag.log", body)
         offsets.clear()
         offsets.update(new_offsets)
         return "ok"
 
+    # -- class K: every repository of the organization ----------------------
+    def org_repos(self, now: float) -> list[str]:
+        """Every repository of the organization except the deny list and the
+        primary source, when this source has `harvest_org: true`. Re-listed
+        hourly; the list is kept runner-side. A repository the token cannot
+        see is not listed at all, so install-harvester.sh compares this count
+        with the maintainer's own at install."""
+        if not self.cfg.org or not self.src.get("harvest_org"):
+            return []
+        cache = self.local.data.setdefault("org_repos", {"at": 0, "repos": []})
+        if (
+            not cache.get("repos")
+            or now - float(cache.get("at") or 0) >= ORG_LIST_EVERY
+        ):
+            names: list[str] = []
+            for page in range(1, MAX_PAGES + 1):
+                data = (
+                    self.gh.get(
+                        f"/orgs/{self.cfg.org}/repos",
+                        {"type": "all", "per_page": PAGE, "page": page},
+                    )
+                    or []
+                )
+                names += [
+                    r["full_name"]
+                    for r in data
+                    if not r.get("archived") and not r.get("disabled")
+                ]
+                if len(data) < PAGE:
+                    break
+            if names:
+                cache.update(at=now, repos=sorted(names))
+        return [
+            r
+            for r in cache.get("repos") or []
+            if r != self.repo and r not in self.cfg.deny_repos
+        ]
+
+    def extra(self, repo: str) -> Harvester:
+        if repo not in self.extras:
+            src = self.cfg.extra_source(repo)
+            self.extras[repo] = Harvester(
+                self.cfg,
+                repo,
+                self.gh,
+                Store(self.store.root, src["short"], self.dry_run),
+                LocalView(self.local, repo),
+                self.redactor,
+                self.dry_run,
+                backfill=self.backfill,
+                parent=self,
+            )
+        return self.extras[repo]
+
+    def extras_cycle(self, now: float) -> None:
+        """Steps 1-4 and 6 of a cycle for each extra repository, each one
+        contained: a repository that fails is named in state/harvester.json
+        (`repos_unreadable`) and retried next cycle; the others go on."""
+        for repo in self.org_repos(now):
+            x = self.extra(repo)
+            try:
+                x.new_runs(now)
+                x.watch()
+                x.lookback(now)
+                x.followups(now)
+                self.unreadable.pop(repo, None)
+            except Exception as e:
+                self.unreadable[repo] = f"{type(e).__name__}: {str(e)[:160]}"
+                log(f"{repo}: not harvested this cycle: {self.unreadable[repo]}")
+
+    # -- class I: the system journal of every server VM ----------------------
+    def read_journal(
+        self, host: dict, cursor: str
+    ) -> tuple[list[str], str, str | None]:
+        """(lines, new cursor, error)."""
+        units = ",".join(host.get("units") or ["none"])
+        return self.host_call(host, f"journal {cursor} {units}", "##CURSOR ")
+
+    def host_call(
+        self, host: dict, request: str, trailer: str
+    ) -> tuple[list[str], str, str | None]:
+        """One request to mc-journal-read.py: (lines, the trailer's value,
+        error). The acquire runner runs it locally; every other host through
+        the read-only account, whose forced command it is."""
+        target = host.get("ssh") or "local"
+        if target == "local":
+            cmd = [sys.executable, str(JOURNAL_READER)]
+            env = {**os.environ, "SSH_ORIGINAL_COMMAND": request}
+        else:
+            cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                   "-o", "ServerAliveInterval=15", target, request]  # fmt: skip
+            env = None
+        try:
+            r = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=JOURNAL_TIMEOUT,
+                check=False,
+                env=env,
+            )
+        except (subprocess.TimeoutExpired, OSError) as e:
+            return [], "", f"{type(e).__name__}"
+        out = r.stdout.splitlines(keepends=True)
+        if r.returncode != 0 or not out or not out[-1].startswith(trailer):
+            return [], "", (r.stderr or f"exit {r.returncode}").strip()[-200:]
+        return out[:-1], out[-1][len(trailer) :].strip(), None
+
+    def host_files(self, host: dict, st: dict, today: str) -> None:
+        """Our services' own log files on the host (`files:`), each from its
+        saved offset, appended to today's file of that name."""
+        offsets = st.setdefault("files", {})
+        for name in host.get("files") or {}:
+            lines, new, err = self.host_call(
+                host, f"file {name} {int(offsets.get(name, 0))}", "##OFFSET "
+            )
+            if err:
+                log(f"{host['name']} file {name}: {err}")
+                continue
+            if lines:
+                self.ship_capped(f"runner/{today}/{host['name']}/{name}.log", lines)
+            offsets[name] = int(new)
+
+    def journal_keep(self, st: dict, day: str, line: str) -> bool:
+        """False for a line that is summarized (firewall blocks) or counted
+        (the noise list) instead of stored."""
+        if "[UFW BLOCK]" in line:
+            u = st["ufw"].setdefault(day, {"total": 0, "dpt": {}, "src": {}})
+            u["total"] += 1
+            if m := UFW_DPT_RE.search(line):
+                u["dpt"][m[1]] = u["dpt"].get(m[1], 0) + 1
+            if m := UFW_SRC_RE.search(line):
+                net = f"{m[1]}.0/24"
+                u["src"][net] = u["src"].get(net, 0) + 1
+            return False
+        for name, rx in self.cfg.journal_noise:
+            if rx.search(line):
+                n = st["noise"].setdefault(day, {})
+                n[name] = n.get(name, 0) + 1
+                return False
+        return True
+
+    def journal_summaries(self, host: str, st: dict, today: str) -> None:
+        """One line per finished day: firewall blocks (count, top ports, top
+        source networks) and what each noise filter removed, so a scan stays
+        visible and a filter that grows greedy shows."""
+        days = sorted(set(st["ufw"]) | set(st["noise"]))
+        for day in [d for d in days if d < today]:
+            u = st["ufw"].pop(day, None) or {"total": 0, "dpt": {}, "src": {}}
+            n = st["noise"].pop(day, None) or {}
+
+            def top(counts: dict) -> str:
+                ranked = sorted(counts.items(), key=lambda kv: -kv[1])[:TOP_N]
+                return ",".join(f"{k}x{v}" for k, v in ranked) or "-"
+
+            noise = ",".join(f"{k}={v}" for k, v in sorted(n.items())) or "-"
+            self.store.append_text(
+                f"runner/{day}/{host}/journal.log",
+                f"# daily summary {day}: firewall blocks {u['total']}; top ports "
+                f"{top(u['dpt'])}; top sources {top(u['src'])}; noise removed {noise}\n",
+            )
+
+    def journals(self, now: float) -> dict:
+        """Class I for each host this source lists: new journal lines since
+        the saved cursor, filtered, redacted, appended to the day's file of
+        the day they were logged (capped like _diag). A host that cannot be
+        read is a line in its file when it goes down and when it comes back,
+        and `unreachable since <time>` in state/harvester.json (the watchdog
+        alerts after two hours)."""
+        status: dict = {}
+        today = day_path(to_iso(now))
+        states = self.local.data.setdefault("journal", {})
+        for host in self.src.get("hosts") or []:
+            name = host["name"]
+            st = states.setdefault(
+                name, {"cursor": "-", "up": True, "since": "", "ufw": {}, "noise": {}}
+            )
+            lines, cursor, err = self.read_journal(host, st["cursor"])
+            rel = f"runner/{today}/{name}/journal.log"
+            if err:
+                if st["up"]:
+                    st.update(up=False, since=to_iso(now))
+                    self.store.append_text(rel, f"# {to_iso(now)} unreachable: {err}\n")
+                status[name] = f"unreachable since {st['since']}"
+                log(f"journal of {name}: {err}")
+                continue
+            if not st["up"]:
+                self.store.append_text(
+                    rel, f"# {to_iso(now)} reachable again (down since {st['since']})\n"
+                )
+                st.update(up=True, since=to_iso(now))
+            by_day: dict[str, list[str]] = {}
+            for line in lines:
+                day = day_path(line) if line[:4].isdigit() else today
+                if self.journal_keep(st, day, line):
+                    by_day.setdefault(day, []).append(line)
+            for day, kept in sorted(by_day.items()):
+                self.ship_capped(f"runner/{day}/{name}/journal.log", kept)
+            st["cursor"] = cursor
+            self.journal_summaries(name, st, today)
+            self.host_files(host, st, today)
+            status[name] = "ok"
+        return status
+
+    # -- class J: platform state of the server VMs -----------------------------
+    def platform(self, now: float) -> str:
+        """Each listed host's Nova state, through the read-only wrapper; a
+        line in platform/<day>.jsonl on every change, nothing otherwise."""
+        names = {
+            h["nova"]: h["name"] for h in self.src.get("hosts") or [] if h.get("nova")
+        }
+        if not names:
+            return "no hosts"
+        if not os.environ.get("OS_CLOUD"):
+            return "OS_CLOUD not set"
+        data = ro_json("server", "list", "--long")
+        if not isinstance(data, list):
+            return f"unavailable: {str((data or {}).get('error'))[:160]}"
+        seen = {d.get("Name"): d for d in data}
+        previous = self.store.read_json("state/platform.json") or {}
+        current = dict(previous)
+        at = to_iso(now)
+        for nova in sorted(names):
+            d = seen.get(nova)
+            state = (
+                {
+                    "status": d.get("Status"),
+                    "task_state": d.get("Task State"),
+                    "power_state": d.get("Power State"),
+                }
+                if d
+                else {"status": "MISSING"}
+            )
+            before = (previous.get(nova) or {}).get("state")
+            if before != state:
+                self.store.append_jsonl(
+                    f"platform/{day_path(at)}.jsonl",
+                    {
+                        "at": at,
+                        "vm": nova,
+                        "host": names[nova],
+                        "from": before,
+                        "to": state,
+                    },
+                )
+                current[nova] = {"state": state, "since": at}
+        if current != previous:
+            self.store.write_json("state/platform.json", current)
+        return "ok"
+
+    # -- the end of a cycle ---------------------------------------------------
     def finish(
         self, now: float, started: float, error: str | None, extra: dict
     ) -> None:
         """state/cursors.json and state/harvester.json, written only when
-        something moved (so an idle store means a stopped harvester or clock)."""
-        if self.errors and not error:
-            error = f"{len(self.errors)} run(s) could not be recorded; first: {self.errors[0]}"
-        changed = self.cursor_moved or self.runs_recorded or self.store.writes
+        something moved (so an idle store means a stopped harvester or clock).
+        An extra repository harvested on its own (--backfill --repo) writes
+        only its cursor and commits."""
+        if self.parent is not None:
+            if self.cursor_moved:
+                self.store.write_json(
+                    self.cursor_rel, {"source_cursor": self.cursor, "repo": self.repo}
+                )
+            self.store.commit_push(
+                f"harvest {to_iso(now)} {self.repo} runs={self.runs_recorded} incidents={self.incidents_recorded}"
+            )
+            return
+        extras = list(self.extras.values())
+        runs = self.runs_recorded + sum(x.runs_recorded for x in extras)
+        incidents = self.incidents_recorded + sum(x.incidents_recorded for x in extras)
+        errors = self.errors + [e for x in extras for e in x.errors]
+        if errors and not error:
+            error = f"{len(errors)} run(s) could not be recorded; first: {errors[0]}"
+        for x in extras:
+            if x.cursor_moved:
+                self.store.write_json(
+                    x.cursor_rel, {"source_cursor": x.cursor, "repo": x.repo}
+                )
+            x.store.flush()
+        changed = (
+            self.cursor_moved
+            or runs
+            or self.store.writes
+            or any(x.store.writes or x.cursor_moved for x in extras)
+        )
         previous = self.store.read_json("state/harvester.json") or {}
         if error != previous.get("last_error"):
             changed = True
@@ -1723,37 +2073,53 @@ class Harvester:
                     "cycle_seconds": round(time.time() - started, 1),
                     "api_calls": self.gh.calls,
                     "rate_limit_remaining": self.gh.remaining,
-                    "runs_recorded": self.runs_recorded,
-                    "incidents_recorded": self.incidents_recorded,
-                    "runs_failed": len(self.errors),
+                    "runs_recorded": runs,
+                    "incidents_recorded": incidents,
+                    "runs_failed": len(errors),
                     "watching": len(self.local.data.get("watch") or {}),
+                    "repos": {x.repo: x.cursor for x in extras},
+                    "repos_unreadable": self.unreadable,
                     **extra,
                 },
             )
         self.local.save()
         if self.store.commit_push(
-            f"harvest {to_iso(now)} runs={self.runs_recorded} incidents={self.incidents_recorded}"
+            f"harvest {to_iso(now)} runs={runs} incidents={incidents}"
             + (" ERROR" if error else "")
         ):
             log(
-                f"committed: runs={self.runs_recorded} incidents={self.incidents_recorded} api_calls={self.gh.calls}"
+                f"committed: runs={runs} incidents={incidents} api_calls={self.gh.calls}"
             )
 
     def cycle(self) -> int:
+        """The steps in order, each contained: a step that raises is named in
+        last_error and the later steps still run (a dead host must not stop
+        the runs being recorded, nor the other way round)."""
         started = time.time()
         now = started
-        error = None
+        errors: list[str] = []
         extra: dict = {}
-        try:
-            self.new_runs(now)
-            self.watch()
-            self.lookback(now)
-            self.followups(now)
-            extra = self.runner_logs(now)
-        except Exception as e:
-            error = f"{type(e).__name__}: {str(e)[:300]}"
-            log(f"cycle failed: {error}")
-            traceback.print_exc()
+
+        def step(name: str, fn):
+            try:
+                return fn()
+            except Exception as e:
+                errors.append(f"{name}: {type(e).__name__}: {str(e)[:240]}")
+                log(f"cycle step {name} failed: {errors[-1]}")
+                traceback.print_exc()
+                return None
+
+        step("runs", lambda: (self.new_runs(now), self.watch(), self.lookback(now)))
+        step("followups", lambda: self.followups(now))
+        extra.update(step("runner_logs", lambda: self.runner_logs(now)) or {})
+        step("repositories", lambda: self.extras_cycle(now))
+        hosts = step("journals", lambda: self.journals(now))
+        if hosts:
+            extra["hosts"] = hosts
+        plat = step("platform", lambda: self.platform(now))
+        if plat:
+            extra["platform"] = plat
+        error = "; ".join(errors) or None
         self.finish(now, started, error, extra)
         return 1 if error else 0
 
@@ -1875,7 +2241,7 @@ def owner_rule(markers: list[str]) -> str | None:
 # --- main -------------------------------------------------------------------------------
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str]) -> int:  # noqa: PLR0911 — one early exit per usage error
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument(
         "--dry-run", action="store_true", help="read and classify, write nothing"
@@ -1889,7 +2255,15 @@ def main(argv: list[str]) -> int:
         default=None,
         help="the store checkout (default ~/incidents-store)",
     )
+    ap.add_argument(
+        "--repo",
+        metavar="OWNER/NAME",
+        help="with --backfill: an extra repository of the organization (class K) instead of the source",
+    )
     args = ap.parse_args(argv)
+    if args.repo and not args.backfill:
+        print("--repo needs --backfill", file=sys.stderr)  # noqa: T201 — CLI usage error
+        return 2
 
     repo = os.environ.get("MORPHOCLOUD_SOURCE_REPO", "")
     if not repo:
@@ -1934,6 +2308,12 @@ def main(argv: list[str]) -> int:
         backfill=bool(args.backfill),
     )
     try:
+        if args.backfill and args.repo:
+            log(f"backfill {args.backfill} days of {args.repo} into {store_dir}")
+            x = h.extra(args.repo)
+            rc = x.run_backfill(args.backfill)
+            local.save()
+            return rc
         if args.backfill:
             log(f"backfill {args.backfill} days of {repo} into {store_dir}")
             return h.run_backfill(args.backfill)

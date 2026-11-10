@@ -23,6 +23,8 @@
 #   MWF_SOURCE_REPO           default MorphoCloud/Instances (Test: MorphoCloud/Test-Instances)
 #   MWF_STORE_REPO            default MorphoCloud/Incidents (Test: MorphoCloud/Incidents-sandbox)
 #   MWF_OS_CLOUD              default BIO180006_IU (Test: BIO240357_IU); --outside-block only
+#   MWF_ADMIN_GH              the maintainer's gh account (default muratmaga), whose view of
+#                             the organization the source token's is compared with
 set -euo pipefail
 
 RUNNER="${1:?usage: install-harvester.sh <user@host> [--outside-block]}"
@@ -33,8 +35,9 @@ STORE_TOKEN="${MWF_HARVEST_STORE_TOKEN:-$HOME/.ssh/GH_MorphoCloud-incidents-stor
 SOURCE_REPO="${MWF_SOURCE_REPO:-MorphoCloud/Instances}"
 STORE_REPO="${MWF_STORE_REPO:-MorphoCloud/Incidents}"
 OS_CLOUD_NAME="${MWF_OS_CLOUD:-BIO180006_IU}"
+ADMIN_GH="${MWF_ADMIN_GH:-muratmaga}"  # the maintainer's gh account, for the class K visibility check
 
-for f in "$MWF/scripts/harvest-incidents.py" "$MWF/scripts/openstack-ro" "$MWF/incident-sources.yml" \
+for f in "$MWF/scripts/harvest-incidents.py" "$MWF/scripts/mc-journal-read.py" "$MWF/scripts/openstack-ro" "$MWF/incident-sources.yml" \
          "$MWF/incident-signatures.yml" "$MWF/.github/actions/record-facts/redact.sed" \
          "$SRC_TOKEN" "$STORE_TOKEN"; do
   [[ -s "$f" ]] || { echo "ERROR: required file missing: $f"; exit 1; }
@@ -44,6 +47,7 @@ echo ">> Installing the incident harvester on $RUNNER"
 echo "   source $SOURCE_REPO -> store $STORE_REPO"
 ssh "$RUNNER" 'mkdir -p ~/.config/morphocloud && chmod 700 ~/.config/morphocloud'
 scp -q "$MWF/scripts/harvest-incidents.py" "$RUNNER:harvest-incidents.py"
+scp -q "$MWF/scripts/mc-journal-read.py" "$RUNNER:mc-journal-read.py"
 scp -q "$MWF/incident-sources.yml" "$MWF/incident-signatures.yml" "$RUNNER:"
 scp -q "$MWF/.github/actions/record-facts/redact.sed" "$RUNNER:redact.sed"
 scp -q "$MWF/scripts/openstack-ro" "$RUNNER:venv/bin/openstack-ro"
@@ -53,7 +57,10 @@ scp -q "$STORE_TOKEN" "$RUNNER:.config/morphocloud/harvest-store.pat"
 echo ">> Store checkout, credential helper, identity (the token never enters .git/config) ..."
 ssh "$RUNNER" "
   set -e
-  chmod +x ~/harvest-incidents.py ~/venv/bin/openstack-ro
+  chmod +x ~/harvest-incidents.py ~/mc-journal-read.py ~/venv/bin/openstack-ro
+  # class I: the runner reads its own system journal (cron picks the group up
+  # at its next job); other hosts are read through install-journal-reader.sh
+  id -nG | grep -qw systemd-journal || sudo -n usermod -aG systemd-journal \$(whoami)
   chmod 600 ~/.config/morphocloud/*.pat
   if [[ ! -d ~/incidents-store/.git ]]; then
     git -c credential.helper='!f() { test \"\$1\" = get && printf \"username=x-access-token\npassword=%s\n\" \"\$(tr -d \"\\r\\n\" < ~/.config/morphocloud/harvest-store.pat)\"; }; f' \
@@ -74,6 +81,23 @@ ssh "$RUNNER" '
     exp=$(GH_TOKEN="$t" gh api -i /rate_limit 2>/dev/null | grep -i token-expiration | sed "s/.*: //" | tr -d "\r")
     echo "  $f.pat -> ${exp:-FAILED (token invalid or gh missing)}"
   done'
+
+if [[ "$SOURCE_REPO" == "MorphoCloud/Instances" ]]; then
+  # Class K: a repository the source token cannot see is never listed, so it
+  # would be missing without any error. Compare with the maintainer's view.
+  echo ">> Class K: repositories the source token sees vs the maintainer's ($ADMIN_GH) ..."
+  LIST='/orgs/MorphoCloud/repos?type=all&per_page=100'
+  JQ='.[] | select(.archived|not) | .full_name'
+  MINE="$(GH_TOKEN="$(gh auth token --user "$ADMIN_GH")" gh api --paginate "$LIST" --jq "$JQ" | sort)"
+  THEIRS="$(ssh "$RUNNER" "GH_TOKEN=\$(tr -d '\r\n' < ~/.config/morphocloud/harvest-source.pat) gh api --paginate '$LIST' --jq '$JQ'" | sort)"
+  MISSING="$(comm -23 <(echo "$MINE") <(echo "$THEIRS"))"
+  if [[ -n "$MISSING" ]]; then
+    echo "  WARNING: the source token cannot see these repositories; re-issue it for ALL repositories:"
+    echo "$MISSING" | sed 's/^/    /'
+  else
+    echo "  OK: the token sees all $(echo "$MINE" | grep -c .) repositories"
+  fi
+fi
 
 if [[ "$OUTSIDE_BLOCK" == "--outside-block" ]]; then
   # The same line check-workflow-clock.py renders into the managed block (its
