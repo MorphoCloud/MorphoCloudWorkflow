@@ -11,10 +11,80 @@ sources:
     short: instances # the store's per-repository file name and incident-id prefix
     instance_prefix: "instance-" # production servers are instance-<issue>
     control_host: null # exouser@<ip> of the second (control) runner, for its _diag logs over SSH
+    # Coverage amendment, class K: also harvest every other repository of
+    # `org` except `deny_repos` (production only; Test keeps one repository).
+    harvest_org: true
+    # Classes I and J: every MorphoCloud server VM of this environment. `ssh`
+    # is `local` (the acquire runner itself) or the read-only account that
+    # install-journal-reader.sh creates; `nova` is the server's name in
+    # Jetstream2; `units` ship in full (warnings and kernel lines always ship);
+    # `files` are our services' logs outside the journal, read through the
+    # host's allowlist. A new server VM is added here; leaving one out is an
+    # exclusion and must say why.
+    hosts:
+      - name: morphocloud-instances-runner
+        nova: morphocloud-instances-runner
+        ssh: local
+        units: ["actions.runner.*", "cron.service"]
+      - name: morphocloud-instances-runner-2
+        nova: morphocloud-instances-runner-2
+        ssh: mcjournal@10.0.16.66
+        units: ["actions.runner.*", "cron.service"]
+      - name: join-morphocloud # the join app, the website, welcome emails, the JS2 notifier
+        nova: morphocloud-org-server
+        ssh: mcjournal@10.0.16.245
+        units:
+          - morphocloud-intake.service
+          - site-stats.service
+          - nginx.service
+          - cron.service
+          - certbot.service
+        files:
+          send-welcomes: /var/log/morphocloud-send-welcomes.log
+          js2-status: /var/log/morphocloud-intake-js2-cron.log
   MorphoCloud/Test-Instances:
     short: test-instances
     instance_prefix: "morpho-cloud-test_instance-"
     control_host: null
+    hosts:
+      - name: mc-test-runner
+        nova: MC-Test-runner
+        ssh: local
+        units: ["actions.runner.*", "cron.service"]
+      - name: mc-data-portal # moves to production at the migration
+        nova: mc-data-portal
+        ssh: mcjournal@10.1.158.71
+        units:
+          - mc-data-portal.service
+          - mc-data-worker.service
+          - copyparty.service
+          - caddy.service
+          - "mnt-shares-*.mount"
+          - cron.service
+      - name: mc-join-test
+        nova: mc-join-test
+        ssh: mcjournal@10.1.158.175
+        units: [morphocloud-intake.service, nginx.service, cron.service]
+
+# Class K: the organization, and the repositories production does NOT harvest:
+# the Test environment's own (the Test harvester covers Test-Instances).
+# MorphoDepot is a separate project and has no repository here.
+org: MorphoCloud
+deny_repos:
+  - MorphoCloud/Test-Instances
+  - MorphoCloud/Incidents-sandbox
+  - MorphoCloud/MorphoCloudE2ETests
+
+# Class I: journal lines counted per day instead of stored (each entry's count
+# goes in the host's daily summary line, so a filter that grows greedy shows).
+# Firewall blocks ([UFW BLOCK]) are not here: they get their own daily summary
+# (count, top ports, top source networks) in the harvester.
+journal_noise:
+  - { name: pipewire-jackdbus, match: "jackdbus" }
+  - { name: exosphere-automount, match: "automount-volume@loop" }
+  - { name: networkd-dispatcher, match: "networkd-dispatcher" }
+  - { name: cron-job-start, match: 'CRON\[\d+\]: \(\S+\) CMD \(' }
+  - { name: cron-session, match: 'pam_unix\(cron:session\)' }
 
 # actor_kind rules (plan, "Classify"): rule 2 bots, rule 3 test accounts,
 # rule 4 admins (unless the admin opened the issue), rule 5 everyone else.
@@ -28,6 +98,18 @@ admins:
   - muratmaga
 
 workflows:
+  # Code: CI and code review in any repository. Counted in the rollups, never
+  # an outcome line, a log or an incident (a red pre-commit is not an incident).
+  code:
+    - ci.yml
+    - claude.yml
+    - claude-code-review.yml
+    - smoke-test.yml
+    - validate.yml
+    - release.yml
+    - dependabot-updates
+    - copilot
+    - copilot-pull-request-reviewer
   # A command: one member action, one outcome line, jobs and the full log every time.
   command:
     - control-instance.yml

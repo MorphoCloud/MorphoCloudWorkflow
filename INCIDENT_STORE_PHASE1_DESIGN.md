@@ -689,6 +689,40 @@ spot named above.
 | R2 in the workflows                                                                                         | PR B                            | with PR B         |
 | one-time import of the 2026-11-09 outage window, already saved from the six MorphoCloud hosts on 2026-11-10 | PR A2's install                 | at A2's install   |
 
+### As built (PR A2, 2026-11-10)
+
+- **CI and code review are a kind, not a deny-list.** MorphoCloudWorkflow, the
+  course template, the monitor, the analytics repository and the Apps Script
+  repository all run operational workflows next to their CI, so a repository
+  deny-list would lose real runs. Workflow kind `code` (`ci.yml`, `claude*.yml`,
+  `smoke-test.yml`, `validate.yml`, `release.yml`, Dependabot, Copilot) is
+  counted in the rollups and is never an outcome line, a log or an incident, in
+  every repository. `deny_repos` holds only the Test environment's three
+  (`Test-Instances`, `Incidents-sandbox`, `MorphoCloudE2ETests`).
+- **K:** an extra repository seen for the first time is read seven days back in
+  the cycle; older history is `--backfill N --repo OWNER/NAME`. Its cursor is
+  `state/cursors/<short>.json`; `state/harvester.json` lists every extra
+  repository's cursor and `repos_unreadable`. The organization list is re-read
+  hourly. A repository the token cannot see is never listed, so
+  `install-harvester.sh` compares the token's view with the maintainer's and
+  names any repository missing from it.
+- **I:** our services' log files outside the journal ship too (the welcome-
+  email cron's `send-welcomes.log`, which carries `Internal Server Error` lines,
+  and the Jetstream2 notifier's log on the join server), through a second
+  request form, `file <name> <offset>`, limited to a root-owned allowlist on the
+  host. The reader reads at most 4 MB and 100 seconds per call and continues
+  from its cursor (a first read of the portal's 1.8 GB journal takes several
+  cycles); it refuses, rather than returning almost nothing, when its account
+  cannot read the system journal. Cron's job-start and session lines are on the
+  noise list (87% of a first read on the Test runner). Hosts are addressed by
+  their internal addresses.
+- **J:** `openstack-ro server list --long`, current state in
+  `state/platform.json`, transitions in `platform/YYYY/MM/DD.jsonl`.
+- Each step of a cycle is contained: a dead host, an unreadable repository or an
+  OpenStack failure is named in `last_error` and the other steps still run.
+- The watchdog's two-hour alert for an unreachable host is a change to
+  `watchdog.yml` in the store repositories, made at A2's install.
+
 ### Open: the watchdog's own clock
 
 The store watchdog did not run once between 17:18Z and at least 19:52Z on
