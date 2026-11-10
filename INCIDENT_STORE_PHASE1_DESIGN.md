@@ -12,6 +12,13 @@ built" at the end of the PR A section says so. PR B (the job side) and PR C (the
 portal) get their own sections in this file once PR A has shipped, each approved
 before its code (one thing at a time).
 
+**Amended 2026-11-10:** PR A shipped and ran through the Jetstream2 storage
+failure of 2026-11-09, and that day showed whole classes of evidence the design
+never reached (a dead share on the portal, lost alert emails, paused VMs, course
+repositories). "Coverage amendment" below replaces the evidence scope with
+classes and adds PR A2 before PR B. It needs the maintainer's approval before
+any code.
+
 **Priorities, in order (maintainer, 2026-11-08):** robustness (nothing found
 missing from the record weeks later), simplicity (no machinery the record does
 not need), cost (Actions minutes and storage: not critical, kept in view).
@@ -546,6 +553,143 @@ crontab (harvester line inside the block) and drops the hand-added line.
   Python site with the line and one without, the 30-line window, and the
   repository's own scripts), `scripts/test_check_workflow_clock.py` (both
   targets rendered with and without a store).
+
+## Coverage amendment (2026-11-10): every host, every repository, platform state
+
+### What the outage showed
+
+On 2026-11-09 Jetstream2 had storage failures from about 17:45Z. Afterwards 14
+of the 18 user shares on the data portal were dead: still listed as mounted,
+"Permission denied" even for root, because the Ceph metadata server had
+blocklisted the portal's sessions (kernel: `mds7 rejected session`, about
+20:00Z). The portal's check saw the gap at 19:42Z, then stopped flagging it once
+the dead mounts showed as mounted again. Its alert emails all failed with
+Dynadot's `524 You sent it too frequently`. Every MorphoCloud server VM was
+`PAUSED` by Jetstream2 for hours. None of it reached the store, and the store as
+designed could not have recorded it.
+
+**Root cause in this design.** The evidence inventory was swept from our code:
+every log line, table and file our scripts write. That cannot find what our code
+never writes: kernel and systemd messages, a mount that looks healthy but is
+dead, a mail server's rejection that only reaches a journal, a VM's state in
+Jetstream2, or runs in repositories other than the two sources. The rule below
+is drawn from where MorphoCloud **runs**, not from what its code logs.
+
+### The rule (replaces "PR A records" as the scope of the store)
+
+MorphoCloud's evidence is three source classes and two rules for the code that
+emits it. A new host, repository or sender falls under a class by default; it is
+left out only by an explicit, written exclusion.
+
+| Class | Evidence                                                                                                               | New inventory items |
+| ----- | ---------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| I     | the system journal of **every MorphoCloud server VM**: all lines from our own units, `warning` or worse from the rest  | I1–I3               |
+| J     | **platform state**: every server VM's Nova state and every self-hosted runner's online status, on each change          | J1–J2               |
+| K     | the workflow runs of **every MorphoCloud repository** that acts on users or infrastructure, not only the two sources   | K1                  |
+| R1    | rule: a health check exercises the resource (reads the share, opens the page), never only its state (mounted, running) | (emitter change)    |
+| R2    | rule: every outbound email writes one result line, sent or failed, with the server's reply, wherever it is sent from   | (emitter change)    |
+
+**Out of scope:** MorphoDepot (a separate project on the same allocation; its
+one shared failure mode, an object-storage outage, reaches the store through E2
+and through our own runs failing). **Known blind spots,** recorded so nobody
+mistakes them for coverage: Apps Script execution logs (they live in Google),
+Dynadot's own logs, and course runner VMs on other allocations unless the build
+verifies a key reaches them.
+
+### New inventory items
+
+| Item | Evidence                                                                                                                                                                                                                                                                                                            |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| I1   | each host's journal from a saved cursor (`journalctl --after-cursor`, so a line ships once): every line of the units `incident-sources.yml` lists for that host; `warning` or worse from everything else, minus the noise list (I3)                                                                                 |
+| I2   | per host per cycle: reachable or not. An unreachable host is a line in its day file and a count in `state/harvester.json`; the watchdog alerts when a host has been unreachable for two hours                                                                                                                       |
+| I3   | the noise list, in `incident-sources.yml`, each entry with the count it removed that day so a filter that grows too greedy shows: `[UFW BLOCK]` (~900 lines per host per 8 h), PipeWire `jackdbus`, Exosphere `automount-volume@loop*`, `networkd-dispatcher`                                                       |
+| J1   | each server VM's `status`, `OS-EXT-STS:vm_state`, `task_state`, power state, through `openstack-ro server list`, one line per change in `platform/YYYY/MM/DD.jsonl` (on 2026-11-09: `ACTIVE` to `PAUSED` at 17:54Z for six VMs)                                                                                     |
+| J2   | each self-hosted runner's GitHub status (`online`, `offline`, `busy`), one line per change in the same file                                                                                                                                                                                                         |
+| K1   | runs of every org repository except a deny-list of code-only repositories (their CI): today the course repositories (`MC-*`, own runner, 128 runs a week), `morphocloud-monitor` (hourly join health check, opens outage issues), `MorphoCloudAnalytics`, `MorphoCloudCourseTemplate`, `morphocloud-intake-backups` |
+
+### How each class is built
+
+**I, the journals (PR A2, harvester).** `incident-sources.yml` gains `hosts:`
+per source: name, SSH target, the units that ship in full. Each cycle the
+harvester reads `journalctl -o short-iso --after-cursor=<saved>` per host,
+filters, redacts with the existing redactor, and appends to
+`runner/YYYY/MM/DD/<host>/journal.log` under the same 2 MB per-day cap and
+marker as `_diag`. The cursor is saved runner-side and advances only after the
+read completed, as `remote_diag` does. The acquire runner reads its own journal
+locally. Other hosts are read through a **read-only journal account**: user
+`mcjournal`, group `systemd-journal`, whose `authorized_keys` entry is a forced
+command allowing only `journalctl` with a cursor (the pattern of `mcrunner` on
+the portal). First sight of a host ships the last seven days through the same
+filter and cap, so the record starts before the install (the portal keeps only
+about eight days of journal).
+
+Hosts today, from the 2026-11-10 sweep:
+
+| Environment | Hosts                                                                                                                                                                   |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Production  | `morphocloud-instances-runner` (local), `morphocloud-instances-runner-2`, `join-morphocloud` (join app, welcome-email cron, Jetstream2 notifier, nginx, monthly reboot) |
+| Test        | `mc-test-runner` (local), `mc-data-portal` (moves to production at the migration), `mc-join-test`                                                                       |
+
+Size: the outage window (8 h, the worst day) left about 490 lines on the portal
+after the noise list and under 20 on each other host, so well under 1 MB a day
+in total.
+
+**J, platform state (PR A2, harvester).** One `openstack-ro server list` per
+cycle for the source's allocation, kept to the hosts above, and one GitHub
+runners listing per source repository. Written only on change, so a quiet day
+writes nothing. The GitHub listing needs `Administration: read` on the source
+PATs (a credential change for the maintainer).
+
+**K, every repository (PR A2, harvester).** `sources:` becomes the whole
+organization minus `deny:`, read once a cycle from the org's repository list, so
+a new course repository is harvested from its first run. Unknown workflows are
+kind `other` (counted; a failure is an incident), as today. The source PATs are
+re-issued for **all** repositories of the organization (read-only Actions and
+Issues), or a new repository would be invisible to them. Cost: about one listing
+call per repository per cycle, a few hundred calls an hour on a 5,000 limit.
+
+**R1, checks that exercise the resource.** The portal's share check reads each
+share (a `stat` and a directory listing under a timeout) and logs one line per
+failure and per recovery; that line reaches the store through I1 (and as G9 when
+PR C ships). Every other health check is audited against R1 in the PR that
+touches it, with the result as a table in that PR: today `morphocloud-monitor`'s
+`/healthz`, the in-job Jetstream2 check (B13) and the reconcile sweep's
+reachability test.
+
+**R2, mail result lines.** One line per send at every sender:
+`<UTC> MAIL result=ok|FAILED to=<count> subject=<subject> reply=<SMTP reply>`.
+Senders: the portal (`deliver`), the join app (`_send_bcc` and the single
+sends), `morphocloud-monitor`, the store watchdog, and the workflows that send
+(their failures already fail the job). A check like `check-dispatch-logging.py`
+keeps new senders honest in each repository. Apps Script senders are the blind
+spot named above.
+
+### Where each piece lands
+
+| Piece                                                                                             | PR                              | Order             |
+| ------------------------------------------------------------------------------------------------- | ------------------------------- | ----------------- |
+| I, J, K in the harvester; `hosts:`, `deny:`, noise list; `mcjournal` installer                    | **PR A2** (MorphoCloudWorkflow) | next, before PR B |
+| R1 and R2 on the portal                                                                           | PR C (morphocloud-data-portal)  | with PR C         |
+| R2 in the join app and `morphocloud-monitor`                                                      | one small PR in each repository | after A2          |
+| R2 in the workflows                                                                               | PR B                            | with PR B         |
+| one-time import of the 2026-11-09 outage window, already saved from all seven hosts on 2026-11-10 | PR A2's install                 | at A2's install   |
+
+### Open: the watchdog's own clock
+
+The store watchdog did not run once between 17:18Z and at least 19:52Z on
+2026-11-09, despite two cron lines: GitHub did not deliver the schedule. The
+outage therefore went unalerted by this system. Its only clocks are Jetstream2
+(the runners, down in this outage) and GitHub's schedule (unreliable, decision
+21). A clock outside both is a separate decision for the maintainer; until then
+this is a stated limit, not coverage.
+
+### Tests (presented for approval with PR A2's build, as amm554 where a member action is involved)
+
+`logger -p err` on each host appears in the store within one cycle; an
+unreachable host is recorded and alerted after two hours; pausing a Test VM
+records `ACTIVE` to `PAUSED` and back; stopping the Test runner service records
+`offline`; a new throwaway repository's first run is harvested; a filtered noise
+line is counted, not stored.
 
 ## PR B — the job side
 
