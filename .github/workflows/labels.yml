@@ -32,6 +32,7 @@ jobs:
           {"name": "expiration:6d", "color": "892368", "description": "Instance expires in 6 days"},
           {"name": "expiration:7d", "color": "892368", "description": "Instance expires in 7 days"},
           {"name": "expiration:60d", "color": "892368", "description": "Instance expires in 60 days unless extended"},
+          {"name": "expiration:90d", "color": "892368", "description": "Instance expires in 90 days unless extended"},
           {"name": "expiration:120d", "color": "892368", "description": "Instance expires in 120 days unless extended"},
           {"name": "expiration:180d", "color": "892368", "description": "Instance expires in 180 days unless extended"},
           {"name": "request:approved", "color": "027210", "description": "Instance has been approved for creation and is being provisioned"},
@@ -74,7 +75,16 @@ jobs:
           {"name": "volume:deleted", "color": "0E8CDB", "description": "The volume has been permanently deleted after the grace period."},
           {"name": "volume:expiration-pending", "color": "0E8CDB", "description": "The volume is detached and will be deleted after the grace period."},
           {"name": "error:system-capacity", "color": "B60205", "description": "Instance request rejected: system capacity limit reached"},
-          {"name": "invariant-violation", "color": "B60205", "description": "Automated reconciliation found the instance in an inconsistent state"}
+          {"name": "invariant-violation", "color": "B60205", "description": "Automated reconciliation found the instance in an inconsistent state"},
+          {"name": "admin-email-failed", "color": "B60205", "description": "An admin notification about this issue could not be sent; reconcile-instances re-sends it"},
+          {"name": "followup:unshelve", "color": "FBCA04", "description": "An unshelve was abandoned mid-flight; follow-through retries it once Jetstream2 settles"},
+          {"name": "followup:shelve", "color": "FBCA04", "description": "A shelve was abandoned mid-flight; follow-through retries it once Jetstream2 settles"},
+          {"name": "followup:delete", "color": "FBCA04", "description": "A delete was abandoned mid-flight; follow-through retries it once Jetstream2 settles"},
+          {"name": "followup:setup", "color": "FBCA04", "description": "Setup outran the create's wait; follow-through watches the instance and finishes or shelves it"},
+          {"name": "status:error", "color": "B60205", "description": "The instance is up but its own setup script failed; delete it and create again"},
+          {"name": "followup-count:1", "color": "FBCA04", "description": "Follow-through has retried the command once this episode"},
+          {"name": "followup-count:2", "color": "FBCA04", "description": "Follow-through has retried the command twice this episode (the last automatic try)"},
+          {"name": "needs-admin", "color": "B60205", "description": "Automatic retries are spent; an admin has to look at the server on Jetstream2"}
         ]
     steps:
       - name: Create or Update Labels

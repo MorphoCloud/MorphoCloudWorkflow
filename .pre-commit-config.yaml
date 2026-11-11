@@ -62,3 +62,24 @@ repos:
         language: python
         additional_dependencies: [pyyaml]
         files: ^\.github/actions/.*/action\.ya?ml$
+      # GitHub's on:schedule fires a few times a day whatever the cron says; the
+      # runner's crontab is the clock, rendered from '# dispatch:' markers in the
+      # workflows. Every time-driven workflow must carry one, and the committed
+      # crontabs must match — see the script's docstring.
+      - id: check-workflow-clock
+        name: Time-driven workflows are registered with the runner clock
+        entry: python scripts/check-workflow-clock.py check
+        language: python
+        additional_dependencies: [pyyaml]
+        pass_filenames: false
+        files: ^(\.github/workflows/.*\.ya?ml|scripts/.*\.crontab(\.extra)?|scripts/check-workflow-clock\.py)$
+      # The incident harvester tells automation from a hand dispatch by a
+      # DISPATCH line in a runner-side log (INCIDENT_STORE_PLAN.md, actor_kind
+      # rule 1). Every runner-side `gh workflow run` call site must log one;
+      # see the script's docstring. PR B extends it to the workflows.
+      - id: check-dispatch-logging
+        name: Runner-side dispatch call sites log a DISPATCH line
+        entry: python scripts/check-dispatch-logging.py
+        language: python
+        files: ^scripts/.*\.(sh|py)$
+        exclude: ^scripts/(test_.*\.py|check-dispatch-logging\.py)$

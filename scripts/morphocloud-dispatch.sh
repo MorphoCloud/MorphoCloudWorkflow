@@ -7,11 +7,12 @@
 # time-sensitive workflows on time via `workflow_dispatch` (honored immediately).
 # The workflows keep their `on: schedule` as a loose backstop.
 #
-# Scope: MorphoCloud/Instances only (Test-Instances and MC-* course repos stay on
-# GitHub's schedule by design).
+# Scope: MorphoCloud/Instances and Test-Instances (MC-* course repos stay on
+# GitHub's schedule by design). The crontab lines are rendered from the
+# workflows' '# dispatch:' markers by scripts/check-workflow-clock.py.
 #
 # Setup + crontab: see scripts/runner-cron-dispatcher.md
-# Usage: morphocloud-dispatch.sh <workflow1.yml> [<workflow2.yml> ...]
+# Usage: MORPHOCLOUD_DISPATCH_REPO=<owner/repo> morphocloud-dispatch.sh <workflow1.yml> [<workflow2.yml> ...]
 set -u
 # REPO defaults to Instances (the lifecycle crons); override via env for other repos
 # (e.g. MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/MorphoCloudAnalytics for the usage report,
@@ -29,10 +30,17 @@ fi
 GH_TOKEN="$(tr -d '\r\n' <"$TOKEN_FILE")"
 export GH_TOKEN
 
+# One uniform line per dispatch, written the moment gh returns, so the incident
+# harvester can tell this clock's runs from a maintainer's hand dispatch
+# (INCIDENT_STORE_PLAN.md, actor_kind rule 1; scripts/check-dispatch-logging.py):
+#   <UTC> DISPATCH <wf> repo=<owner/repo> issue=- by=morphocloud-dispatch.sh result=ok|FAILED <stderr tail>
 for wf in "$@"; do
-  if gh workflow run "$wf" --repo "$REPO" --ref "$REF" >/dev/null 2>&1; then
-    echo "$ts dispatched $wf" >>"$LOG"
+  if err=$(gh workflow run "$wf" --repo "$REPO" --ref "$REF" 2>&1 >/dev/null); then
+    echo "$ts DISPATCH $wf repo=$REPO issue=- by=morphocloud-dispatch.sh result=ok" >>"$LOG"
   else
-    echo "$ts FAILED to dispatch $wf" >>"$LOG"
+    err=$(printf '%s' "$err" | tr '\n' ' ')
+    # (bash's "${err: -200}" is EMPTY when err is shorter than 200 characters)
+    if (( ${#err} > 200 )); then err="${err: -200}"; fi
+    echo "$ts DISPATCH $wf repo=$REPO issue=- by=morphocloud-dispatch.sh result=FAILED $err" >>"$LOG"
   fi
 done

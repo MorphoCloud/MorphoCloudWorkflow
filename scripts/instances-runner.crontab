@@ -1,12 +1,22 @@
-# MorphoCloud/Instances dispatcher crontab — ACQUIRE runner (runner-1) ONLY.
-# GitHub's on:schedule is throttled, so the time-sensitive workflows are fired here
-# via gh workflow run. NEVER install this on the control runner — a second copy
-# double-fires every cron. Canonical source: MorphoCloudWorkflow/scripts/. Installed
-# by restore-instances-dispatcher.sh. See INSTANCES_RUNNER_REBUILD.md.
-*/5 * * * * /home/exouser/morphocloud-dispatch.sh automatic-instance-shelving.yml update-request-status-label.yml
-*/10 * * * * /home/exouser/morphocloud-dispatch.sh workshop-backfill.yml
-*/15 * * * * /home/exouser/morphocloud-dispatch.sh collect-instance-uptime.yml
-0 * * * * /home/exouser/morphocloud-dispatch.sh update-workshop.yml
-0 0 * * * /home/exouser/morphocloud-dispatch.sh automatic-instance-deleting.yml automatic-volume-deleting.yml
+# BEGIN morphocloud-dispatcher (managed block: rendered, replaced on install)
+# MorphoCloud/Instances dispatcher crontab — ACQUIRE runner ONLY (a copy on the control
+# runner double-fires every line). RENDERED by scripts/check-workflow-clock.py
+# from the '# dispatch:' markers in .github/workflows; edit those, not this.
+# Installed by scripts/restore-instances-dispatcher.sh; see runner-cron-dispatcher.md.
+*/5 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh automatic-instance-shelving.yml follow-through.yml update-request-status-label.yml
+0 12 * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh close-expired-issues.yml
+*/15 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh collect-instance-uptime.yml
+23 13 * * 1 MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh detect-dormant-workflows.yml
+40 12 * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh expire-shares.yml
+7,37 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh reconcile-instances.yml
+0 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh update-workshop.yml
+*/10 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh workshop-backfill.yml
+# --- runner-side scripts on the same clock ---
+*/5 * * * * OS_CLOUD=BIO180006_IU MORPHOCLOUD_FIP_HOLD=5 MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/venv/bin/python /home/exouser/police-floating-ips.py >> /home/exouser/fip-police.log 2>&1
+*/5 * * * * OS_CLOUD=BIO180006_IU MORPHOCLOUD_SOURCE_REPO=MorphoCloud/Instances MORPHOCLOUD_STORE_REPO=MorphoCloud/Incidents /home/exouser/venv/bin/python /home/exouser/harvest-incidents.py >> /home/exouser/harvest-incidents.log 2>&1
+# --- appended verbatim from instances-runner.crontab.extra ---
+# Monthly usage report -> MorphoCloudAnalytics (separate repo + dedicated token)
 0 0 1 * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/MorphoCloudAnalytics MORPHOCLOUD_DISPATCH_TOKEN_FILE=/home/exouser/.config/morphocloud/analytics-dispatch.pat /home/exouser/morphocloud-dispatch.sh monthly-usage.yml
+# Weekly: email GH_ADMIN_EMAILS if a runner dispatch token is within 4 weeks of expiry
 0 8 * * 1 /home/exouser/check-dispatch-tokens.sh >> /home/exouser/token-expiry.log 2>&1
+# END morphocloud-dispatcher

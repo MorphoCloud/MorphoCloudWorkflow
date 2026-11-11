@@ -44,6 +44,11 @@ def _collect_files_to_copy(
                 continue
             session.log(f"Analysing directory {src_path}")
             for file_path in src_path.rglob("*"):
+                # Compiled Python caches are local build output (a test run
+                # writes .github/actions/fip/__pycache__), never source: one
+                # was vendorized into Test-Instances on 2026-11-06.
+                if "__pycache__" in file_path.parts or file_path.suffix == ".pyc":
+                    continue
                 if file_path.is_file():
                     if str(file_path.resolve()) in exclude_paths_set:
                         session.log(f"Ignoring {file_path}")
@@ -233,12 +238,26 @@ def vendorize(session: nox.Session) -> None:
             # Referenced by the local hook in .pre-commit-config.yaml, which is
             # itself vendorized — omitting it makes CI fail downstream.
             "scripts/check-action-manifest-expressions.py",
+            "scripts/check-workflow-clock.py",
+            # The incident store's controlled vocabulary and source map
+            # (INCIDENT_STORE_PLAN.md, "Signatures"): one copy per source repo.
+            "incident-signatures.yml",
+            "incident-sources.yml",
         ],
         [
             ".github/dependabot.yml",
             # Retired — replaced by the close-expired-issues.yml end-of-life
             # sweep; excluded so _prune_orphans removes downstream copies.
             ".github/workflows/automatic-instance-deleting.yml",
+            # Retired with the per-instance data volume (STORAGE_REDESIGN_PLAN.md,
+            # "Workflow files with volume logic"); excluded so the copies go too.
+            ".github/workflows/delete-volume.yml",
+            ".github/workflows/delete-volume-from-workflow.yml",
+            ".github/workflows/automatic-volume-deleting.yml",
+            ".github/actions/delete-volume/action.yml",
+            # Replaced by .github/actions/fip/fip.py (AUTOMATION_AUDIT_2026-11.md,
+            # class 1: compare-and-swap attach); excluded so the copies go too.
+            ".github/actions/create-ip/action.yml",
             # Claude PR reviewer — MWF-only (needs the CLAUDE_CODE_OAUTH_TOKEN
             # secret, which only exists here; downstream repos take direct
             # pushes, not PRs)
@@ -271,12 +290,20 @@ def vendorize_course(session: nox.Session) -> None:
             # Referenced by the local hook in .pre-commit-config.yaml, which is
             # itself vendorized — omitting it makes CI fail downstream.
             "scripts/check-action-manifest-expressions.py",
+            "scripts/check-workflow-clock.py",
         ],
         [
             ".github/dependabot.yml",
             # Retired — replaced by the close-expired-issues.yml end-of-life
             # sweep; excluded so _prune_orphans removes downstream copies.
             ".github/workflows/automatic-instance-deleting.yml",
+            # The volume workflows retired from the individual flow (delete-volume*,
+            # automatic-volume-deleting, the delete-volume action) are NOT excluded
+            # here on purpose: course repositories stay in volume mode and keep
+            # their frozen copies. Do not add them for symmetry.
+            # Replaced by .github/actions/fip/fip.py, which create-instance (used by
+            # create-course-instance) now calls; excluded so the copies go too.
+            ".github/actions/create-ip/action.yml",
             # Claude PR reviewer — MWF-only (see vendorize session note)
             ".github/workflows/claude.yml",
             ".github/workflows/claude-code-review.yml",

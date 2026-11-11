@@ -30,10 +30,37 @@ inputs:
       "GitHub comment ID for the progress tracking comment (from the acquire
       job)"
     required: true
+  storage_mode:
+    description:
+      "'share' to mount the owner's data share instead of the volume (phase 2
+      prototype, Test-Instances only); empty for the volume path"
+    required: false
+    default: ""
+  github_id:
+    description: "Numeric GitHub ID of the instance owner (share mode)"
+    required: false
+    default: ""
+  github_login:
+    description: "GitHub login of the instance owner (share mode)"
+    required: false
+    default: ""
+  follow_through:
+    description:
+      "'true' when a setup that outruns the wait is handed to the follow-through
+      sweep (decision 33: individual requests); otherwise a timeout is reported
+      as before. Workshop sub-issues and course instances stay out: the backfill
+      and the course flow own them."
+    required: false
+    default: "false"
 outputs:
   setup_status:
     description: "Instance setup status ('complete' when ready)"
     value: ${{ steps.instance_poll.outputs.status }}
+  outcome:
+    description:
+      "How the wait for setup ended: complete, error (the instance's own setup
+      script failed) or timeout (still running; decision 33)"
+    value: ${{ steps.instance_poll.outputs.outcome }}
 runs:
   using: "composite"
   steps:
@@ -103,6 +130,11 @@ runs:
                     if [ -n "$failed_item" ]; then detail="$detail (item \`$failed_item\`)"; fi
                 fi
                 set_failure_detail "$detail"
+                echo "outcome=error" >> "$GITHUB_OUTPUT"
+                # Decision 33: the instance's own error line is the one real
+                # failure; the status sweep turns this marker into status:error.
+                openstack server set --property 'exoSetup={"status":"error","epoch":'"$(date +%s)"'000}' "$INSTANCE_NAME" \
+                  || echo "::warning ::could not mark exoSetup=error on $INSTANCE_NAME"
                 echo "::error ::$detail"
                 exit 1
             else
@@ -115,6 +147,11 @@ runs:
             last_task=$(last_ansible_task "$log_output")
             detail="setup did NOT finish within ${max_wait_time}s (timed out); last task seen was \`${last_task:-unknown}\`"
             set_failure_detail "$detail"
+            # Decision 33: a timeout is "still setting up", not a failure. The
+            # follow-through sweep watches the console from here and finishes
+            # the job (resume-setup.yml) or shelves a stalled instance.
+            echo "outcome=timeout" >> "$GITHUB_OUTPUT"
+            echo "last_task=${last_task:-unknown}" >> "$GITHUB_OUTPUT"
             echo "::error ::$detail"
             exit 1
         fi
@@ -135,12 +172,45 @@ runs:
           $INSTANCE_NAME
 
         echo "status=$status" >> $GITHUB_OUTPUT
+        echo "outcome=complete" >> "$GITHUB_OUTPUT"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ inputs.instance_name }}
 
+    # Decision 33: a slow setup is not a failure. The member is told to wait,
+    # the issue is marked for the follow-through sweep, and this run ends.
+    - name: comment (setup still running)
+      if:
+        ${{ steps.instance_poll.outcome == 'failure' && failure() &&
+        steps.instance_poll.outputs.outcome == 'timeout' &&
+        inputs.follow_through == 'true' }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation: still setting up ⏳
+
+          Instance **${{ inputs.instance_name }}** is taking longer than usual to finish setting up (20 minutes so far; last step seen: `${{ steps.instance_poll.outputs.last_task }}`). **This is not a failure and there is nothing you need to do:** MorphoCloud checks every few minutes and finishes the setup, including your access email, as soon as the instance is ready. If it has not finished within an hour, the instance is shelved so it does not use your allocation, and you are told here.
+
+    - name: Mark the setup for follow-through
+      if:
+        ${{ steps.instance_poll.outcome == 'failure' && failure() &&
+        steps.instance_poll.outputs.outcome == 'timeout' &&
+        inputs.follow_through == 'true' }}
+      shell: bash
+      run: |
+        gh issue edit "$ISSUE_NUMBER" --add-label "followup:setup" \
+          || echo "::warning ::Could not mark issue #$ISSUE_NUMBER for follow-through"
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        ISSUE_NUMBER: ${{ inputs.issue_number }}
+
     - name: comment (setup failed)
-      if: ${{ steps.instance_poll.outcome == 'failure' && failure() }}
+      if:
+        ${{ steps.instance_poll.outcome == 'failure' && failure() &&
+        (steps.instance_poll.outputs.outcome != 'timeout' ||
+        inputs.follow_through != 'true') }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
@@ -169,6 +239,7 @@ runs:
     - name: comment (progress)
       uses: ./.github/actions/comment-progress
       with:
+        storage_mode: ${{ inputs.storage_mode }}
         comment-id: ${{ inputs.progress_comment_id }}
         create_ip: ✅
         create_volume: ✅
@@ -178,8 +249,251 @@ runs:
         attach_volume: ⏳
         send_email: ""
 
+    # AUTOMATION_AUDIT_2026-11.md, class 1: nothing below logs in to the
+    # instance until it proves, over SSH, that it is this server (the metadata
+    # service's uuid, which the guest cannot change, is the server's id). The
+    # steps below write the owner's share key, run scripts as root and reboot:
+    # done at an address that had become another member's instance, they would
+    # do all that to the other member. An address that answers as another
+    # server is replaced by a fresh one (verified in turn), never written to.
+    # Waits up to 300 s for the instance to answer, as the steps below did.
+    - name: Verify the instance is this server
+      id: identity
+      shell: bash
+      run: |
+        source ~/venv/bin/activate
+        out=$(python "$GITHUB_ACTION_PATH/../fip/fip.py" verify --server "$INSTANCE_NAME" \
+          --ip "$INSTANCE_IP" --wait 300 --reattach)
+        echo "$out"
+        echo "$out" >> "$GITHUB_OUTPUT"
+      env:
+        OS_CLOUD: ${{ inputs.os_cloud }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
+        INSTANCE_IP: ${{ inputs.instance_ip }}
+
+    - name: comment (instance could not be verified)
+      if: ${{ steps.identity.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Instance **${{ inputs.instance_name }}** could not be verified as this request's instance at its public address, so its setup was stopped before anything was written to it. @MorphoCloud/morphocloud-admins
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    # Share mode (STORAGE_REDESIGN_PLAN.md, phase 2 prototype; Test-Instances
+    # only): the owner's per-user share replaces the MyData volume. The
+    # volume steps below are skipped; this mounts the share at
+    # /media/share/MyDrive and links the home folders into it. Home, Slicer and
+    # settings stay on the root disk.
+    - name: Mount the owner's data share
+      id: mount_share
+      if: ${{ inputs.storage_mode == 'share' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! [[ "$GITHUB_ID" =~ ^[0-9]{1,12}$ ]]; then
+          echo "::error ::No numeric GitHub ID for the instance owner"
+          exit 1
+        fi
+        ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+                  -o ConnectTimeout=10 -o LogLevel=ERROR)
+
+        # Wait for sshd, as the volume path's rename step does: right after
+        # setup the instance may still be finishing cloud-init.
+        start=$SECONDS
+        until out=$(ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" true 2>&1); do
+          if grep -qi "permission denied" <<<"$out"; then
+            echo "::error ::SSH auth rejected by $INSTANCE_IP"
+            exit 1
+          fi
+          if (( SECONDS - start >= 300 )); then
+            echo "::error ::sshd on $INSTANCE_IP not reachable after 300s"
+            exit 1
+          fi
+          sleep 15
+        done
+
+        # The same fail-closed ensure as the data portal, with --existing: it
+        # only reads the share /create already required; it never creates one.
+        source ~/venv/bin/activate
+        if ! details=$(python3 "$HOME/mc-data/mc_share_runner.py" ensure "$GITHUB_ID" "$GITHUB_LOGIN" --existing); then
+          echo "::error ::Could not create or find the data share for $GITHUB_LOGIN ($GITHUB_ID)"
+          exit 1
+        fi
+        key=$(jq -r '.access_key // empty' <<<"$details")
+        if [[ -z "$key" ]]; then
+          echo "::error ::The data share has no access key"
+          exit 1
+        fi
+        echo "::add-mask::$key"
+        export_path=$(jq -r '.export_path // empty' <<<"$details")
+        access_to=$(jq -r '.access_to // empty' <<<"$details")
+        if ! [[ "$export_path" =~ ^[0-9.:,]+:/volumes/_nogroup/[0-9a-f-]+/[0-9a-f-]+$ ]] \
+            || ! [[ "$access_to" =~ ^mc-[a-z0-9]+-u${GITHUB_ID}$ ]]; then
+          echo "::error ::Unexpected share details for $GITHUB_ID"
+          exit 1
+        fi
+        echo "Share for $GITHUB_LOGIN ($GITHUB_ID): $(jq -r .share_id <<<"$details")"
+
+        # The key goes over stdin, never on a command line.
+        printf '%s' "$key" | ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" \
+          "sudo install -d -m 0755 /etc/ceph && sudo sh -c 'umask 077; cat > /etc/ceph/mc-user.secret'"
+
+        # The values travel in the script body (quoted with %q), never on the
+        # remote command line.
+        { printf 'EXPORT=%q\nNAME=%q\n' "$export_path" "$access_to"
+          cat <<'EOF'
+        set -euo pipefail
+        MP=/media/share/MyDrive
+        UNIT=media-share-MyDrive.mount
+        H=/home/exouser
+        # No Uploads folder: the data portal uploads into any folder.
+        FOLDERS="Desktop Documents Downloads"
+
+        # Bare mountpoint is immutable: nothing lands on the root disk while
+        # the share is not mounted.
+        if ! mountpoint -q "$MP"; then
+          mkdir -p "$MP"
+          if [ -n "$(ls -A "$MP")" ]; then
+            echo "$MP is not empty while unmounted; refusing" >&2
+            exit 1
+          fi
+          chattr +i "$MP"
+        fi
+
+        cat > "/etc/systemd/system/$UNIT" <<UNITEOF
+        [Unit]
+        Description=MorphoCloud user storage
+        After=network-online.target
+        Wants=network-online.target
+
+        [Mount]
+        What=$EXPORT
+        Where=$MP
+        Type=ceph
+        Options=name=$NAME,secretfile=/etc/ceph/mc-user.secret,noatime,_netdev
+        TimeoutSec=90
+
+        [Install]
+        WantedBy=remote-fs.target
+        UNITEOF
+        systemctl daemon-reload
+        systemctl enable --now "$UNIT"
+
+        # Prove it is this user's share, not something else at that path.
+        read -r src fstype < <(findmnt -n -o SOURCE,FSTYPE "$MP")
+        if [ "$fstype" != "ceph" ] || [ "${src#*:}" != "${EXPORT#*:}" ]; then
+          echo "$MP is not the expected share ($fstype $src)" >&2
+          exit 1
+        fi
+
+        chown exouser:exouser "$MP"
+        for d in $FOLDERS; do
+          [ -e "$MP/$d" ] || install -d -o exouser -g exouser "$MP/$d"
+        done
+
+        # Launchers written by setup into the local Desktop: refresh them on
+        # the share, then drop the local copies.
+        if [ -d "$H/Desktop" ] && [ ! -L "$H/Desktop" ]; then
+          for f in "$H"/Desktop/*.desktop; do
+            [ -e "$f" ] || continue
+            install -o exouser -g exouser -m 0755 "$f" "$MP/Desktop/"
+            rm -f "$f"
+          done
+        fi
+
+        # Home folders become links to the share. Anything left in a local
+        # folder is moved aside, never deleted.
+        stamp=$(date +%Y%m%d-%H%M%S)
+        for d in $FOLDERS; do
+          p="$H/$d"
+          if [ -L "$p" ]; then
+            [ "$(readlink "$p")" = "$MP/$d" ] && continue
+            rm -f "$p"
+          elif [ -d "$p" ] && [ -z "$(ls -A "$p")" ]; then
+            rmdir "$p"
+          elif [ -e "$p" ]; then
+            mv "$p" "$H/$d.local-$stamp"
+          fi
+          ln -s "$MP/$d" "$p"
+          chown -h exouser:exouser "$p"
+        done
+
+        # No desktop without the share: a local fallback Desktop would hold
+        # work that disappears with the instance.
+        install -d /etc/systemd/system/vncserver@1.service.d
+        cat > /etc/systemd/system/vncserver@1.service.d/mc-share.conf <<VNCEOF
+        [Unit]
+        Requires=$UNIT
+        After=$UNIT
+        VNCEOF
+        systemctl daemon-reload
+
+        # A late or failed mount must never reset the folders to local ones.
+        if grep -q '^enabled=' /etc/xdg/user-dirs.conf 2>/dev/null; then
+          sed -i 's/^enabled=.*/enabled=False/' /etc/xdg/user-dirs.conf
+        else
+          echo 'enabled=False' >> /etc/xdg/user-dirs.conf
+        fi
+        # Trust the desktop launchers before the first desktop session, so they
+        # start without "Allow Launching". The login-time autostart that also
+        # does this can run after GNOME has drawn the icons (seen on #452). The
+        # mark lives in exouser's local home, set through a private session bus.
+        for f in "$MP"/Desktop/*.desktop; do
+          [ -e "$f" ] || continue
+          runuser -u exouser -- env HOME="$H" dbus-run-session -- sh -c \
+            'gio set "$1" metadata::trusted true && gio set "$2" metadata::trusted true' \
+            sh "$f" "$H/Desktop/$(basename "$f")" \
+            || echo "Could not mark $(basename "$f") as trusted" >&2
+        done
+
+        echo "Share mounted at $MP; home folders linked."
+        EOF
+        } | ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" 'sudo bash -s'
+      env:
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
+        GITHUB_ID: ${{ inputs.github_id }}
+        GITHUB_LOGIN: ${{ inputs.github_login }}
+        OS_CLOUD: ${{ inputs.os_cloud }}
+
+    # Share expiry (STORAGE_REDESIGN_PLAN.md): the share records which instance
+    # holds it and when; the expiry sweep keeps a held share whatever its age.
+    # Never fails the create: a missed stamp costs at most an early warning.
+    - name: Record the mount on the data share
+      if:
+        ${{ inputs.storage_mode == 'share' && steps.mount_share.outcome ==
+        'success' }}
+      shell: bash
+      run: |
+        # No -e: by design nothing here fails the create; the failure is a warning.
+        source ~/venv/bin/activate
+        if ! python3 "$HOME/mc-data/mc_share_runner.py" touch "$GITHUB_ID" --instance "$INSTANCE_NAME" > /dev/null; then
+          echo "::warning ::Could not record the mount on the data share for $GITHUB_ID"
+        fi
+      env:
+        GITHUB_ID: ${{ inputs.github_id }}
+        INSTANCE_NAME: ${{ inputs.instance_name }}
+        OS_CLOUD: ${{ inputs.os_cloud }}
+
+    - name: comment (failed to mount the data share)
+      if: ${{ steps.mount_share.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          Failed to mount the data share on instance **${{ inputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
     - name: Rename MyData directory to MyData-tmp
       id: rename_mydata
+      if: ${{ inputs.storage_mode != 'share' }}
       shell: bash
       run: |
         # This is the first SSH-to-instance step of the volume phase. Right
@@ -240,7 +554,8 @@ runs:
           sleep "$interval"
         done
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
 
     - name: comment (failed to rename MyData)
       if: ${{ steps.rename_mydata.outcome == 'failure' && failure() }}
@@ -256,6 +571,7 @@ runs:
 
     - name: Attach Volume
       id: attach_volume
+      if: ${{ inputs.storage_mode != 'share' }}
       shell: bash
       run: |
         source ~/venv/bin/activate
@@ -332,6 +648,7 @@ runs:
 
     - name: Copy installed files into attached volume
       id: copy_installed_files
+      if: ${{ inputs.storage_mode != 'share' }}
       shell: bash
       run: |
         function check_mountpoint_ready {
@@ -367,7 +684,8 @@ runs:
           exouser@$INSTANCE_IP \
           '[ ! -d /media/volume/MyData/Slicer ] && mv /media/volume/MyData-tmp/Slicer /media/volume/MyData/Slicer && rmdir /media/volume/MyData-tmp || rm -rf /media/volume/MyData-tmp'
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
 
     - name: comment (failed to copy installed files from MyData-tmp to MyData)
       if: ${{ steps.copy_installed_files.outcome == 'failure' && failure() }}
@@ -383,6 +701,7 @@ runs:
 
     - name: Relocate home directory to persistent volume
       id: relocate_home_directory
+      if: ${{ inputs.storage_mode != 'share' }}
       shell: bash
       run: |
         ssh \
@@ -450,7 +769,8 @@ runs:
         sudo rm -rf /home/exouser.bak
         EOF
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
 
     - name: comment (failed to relocate home directory to persistent volume)
       if: ${{ steps.relocate_home_directory.outcome == 'failure' && failure() }}
@@ -469,6 +789,7 @@ runs:
     # of the home directory. Idempotent for re-attached volumes.
     - name: Create Uploads folder and desktop shortcut
       id: create_uploads_folder
+      if: ${{ inputs.storage_mode != 'share' }}
       shell: bash
       run: |
         ssh \
@@ -478,7 +799,8 @@ runs:
           exouser@$INSTANCE_IP \
           'mkdir -p /media/volume/MyData/Uploads /home/exouser/Desktop && ln -sfn /media/volume/MyData/Uploads /home/exouser/Desktop/Uploads'
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
 
     - name: comment (failed to create Uploads folder)
       if: ${{ steps.create_uploads_folder.outcome == 'failure' && failure() }}
@@ -494,6 +816,7 @@ runs:
 
     - name: Create Renviron file
       id: create_renviron_file
+      if: ${{ inputs.storage_mode != 'share' }}
       shell: bash
       run: |
         ssh \
@@ -503,7 +826,8 @@ runs:
           exouser@$INSTANCE_IP \
           'echo -e "R_LIBS_SITE=/media/share/MorphoCloudCephShare/R/x86_64-pc-linux-gnu-library/4.4/\nR_LIBS_USER=/media/volume/MyData/R/x86_64-pc-linux-gnu-library/4.4/" > /home/exouser/.Renviron && mkdir -p /media/volume/MyData/R/x86_64-pc-linux-gnu-library/4.4/'
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
 
     - name: comment (failed to create /home/exouser/.Renviron)
       if: ${{ steps.create_renviron_file.outcome == 'failure' && failure() }}
@@ -559,7 +883,8 @@ runs:
         fi
         set -e
       env:
-        INSTANCE_IP: ${{ inputs.instance_ip }}
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
         INSTANCE_NAME: ${{ inputs.instance_name }}
 
     - name: comment (failed to reboot instance)
@@ -571,6 +896,59 @@ runs:
           ### Instance Creation Results ❌
 
           Failed to reboot instance **${{ inputs.instance_name }}**.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    # Share mode: after the reboot the share must mount on its own and the
+    # desktop must start on it; this is what every unshelve relies on.
+    - name: Verify the data share after reboot
+      id: verify_share
+      if: ${{ inputs.storage_mode == 'share' }}
+      shell: bash
+      run: |
+        ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+                  -o ConnectTimeout=10 -o LogLevel=ERROR)
+        # Wait for sshd first (up to 300 s, like the rename step), so a slow
+        # boot is not mistaken for a missing share.
+        start=$SECONDS
+        until out=$(ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" true 2>&1); do
+          if grep -qi "permission denied" <<<"$out"; then
+            echo "::error ::SSH auth rejected by $INSTANCE_IP after the reboot"
+            exit 1
+          fi
+          if (( SECONDS - start >= 300 )); then
+            echo "::error ::sshd on $INSTANCE_IP not reachable after the reboot (300s)"
+            exit 1
+          fi
+          sleep 10
+        done
+        check='mountpoint -q /media/share/MyDrive &&
+          [ "$(readlink /home/exouser/Desktop)" = /media/share/MyDrive/Desktop ] &&
+          systemctl is-active --quiet vncserver@1'
+        for attempt in $(seq 1 12); do
+          if ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" "$check"; then
+            echo "Share mounted, Desktop linked, desktop session running."
+            exit 0
+          fi
+          sleep 10
+        done
+        ssh "${ssh_opts[@]}" exouser@"$INSTANCE_IP" \
+          'systemctl --no-pager status media-share-MyDrive.mount vncserver@1 | tail -30' || true
+        echo "::error ::The data share or the desktop did not come up after the reboot"
+        exit 1
+      env:
+        INSTANCE_IP:
+          ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
+
+    - name: comment (data share not up after reboot)
+      if: ${{ steps.verify_share.outcome == 'failure' && failure() }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          ### Instance Creation Results ❌
+
+          The data share or the desktop did not come up after rebooting **${{ inputs.instance_name }}**.
 
           See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
@@ -628,6 +1006,7 @@ runs:
     - name: comment (progress)
       uses: ./.github/actions/comment-progress
       with:
+        storage_mode: ${{ inputs.storage_mode }}
         comment-id: ${{ inputs.progress_comment_id }}
         create_ip: ✅
         create_volume: ✅

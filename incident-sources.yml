@@ -1,0 +1,346 @@
+# What the incident harvester (scripts/harvest-incidents.py) knows about each
+# source repository and about the workflows it records. INCIDENT_STORE_PLAN.md
+# "Evidence inventory" and INCIDENT_STORE_PHASE1_DESIGN.md "The harvester".
+#
+# A workflow file not listed under `workflows` is kind `other`: counted in the
+# rollups and shown in the weekly numbers, never dropped. Add a workflow here
+# when it becomes a command, a sweep or an alert; the harvester does not guess.
+
+sources:
+  MorphoCloud/Instances:
+    short: instances # the store's per-repository file name and incident-id prefix
+    instance_prefix: "instance-" # production servers are instance-<issue>
+    control_host: null # exouser@<ip> of the second (control) runner, for its _diag logs over SSH
+    # Coverage amendment, class K: other repositories harvested with this
+    # source, by explicit list (maintainer, 2026-11-10): the join health
+    # monitor only. Course repositories are their own thing and their failure
+    # modes are MorphoCloud's; repositories holding user data
+    # (morphocloud-intake-backups) are never harvested. The source token is
+    # scoped to exactly Instances + these. Adding one = this list + the token.
+    extra_repos:
+      - MorphoCloud/morphocloud-monitor
+    # Classes I and J: every MorphoCloud server VM of this environment. `ssh`
+    # is `local` (the acquire runner itself) or the read-only account that
+    # install-journal-reader.sh creates; `nova` is the server's name in
+    # Jetstream2; `units` ship in full (warnings and kernel lines always ship);
+    # `files` are our services' logs outside the journal, read through the
+    # host's allowlist. A new server VM is added here; leaving one out is an
+    # exclusion and must say why.
+    hosts:
+      - name: morphocloud-instances-runner
+        nova: morphocloud-instances-runner
+        ssh: local
+        units: ["actions.runner.*", "cron.service"]
+      - name: morphocloud-instances-runner-2
+        nova: morphocloud-instances-runner-2
+        ssh: mcjournal@10.0.16.66
+        units: ["actions.runner.*", "cron.service"]
+      - name: join-morphocloud # the join app, the website, welcome emails, the JS2 notifier
+        nova: morphocloud-org-server
+        ssh: mcjournal@10.0.16.245
+        units:
+          - morphocloud-intake.service
+          - site-stats.service
+          - nginx.service
+          - cron.service
+          - certbot.service
+        files:
+          send-welcomes: /var/log/morphocloud-send-welcomes.log
+          js2-status: /var/log/morphocloud-intake-js2-cron.log
+  MorphoCloud/Test-Instances:
+    short: test-instances
+    instance_prefix: "morpho-cloud-test_instance-"
+    control_host: null
+    hosts:
+      - name: mc-test-runner
+        nova: MC-Test-runner
+        ssh: local
+        units: ["actions.runner.*", "cron.service"]
+      - name: mc-data-portal # moves to production at the migration
+        nova: mc-data-portal
+        ssh: mcjournal@10.1.158.71
+        units:
+          - mc-data-portal.service
+          - mc-data-worker.service
+          - copyparty.service
+          - caddy.service
+          - "mnt-shares-*.mount"
+          - cron.service
+      - name: mc-join-test
+        nova: mc-join-test
+        ssh: mcjournal@10.1.158.175
+        units: [morphocloud-intake.service, nginx.service, cron.service]
+
+# Class I: journal lines counted per day instead of stored (each entry's count
+# goes in the host's daily summary line, so a filter that grows greedy shows).
+# Firewall blocks ([UFW BLOCK]) are not here: they get their own daily summary
+# (count, top ports, top source networks) in the harvester.
+journal_noise:
+  # Every pattern is written against the READER's line format,
+  #   <UTC time> <unit or identifier>[<pid>] p<priority>: <message>
+  # (mc-journal-read.py line_of), not syslog's; each entry has an example in
+  # test_harvest_incidents.py that is formatted by line_of itself.
+  - { name: pipewire-jackdbus, match: "jackdbus" }
+  - { name: exosphere-automount, match: "automount-volume@loop" }
+  - { name: networkd-dispatcher, match: "networkd-dispatcher" }
+  - { name: cron-job-start, match: 'cron\.service\S* p\d+: \(\S+\) CMD \(' }
+  - { name: cron-session, match: 'pam_unix\(cron:session\)' }
+  # the runner's per-job lines duplicate the run records; a FAILED job still ships
+  - name: runner-job-start
+    match: 'actions\.runner\.\S+ p\d+: \S+ \S+: Running job: '
+  - name: runner-job-succeeded
+    match:
+      'actions\.runner\.\S+ p\d+: \S+ \S+: Job \S+ completed with result:
+      Succeeded'
+  # web access lines of our apps (uvicorn) with a 2xx, 3xx or 4xx status: health
+  # checks and scanners. A 5xx still ships. Keeps client addresses out of the store.
+  - name: http-access-not-5xx
+    match: 'INFO: +\S+ - "[A-Z]+ \S+ HTTP/[\d.]+" [234]\d\d '
+  # copyparty's upload progress (it logs everything at info); keeps users' file
+  # names out of the store. Its errors still ship.
+  # the join app's outgoing HTTP requests (httpx, three per welcome-email run,
+  # ~12,000 lines a day, with GitHub user names) when they succeed; a 4xx or
+  # 5xx answer (an expired token, GitHub down) still ships.
+  - name: httpx-request-ok
+    match: 'INFO:httpx:HTTP Request: [A-Z]+ \S+ "HTTP/[\d.]+ [23]\d\d '
+  # the welcome-email job's membership check of each invited user who has
+  # not accepted yet: GitHub answers 404 until they do, every 2 minutes, with
+  # the user name. Pending counts are in send-welcomes.log; other 4xx ship.
+  - name: httpx-membership-pending
+    match:
+      'INFO:httpx:HTTP Request: GET https://api\.github\.com/orgs/[^/
+      ]+/memberships/\S+ "HTTP/[\d.]+ 404 '
+  - name: copyparty-progress
+    match:
+      'copyparty\.service\S* p\d+: .*(BTW: got \d+ more chunks|LOG:
+      (POST|GET|PUT|writing) )'
+
+# actor_kind rules (plan, "Classify"): rule 2 bots, rule 3 test accounts,
+# rule 4 admins (unless the admin opened the issue), rule 5 everyone else.
+# Rule 1 (automation) is a DISPATCH line in a runner log, whoever the actor is.
+bots:
+  - "morphocloud-workflow-app[bot]"
+  - "github-actions[bot]"
+test_accounts:
+  - amm554
+admins:
+  - muratmaga
+
+# Every workflow of every harvested repository is listed here. One that is not
+# is recorded as kind `other` (a failure is an incident, a success a count) and
+# named in state/harvester.json's last_error at every cycle until it is listed,
+# so the watchdog emails about it (test: every MWF workflow is listed; the list
+# below also covers the files that exist only in Instances, Test-Instances or
+# the monitor, checked against the GitHub API on 2026-11-10).
+workflows:
+  # Code: CI and code review in any repository, and Test's E2E harness.
+  # Counted in the rollups, never an outcome line, a log or an incident (a red
+  # pre-commit is not an incident).
+  code:
+    - ci.yml
+    - claude.yml
+    - claude-code-review.yml
+    - smoke-test.yml
+    - validate.yml
+    - release.yml
+    - dependabot-updates
+    - copilot
+    - copilot-pull-request-reviewer
+    - e2e-verify-instance.yml # Test-Instances only
+    - _e2e_perm_check.yml # Test-Instances only
+  # A command: one member action, one outcome line, jobs and the full log every time.
+  command:
+    - control-instance.yml
+    - create-instance.yml
+    - create-course-instance.yml
+    - delete-instance-and-volume.yml
+    - extend-session.yml
+    - send-email.yml
+    - control-instance-from-workflow.yml
+    - create-instance-from-workflow.yml
+    - resume-setup.yml
+    - migrate-volume.yml
+    - create-workshop.yml
+    - approve-workshop.yml
+    - update-renew-label.yml
+    - delete-volume.yml # Instances only (not in MWF)
+    - delete-volume-from-workflow.yml # Instances only (not in MWF)
+  # An alert: every run is an incident (something asked for the admins).
+  alert:
+    - admin-alert.yml
+    - report-dropped-command.yml
+    - on-admin-mention.yml
+  # A sweep, an event handler or a helper: a successful run is a rollup count;
+  # a failed one is an incident.
+  sweep:
+    - automatic-instance-shelving.yml
+    - automatic-volume-deleting.yml # Instances only (not in MWF)
+    - health-check.yml # morphocloud-monitor
+    - label-portal-request.yml
+    - labels.yml
+    - on-instance-request-opened.yml
+    - portal-only-notice.yml
+    - request-initial-comments.yml
+    - request-labeler.yml
+    - request-notify-admin-workshop.yml
+    - request-notify-admin.yml
+    - runner-setup-helper.yml
+    - update-issue-from-workflow.yml # Test-Instances only
+    - update-issue.yml # Test-Instances only
+    - validate-command-instance.yml
+    - validate-command-workshop.yml
+    - validate-request.yml
+    - enroll-students.yml # course repositories (not harvested)
+    - on-course-request-opened.yml # course repositories (not harvested)
+    - validate-command-course.yml # course repositories (not harvested)
+    - validate-request-course.yml # course repositories (not harvested)
+    - close-expired-issues.yml
+    - collect-instance-uptime.yml
+    - detect-dormant-workflows.yml
+    - expire-shares.yml
+    - follow-through.yml
+    - guard-issue-close.yml
+    - reconcile-instances.yml
+    - send-renewal-email.yml
+    - test-workshop-deletion.yml
+    - update-request-status-label.yml
+    - update-workshop.yml
+    - workshop-backfill.yml
+
+# Until PR B records the command as a fact, the harvester reads it from the job
+# log: the typed command (`COMMAND: /unshelve`, record-command-context's step
+# env), else the workflow-started action (`command_name: shelve`), else this
+# table. Never "a command word anywhere in the log": the help comment lists
+# every command (2026-11-10: 538 of 823 commands came out as /delete_all).
+command_by_workflow:
+  create-instance.yml: /create
+  create-course-instance.yml: /create
+  create-instance-from-workflow.yml: /create
+  create-workshop.yml: /create
+  extend-session.yml: /extend
+  update-renew-label.yml: /renew
+  send-email.yml: /email
+  delete-instance-and-volume.yml: /delete_instance
+  delete-volume.yml: /delete_volume
+  delete-volume-from-workflow.yml: /delete_volume
+
+# report-dropped-command runs on every cancelled command run and reports only
+# when it finds a dropped command: its run is `dropped` (an incident) when this
+# step ran, and a plain success otherwise. A skipped run of any alert workflow
+# (on-admin-mention without a mention, this one without a cancellation) is a
+# count, never an incident.
+dropped_report:
+  workflow: report-dropped-command.yml
+  step: "Tell the user the command was dropped"
+
+# A refusal is a request a workflow declined by design (a per-user limit, the
+# instance's state, a permission), never a failure. The reason comes from, in
+# order: PR B's `REFUSED reason=` line; the failed step's own error line
+# matching refusal_errors (every message below is one a workflow prints when it
+# declines; a test checks each against the workflow source); then the job and
+# step names below, only when the step printed no reason of its own (a GitHub
+# 503 inside the authorize job is a failure).
+refusal_errors:
+  - {
+      reason: user_instance_limit,
+      match: '^User \S+ has \d+/\d+ (course )?instances',
+    }
+  - {
+      reason: user_request_limit,
+      match: '^User \S+ has \d+ open (course )?instance requests',
+    }
+  - {
+      reason: not_member,
+      match:
+        '^(User|Workshop organizer) \S+ is not (an active )?(a )?member of ',
+    }
+  - { reason: not_operator, match: "Cannot proceed with operation" }
+  - { reason: closed_issue, match: '^/\w+ refused on closed issue' }
+  - { reason: in_flight, match: "an earlier command is still in flight" }
+  - {
+      reason: already_exists,
+      match: '^Instance \S+ already exists \(\w+\); /create is redundant',
+    }
+  - {
+      reason: no_instance,
+      match:
+        '^Instance \S+ does not exist$|^/email requires an existing instance',
+    }
+  - { reason: wrong_state, match: "^/email requires an ACTIVE instance" }
+  - {
+      reason: not_approved,
+      match:
+        '^(Instance|Workflow) \S+ management not approved|does not have request
+        approved label',
+    }
+  - { reason: no_storage, match: " has no data share$" }
+  - { reason: unsupported_command, match: '^Unsupported command \[' }
+  - { reason: portal_only, match: "^Request opened outside the portal" }
+  - {
+      reason: invalid_request,
+      match:
+        "^Workshop request validation failed|^Invalid (duration|number of
+        instances)|^Cannot approve",
+    }
+  - {
+      reason: workshop_window,
+      match: "^/create attempted before the 12h window opens",
+    }
+refusal_jobs:
+  - authorize
+refusal_steps:
+  - "Check authorization"
+  - "Fail if not authorized"
+  - "Check workflow management approval"
+  - "Workflow management not approved (failure)"
+  - "Fail when the instance does not exist"
+  - "Check workshop organizer team membership"
+  # validate-command-*.yml: the deliberate exit 1 when the command text is not
+  # a command (the member is told in a comment). Day one of production showed
+  # these as the only "failures" of the day; they are refusals.
+  - "Validate instance command"
+  - "Validate workshop command"
+  - "Validate course command"
+
+# Runner-side logs shipped in full (F1-F4), each from its last offset. A path
+# that does not exist on a runner is skipped (pickup.log exists on Test only).
+# NOT the harvester's own log: shipping it would make every cycle a change
+# (the "committed" line), one commit every five minutes, and the watchdog's
+# "quiet store = stopped harvester" signal would be gone.
+runner_logs:
+  - { name: morphocloud-dispatch, path: ~/morphocloud-dispatch.log }
+  - { name: fip-police, path: ~/fip-police.log }
+  - { name: token-expiry, path: ~/token-expiry.log }
+  - { name: pickup, path: ~/mc-data/pickup.log }
+# The Actions runner service's own logs (F5): only the lines the runner itself
+# logs at its ERR level (`[<date> <time> ERR  <Component>] ...`), from files
+# changed since the last cycle; the first cycle on a runner records where every
+# file ends and ships nothing. A looser pattern ("ERR|Exception|...") matched
+# "STDOUT/STDERR stream read finished" in every Worker log, the .NET stack
+# frames of routine long-poll cancellations and job-message JSON literals: 81 MB
+# of noise on Test's first day. The harvester also caps a day's file (DIAG_DAY_CAP).
+diag_dir: ~/actions-runner/_diag
+diag_match: '^\[\S+ \S+ ERR '
+
+# Outside context (E). Grafana: Jetstream2's public vacancy dashboard; a flavor
+# not listed is `not_tracked` (m3.* are not on the dashboard).
+grafana:
+  url: "https://grafana.jetstream-cloud.org/api/public/dashboards/b39f9f91452949389a4d333c3f451eac/panels/{panel}/query"
+  flavors:
+    g3.medium: { panel: 14, ref: H }
+    g3.large: { panel: 14, ref: A }
+    g3.xl: { panel: 14, ref: B }
+    g4.xl: { panel: 15, ref: B }
+    g4.2xl: { panel: 15, ref: C }
+    g4.4xl: { panel: 15, ref: D }
+    g5.xl: { panel: 16, ref: B }
+    g5.2xl: { panel: 16, ref: C }
+    g5.4xl: { panel: 16, ref: D }
+    m3.3xl: { panel: 13, ref: F }
+    r3.large: { panel: 13, ref: D }
+    r3.xl: { panel: 13, ref: E }
+access_outages:
+  current: "https://operations-api.access-ci.org/wh2/news/v1/affiliation/access-ci.org/current_outages/"
+  past: "https://operations-api.access-ci.org/wh2/news/v1/affiliation/access-ci.org/past_outages/"
+  resource_match: "jetstream" # substring of AffectedResources ResourceID, case-insensitive
+github_status: "https://www.githubstatus.com/api/v2/incidents.json"
