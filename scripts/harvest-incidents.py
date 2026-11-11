@@ -182,6 +182,8 @@ OTHER_KIND = "other"
 # (2026-11-10: 83 of 91 November failures were recorded with this line only).
 GENERIC_EXIT_RE = re.compile(r"^Process completed with exit code \d+\.?$")
 TS_LINE_RE = re.compile(r"^\S+Z ", re.M)
+DETAIL_LINES = 5  # error_detail: how many output lines, and how long each
+DETAIL_CHARS = 300
 # A /create or /unshelve that left the member without an instance because of
 # what Jetstream2 did, as the failed step's own error line says it. The cause
 # comes from Nova's action list when the log has one (the line's own wording
@@ -808,6 +810,51 @@ def is_refusal(
 
 def _plain(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def error_detail(text: str | None) -> list[str] | None:
+    """The failed step's last lines of output before the runner's exit-code
+    line, for a step that printed no error line of its own (2026-11-11: the
+    status-label sweep's "GraphQL: Something went wrong" and "502 Bad Gateway"
+    were plain output, so its error line said only "exit code 1").
+
+    text is the failed step's stored tail, else the whole log (then the first
+    exit-code line, which closes the first failed step). Only the output of the
+    last command the step ran counts: what follows its `##[endgroup]` (the end
+    of the script and env GitHub echoes), without runner markers or blank
+    lines. None when there is no exit-code line or no output before it."""
+    if not text:
+        return None
+    lines = TS_LINE_RE.sub("", text).splitlines()
+    end = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.startswith("##[error]")
+            and GENERIC_EXIT_RE.match(line.removeprefix("##[error]").strip())
+        ),
+        None,
+    )
+    if end is None:
+        return None
+    seg = lines[:end]
+    for i in range(len(seg) - 1, -1, -1):
+        if seg[i].startswith("##[endgroup]"):
+            seg = seg[i + 1 :]
+            break
+    out = [
+        line.strip()[:DETAIL_CHARS]
+        for line in seg
+        if line.strip() and not line.startswith("##[") and "[36;1m" not in line
+    ]
+    return out[-DETAIL_LINES:] or None
+
+
+def needs_error_detail(result: str, error_line: str | None) -> bool:
+    """A failure whose error line says nothing but the exit code (or nothing)."""
+    return result == "failure" and (
+        not error_line or bool(GENERIC_EXIT_RE.match(error_line))
+    )
 
 
 def pick_error(errors: list[str]) -> str | None:
@@ -1677,6 +1724,15 @@ class Harvester:
         redacted, replacements = (
             self.redactor.text(d["logtext"]) if d["logtext"] is not None else (None, 0)
         )
+        # From the same redacted text that failed-step.log (or the log) holds,
+        # so --rederive reads back exactly this.
+        d["error_detail"] = (
+            error_detail(
+                self.redactor.text(d["step_tail"])[0] if d["step_tail"] else redacted
+            )
+            if needs_error_detail(result, d["error_line"])
+            else None
+        )
         record = {
             "schema_version": SCHEMA_VERSION,
             "id": f"{self.short}-{run_id}-{attempt}" + ("-0" if is_incident else ""),
@@ -1818,6 +1874,7 @@ class Harvester:
             "failed_job": failed.get("job"),
             "failed_step": failed.get("step"),
             "error_line": d["error_line"],
+            "error_detail": d.get("error_detail"),
             "html_url": run.get("html_url"),
             "facts": "missing",
             "log": d["log"],
@@ -2710,6 +2767,11 @@ def rederive_record(
         new["signature"] = classify(
             cfg, s.get("error_line"), s.get("failed_step"), workflow
         )
+    s["error_detail"] = (
+        error_detail(step_tail if step_tail is not None else logtext)
+        if needs_error_detail(new["result"], s.get("error_line"))
+        else None
+    )
     new["capacity"] = (
         capacity_of(
             logtext,
@@ -2760,6 +2822,9 @@ class Rederive:
                 self.count(f"{label} {get(old)} -> {get(new)}")
         if old["source"].get("error_line") != new["source"].get("error_line"):
             self.count("error_line: the step's own error, not the exit-code line")
+        detail = new["source"].get("error_detail")
+        if detail and detail != old["source"].get("error_detail"):
+            self.count("error_detail: the step's last output before the exit-code line")
         if old.get("refusal_reason") != new.get("refusal_reason"):
             self.count(
                 f"refusal_reason {old.get('refusal_reason')} -> {new.get('refusal_reason')}"
