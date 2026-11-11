@@ -774,6 +774,16 @@ Jetstream2 and why, with the evidence a Jetstream2 ticket needs.
   November failures. It is now the last error that is not that line;
   `--rederive` corrects stored records from the failed step's stored tail, else
   the last error before the run's first exit-code line.
+- **`source.error_detail` when the step printed no error line of its own**
+  (2026-11-11). Many steps print their reason as plain output (`gh`'s "GraphQL:
+  Something went wrong", "HTTP 503", "502 Bad Gateway") and leave only the
+  runner's exit-code line, so the error line says nothing. On a failure whose
+  error line is that line (or none), `error_detail` holds the step's last 5
+  output lines (300 characters each) before it: the output of the last command
+  the step ran, after its `##[endgroup]`, without runner markers. Null
+  otherwise. On copies of the stores the rebuild filled it on 181 of 196 such
+  production failures and 32 of 33 on Test (the rest have no stored log); nearly
+  all are GitHub API errors. The signatures still read the error line only.
 - **`capacity`** (failed `/create` and `/unshelve` only; null otherwise) is set
   when the failed step's error line is one of: "No capacity available for flavor
   X", "no X capacity on Jetstream2 (unshelve request R failed at scheduling)",

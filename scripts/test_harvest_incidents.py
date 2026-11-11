@@ -2171,3 +2171,179 @@ def test_nova_evidence_needs_the_run_start_and_a_request_of_this_run():
         "g3.large",
     )
     assert (cap["evidence"], cap["fault"], cap["cause"]) == ("none", None, "unknown")
+
+
+# --- error_detail: a failed step that printed no error line of its own ------------------
+
+# Instances run 43031951898 (update-request-status-label, 2026-11-11): the step's
+# reason is plain output; its only error line is the runner's exit code.
+STATUS_LABEL_GRAPHQL = _log(
+    "##[group]Run python update_labels.py",
+    '\x1b[36;1mfor issue in $(gh issue list ...); do echo "::error ::never printed"; done\x1b[0m',
+    "shell: /usr/bin/bash -e {0}",
+    "env:",
+    "  GH_TOKEN: ***",
+    "##[endgroup]",
+    "Updating issue 231 adding label [status:shelved_offloaded] and removing labels []",
+    "https://github.com/MorphoCloud/Instances/issues/231",
+    "",
+    "Updating issue 230 adding label [status:shelved_offloaded] and removing labels []",
+    "failed to update https://github.com/MorphoCloud/Instances/issues/230: GraphQL: Something went wrong while executing your query on 2026-11-11T13:46:13Z.",
+    "failed to update 1 issue",
+    EXIT,
+)
+# Instances run 43044770233: the same step, a 502 from GitHub.
+STATUS_LABEL_502 = _log(
+    "Updating issue 254 adding label [status:shelved_offloaded] and removing labels []",
+    'failed to update https://github.com/MorphoCloud/Instances/issues/254: non-200 OK status code: 502 Bad Gateway body: "<html>"',
+    "failed to update 1 issue",
+    EXIT,
+)
+
+
+def test_error_detail_is_the_steps_last_output_before_the_exit_line():
+    detail = hv.error_detail(STATUS_LABEL_GRAPHQL)
+    assert detail[-2].startswith(
+        "failed to update https://github.com/MorphoCloud/Instances/issues/230: GraphQL: Something went wrong"
+    )
+    assert detail[-1] == "failed to update 1 issue"
+    assert len(detail) == hv.DETAIL_LINES
+    assert not any(
+        "::error" in x or x.startswith(("env:", "shell:", "GH_TOKEN")) for x in detail
+    )
+    assert "502 Bad Gateway" in hv.error_detail(STATUS_LABEL_502)[-2]
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        (None, None),
+        ("", None),
+        (_log("all good"), None),  # no exit-code line
+        (_log("##[endgroup]", EXIT), None),  # nothing printed
+        (_log("x" * 500, EXIT), ["x" * hv.DETAIL_CHARS]),
+    ],
+)
+def test_error_detail_edges(text, want):
+    assert hv.error_detail(text) == want
+
+
+def test_error_detail_only_when_the_error_line_is_the_exit_code():
+    assert hv.needs_error_detail("failure", "Process completed with exit code 1.")
+    assert hv.needs_error_detail("failure", None)
+    assert not hv.needs_error_detail(
+        "failure", "No capacity available for flavor g3.xl"
+    )
+    assert not hv.needs_error_detail("success", None)
+    assert not hv.needs_error_detail("refused", "Process completed with exit code 1.")
+
+
+def test_rederive_records_error_detail_once(tmp_path, cfg, monkeypatch):
+    monkeypatch.setattr(
+        hv.Store, "commit_push", lambda self, _msg: (self.flush(), True)
+    )
+    root = tmp_path / "store"
+    sweep = _rec(
+        6,
+        "update-request-status-label.yml",
+        "failure",
+        failed_job="update-request-status-label",
+        failed_step="Update issues",
+        error_line="Process completed with exit code 1.",
+    )
+    sweep["command"] = None
+    out = root / "outcomes/2026/11/09"
+    out.mkdir(parents=True)
+    (out / "instances.jsonl").write_text(json.dumps(sweep) + "\n")
+    inc = root / "incidents/2026/11/instances-6-1-0"
+    inc.mkdir(parents=True)
+    (inc / "incident.json").write_text(json.dumps(sweep))
+    (inc / "job.log.gz").write_bytes(_gz(STATUS_LABEL_GRAPHQL))
+    (inc / "failed-step.log").write_text(STATUS_LABEL_GRAPHQL)
+    assert hv.rederive(cfg, root, dry_run=False) == 0
+    line = json.loads((out / "instances.jsonl").read_text())
+    assert line["source"]["error_line"] == "Process completed with exit code 1."
+    assert line["source"]["error_detail"][-1] == "failed to update 1 issue"
+    assert line == json.loads((inc / "incident.json").read_text())
+    after = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    assert hv.rederive(cfg, root, dry_run=False) == 0
+    assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == after
+
+
+def test_a_harvested_failure_carries_error_detail_and_rederive_agrees(
+    tmp_path, cfg, monkeypatch
+):
+    monkeypatch.setattr(
+        hv.Store, "commit_push", lambda self, _msg: (self.flush(), True)
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("0_update-request-status-label.txt", STATUS_LABEL_GRAPHQL)
+        zf.writestr(
+            "update-request-status-label/3_Update issues.txt", STATUS_LABEL_GRAPHQL
+        )
+    failed = {
+        "job": "update-request-status-label",
+        "step": "Update issues",
+        "number": 3,
+        "conclusion": "failure",
+    }
+    whole, tail, error = hv.assemble_log(buf.getvalue(), failed)
+    h = hv.Harvester.__new__(hv.Harvester)
+    h.cfg, h.repo, h.short, h.prefix = (
+        cfg,
+        "MorphoCloud/Instances",
+        "instances",
+        "instance-",
+    )
+    h.store = hv.Store(tmp_path / "store", "instances", dry_run=False)
+    h.redactor = SimpleNamespace(text=lambda t: (t, 0), email_hash="h")
+    h.feeds = SimpleNamespace(access=list, github=list)
+    h.dispatches = hv.Dispatches([])
+    h.backfill, h.unmapped, h._issues = False, set(), {}
+    h.runs_recorded = h.incidents_recorded = 0
+    h.fetch_detail = lambda _id, _att: {
+        "jobs": [
+            {
+                "name": "update-request-status-label",
+                "conclusion": "failure",
+                "steps": [
+                    {"name": "Update issues", "number": 3, "conclusion": "failure"}
+                ],
+            }
+        ],
+        "failed": failed,
+        "logtext": whole,
+        "step_tail": tail,
+        "error_line": error,
+        "log": "present",
+    }
+    run = {
+        "id": 43031951898,
+        "run_attempt": 1,
+        "status": "completed",
+        "conclusion": "failure",
+        "path": ".github/workflows/update-request-status-label.yml",
+        "name": "Update Request Status Label",
+        "event": "workflow_dispatch",
+        "actor": {"login": "morphocloud-workflow-app[bot]"},
+        "triggering_actor": {"login": "morphocloud-workflow-app[bot]"},
+        "display_title": "Update Request Status Label",
+        "created_at": "2026-11-11T13:45:01Z",
+        "run_started_at": "2026-11-11T13:45:01Z",
+        "updated_at": "2026-11-11T13:46:20Z",
+        "head_sha": "x",
+        "html_url": "u",
+    }
+    assert h.record(run)
+    line = json.loads(
+        (tmp_path / "store/outcomes/2026/11/11/instances.jsonl").read_text()
+    )
+    assert line["source"]["error_line"] == "Process completed with exit code 1."
+    assert "GraphQL: Something went wrong" in line["source"]["error_detail"][-2]
+    h.store.flush()
+    hv.rederive(cfg, tmp_path / "store", dry_run=False)
+    again = json.loads(
+        (tmp_path / "store/outcomes/2026/11/11/instances.jsonl").read_text()
+    )
+    assert again["source"]["error_detail"] == line["source"]["error_detail"]
