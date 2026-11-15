@@ -16,12 +16,133 @@ permissions:
 # deleted: the request covers one instance's lifetime and the files are in
 # the storage (see the step). Bot closes are skipped — automation closes
 # issues only after deletion, so nothing fires for those.
+#
+# Only the request's author, an admin or the course instructor may set this
+# off (INSTANCE_DASHBOARD_PLAN.md decision 37). Anyone with the Triage role
+# can close every issue in the repository, so without the `authorize` job a
+# close by another person would delete or shelve someone else's instance. A
+# close by anyone else leaves the instance as it is and tells the admins.
 jobs:
-  guard:
-    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+  authorize:
+    runs-on: ubuntu-latest
     if:
       ${{ contains(github.event.issue.labels.*.name, 'instance-request') &&
       github.event.sender.type != 'Bot' }}
+    outputs:
+      allowed: ${{ steps.decide.outputs.allowed }}
+    steps:
+      # The author is compared by numeric ID, as the portal does: a login can
+      # be renamed and then taken by someone else.
+      - uses: actions/checkout@v7
+        if: ${{ github.event.sender.id != github.event.issue.user.id }}
+
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        if: ${{ github.event.sender.id != github.event.issue.user.id }}
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Check admin team membership
+        id: admin
+        if: ${{ github.event.sender.id != github.event.issue.user.id }}
+        uses: ./.github/actions/check-team-membership
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: morphocloud-admins
+          username: ${{ github.event.sender.login }}
+
+      - name: Decide whether this close may shelve or delete
+        id: decide
+        shell: bash
+        run: |
+          # COURSE_INSTRUCTOR_GITHUB is a comma-separated list of logins (it is
+          # spliced into the command allowlists the same way); GitHub logins
+          # are case-insensitive.
+          lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+          sender_lc=$(lower "$SENDER")
+          instructor=false
+          IFS=',' read -ra instructors <<<"${INSTRUCTORS// /}"
+          for login in "${instructors[@]}"; do
+            if [[ -n "$login" && "$(lower "$login")" == "$sender_lc" ]]; then
+              instructor=true
+            fi
+          done
+
+          if [[ "$SENDER_ID" == "$AUTHOR_ID" ]]; then
+            allowed=true; why="the request's author"
+          elif [[ "$IS_ADMIN" == "true" ]]; then
+            allowed=true; why="an admin"
+          elif [[ "$instructor" == "true" ]]; then
+            allowed=true; why="the course instructor"
+          else
+            allowed=false; why="not the author, an admin or the course instructor (admin check: ${IS_ADMIN:-not run})"
+          fi
+          echo "@$SENDER closed #$ISSUE_NUMBER (opened by @$AUTHOR): $why"
+          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
+        env:
+          SENDER: ${{ github.event.sender.login }}
+          SENDER_ID: ${{ github.event.sender.id }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          AUTHOR_ID: ${{ github.event.issue.user.id }}
+          IS_ADMIN: ${{ steps.admin.outputs.is_member }}
+          INSTRUCTORS: ${{ vars.COURSE_INSTRUCTOR_GITHUB }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+      - name: Write the admin report
+        if: ${{ steps.decide.outputs.allowed == 'false' }}
+        shell: bash
+        run: |
+          if [[ "$IS_ADMIN" == "unknown" ]]; then
+            check="GitHub could not answer whether @$SENDER is an admin (HTTP $HTTP_CODE), so the close was treated as one by someone who is not."
+          else
+            check="@$SENDER is not the request's author, not in morphocloud-admins and not the course instructor."
+          fi
+          {
+            printf 'Request #%s, opened by @%s, was closed by @%s.\n\n' "$ISSUE_NUMBER" "$AUTHOR" "$SENDER"
+            printf '%s\n\n' "$check"
+            printf '%s\n' "Nothing was done to the instance: it was not shelved or deleted, and it stays as it was. The issue stays closed, so the member's portal no longer shows this instance."
+            printf '%s\n' "- Check @$SENDER's role on this repository: members should have the Read role, which cannot close other people's issues."
+            printf '%s\n' "- If the member still needs the instance, reopen the issue."
+          } > "$RUNNER_TEMP/close-report-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.md"
+        env:
+          SENDER: ${{ github.event.sender.login }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          IS_ADMIN: ${{ steps.admin.outputs.is_member }}
+          HTTP_CODE: ${{ steps.admin.outputs.http_code }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+      - name: Notify admins by email (closed by someone else)
+        if: ${{ steps.decide.outputs.allowed == 'false' }}
+        uses: ./.github/actions/notify-admins
+        with:
+          admin_emails: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          mail_server_username: ${{ secrets.MAIL_USERNAME }}
+          mail_server_password: ${{ secrets.MAIL_PASSWORD }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue_number: ${{ github.event.issue.number }}
+          subject:
+            "request #${{ github.event.issue.number }} closed by @${{
+            github.event.sender.login }}, who did not open it; nothing done"
+          body_file:
+            ${{ runner.temp }}/close-report-${{ github.run_id }}-${{
+            github.run_attempt }}.md
+
+      - name: Fail visibly (closed by someone else)
+        if: ${{ steps.decide.outputs.allowed == 'false' }}
+        shell: bash
+        run: |
+          echo "::error ::#$ISSUE_NUMBER was closed by @$SENDER, who is not its author, an admin or the course instructor; the instance was left as it was and the admins were told"
+          exit 1
+        env:
+          SENDER: ${{ github.event.sender.login }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+
+  guard:
+    needs: authorize
+    runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    if: ${{ needs.authorize.outputs.allowed == 'true' }}
     steps:
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
