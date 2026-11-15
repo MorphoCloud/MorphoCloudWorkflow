@@ -1,0 +1,125 @@
+name: Audit Issue Changes
+
+# A request's labels, its assignees and whether it is open are read by the
+# workflows as the request's state and permissions: `expiration:*` and
+# `renewed:*` set its end of life, `timeout:*` and `shelve-at:*` when it is
+# shelved, `request:approved` lets commands run, the assignees may type
+# commands, and closing a request deletes or shelves its instance. Only the
+# request's author (closing or reopening their own request), the admins and
+# MorphoCloud's own app are meant to change them; members have the Read role,
+# which cannot.
+#
+# Anyone with the Triage role can change all of them on every issue. This
+# workflow is the alarm for that access coming back: every such change made
+# by a person who is not an admin is emailed to the admins and the run fails.
+# It changes nothing (decision 35: report-only). See INSTANCE_DASHBOARD_PLAN.md
+# decision 37.
+#
+# Not run for:
+# - the app (`Bot` senders): every workflow change; changes made with
+#   GITHUB_TOKEN raise no event at all;
+# - the author closing or reopening their own request (the portal closes
+#   requests with the member's own token, so those are the author too);
+# - a close of an instance request: guard-issue-close.yml checks that one and
+#   reports it, so the admins get one email, not two.
+#
+# Not vendorized into course repositories (noxfile.py), where the instructor
+# manages the students' issues.
+
+on:
+  issues:
+    types: [labeled, unlabeled, assigned, unassigned, closed, reopened]
+
+permissions:
+  contents: read
+  # notify-admins labels and comments on the issue when the mail fails.
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    if:
+      ${{ github.event.sender.type != 'Bot' && !((github.event.action ==
+      'closed' || github.event.action == 'reopened') && github.event.sender.id
+      == github.event.issue.user.id) && !(github.event.action == 'closed' &&
+      contains(github.event.issue.labels.*.name, 'instance-request')) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      - name: Check admin team membership
+        id: admin
+        uses: ./.github/actions/check-team-membership
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          org: ${{ github.repository_owner }}
+          team_slug: morphocloud-admins
+          username: ${{ github.event.sender.login }}
+
+      - name: Describe the change
+        id: describe
+        if: ${{ steps.admin.outputs.is_member != 'true' }}
+        shell: bash
+        run: |
+          case "$ACTION" in
+            labeled) change="added the label \`$LABEL\` to" ;;
+            unlabeled) change="removed the label \`$LABEL\` from" ;;
+            assigned) change="assigned @$ASSIGNEE to" ;;
+            unassigned) change="unassigned @$ASSIGNEE from" ;;
+            closed) change="closed" ;;
+            reopened) change="reopened" ;;
+            *) change="changed ($ACTION)" ;;
+          esac
+          if [[ "$IS_ADMIN" == "unknown" ]]; then
+            check="GitHub could not answer whether @$SENDER is an admin (HTTP $HTTP_CODE); the change is reported as one made by someone who is not."
+          else
+            check="@$SENDER is not in morphocloud-admins."
+          fi
+          {
+            printf '@%s %s issue #%s (opened by @%s).\n\n' "$SENDER" "$change" "$ISSUE_NUMBER" "$AUTHOR"
+            printf '%s\n\n' "$check"
+            printf '%s\n' "The workflows read labels, assignees and whether the issue is open as the request's state and permissions (end of life, shelve time, approval, who may type commands, and a close deletes or shelves the instance). Members have the Read role and cannot make this change."
+            printf '%s\n' "Nothing was undone."
+            printf '%s\n' "- Check @$SENDER's role on this repository."
+            printf '%s\n' "- If the change was not meant, undo it by hand."
+          } > "$RUNNER_TEMP/audit-report-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.md"
+          echo "summary=@$SENDER $change #$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+        env:
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          ASSIGNEE: ${{ github.event.assignee.login }}
+          SENDER: ${{ github.event.sender.login }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          IS_ADMIN: ${{ steps.admin.outputs.is_member }}
+          HTTP_CODE: ${{ steps.admin.outputs.http_code }}
+
+      - name: Notify admins by email
+        if: ${{ steps.admin.outputs.is_member != 'true' }}
+        uses: ./.github/actions/notify-admins
+        with:
+          admin_emails: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          mail_server_username: ${{ secrets.MAIL_USERNAME }}
+          mail_server_password: ${{ secrets.MAIL_PASSWORD }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue_number: ${{ github.event.issue.number }}
+          subject:
+            "issue #${{ github.event.issue.number }} changed by @${{
+            github.event.sender.login }}, who is not an admin"
+          body_file:
+            ${{ runner.temp }}/audit-report-${{ github.run_id }}-${{
+            github.run_attempt }}.md
+
+      - name: Fail visibly
+        if: ${{ steps.admin.outputs.is_member != 'true' }}
+        shell: bash
+        run: |
+          echo "::error ::$SUMMARY — made by someone who is not an admin; reported to the admins, nothing undone"
+          exit 1
+        env:
+          SUMMARY: ${{ steps.describe.outputs.summary }}

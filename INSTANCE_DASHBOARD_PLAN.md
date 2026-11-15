@@ -531,6 +531,42 @@ stays chosen across the swap. A failed fetch (a portal restart, a 502) keeps the
 page as it is and tries again; only a signed-out answer sends the page to the
 sign-in screen. |
 
+| 37 | **A request's state is changed only by its author, an admin or
+MorphoCloud's own app; a change by anyone else is reported to the admins, and a
+close by anyone else deletes or shelves nothing.** (maintainer, 2026-11-14) The
+problem: the `mc-test` team had the Triage role on Test-Instances. It was given
+on 2026-09-28 so the end-to-end test account could set the issue form's labels
+on the issues it opens through the API, and every MorphoCloudUsers member joined
+the team on 2026-10-10. The Triage role lets a person add and remove labels,
+assign people, and close and reopen every issue in the repository, not only
+their own. The workflows read those as the request's state and permissions:
+closing a request deletes its instance in share mode (`guard-issue-close.yml`
+checked only that the closer was not the app); `expiration:*` and `renewed:*`
+set the end of life, and an issue with no `expiration:*` label is never expired;
+`timeout:*` and `shelve-at:*` set when the instance is shelved;
+`request:approved` lets commands run; the assignees may type commands, and
+removing `request-type:instance` takes an issue out of the portal-only rule. So
+any member of the team could delete another member's instance or give their own
+an unlimited life. Production was not exposed: MorphoCloudUsers has the Read
+role on Instances. The fix has three parts. (1) Access: members have the Read
+role on both repositories. Test-Instances' `mc-test` was changed from Triage to
+Read on 2026-11-14; `morphocloud-admins` keeps Triage. The test account amm554
+has a member's access (Read), so its tests show what a member gets. (2)
+`guard-issue-close.yml` shelves or deletes only when the person who closed the
+request is its author (compared by GitHub numeric ID, as the portal does), an
+admin, or the course instructor (`COURSE_INSTRUCTOR_GITHUB`, course
+repositories). A close by anyone else, or one whose admin check GitHub could not
+answer, leaves the instance as it is, emails the admins and fails the run. (3)
+`audit-issue-changes.yml` (new) emails the admins about every label, assignee,
+close and reopen change made by a person who is not an admin, except the author
+closing or reopening their own request and the close the guard already reports,
+and fails the run. It changes nothing (decision 35: report-only); it is the
+alarm for the Read setting being changed back. It is not vendorized into course
+repositories, where the instructor manages the students' issues. Consequence:
+the end-to-end harness opens requests with the form's labels set through the
+API, which the Read role cannot do (GitHub drops the labels); its suites, last
+run 2026-08-18, need a change before they run again. |
+
 ## Sign-in (decision 8)
 
 The current OAuth App only reads team membership (`read:org`). Posting a command
@@ -745,6 +781,10 @@ Rejected: encrypted in the portal database (token and key both on disk).
 - A user sees and acts only on issues they opened (matched by GitHub numeric ID,
   not login).
 - The workflows' own authorization stays the real gate on the primary path.
+- Members have the Read role on the instance repositories. A request's labels,
+  assignees and open/closed state are changed only by its author (closing or
+  reopening it), the admins and the app; any other change is reported to the
+  admins, and a close by anyone else deletes or shelves nothing (decision 37).
 - The data portal's rules carry over unchanged: nothing here can reset,
   overwrite or delete a user's share.
 - The reconciliation (decision 20) only reads Jetstream2 and only writes to the
@@ -1056,3 +1096,13 @@ amm554 before the 23rd.
     portal's 5-minute unreachable-shelve before reconcile's 30-minute grace let
     it act — the race that led to the amended five-minute repair grace (#371);
     the Test portal's delay was 1800 for the second run and is back at 300.
+22. Request state (decision 37): on Test, as amm554, which has a member's Read
+    role plus, for (a) to (c) only, a Triage grant of its own that stands in for
+    the access a member must not have: (a) amm554 adds and then removes a label
+    on its own request: each change emails the admins and fails the audit run,
+    and the label is not changed back; (b) amm554 closes a request it did not
+    open, which has no instance: the guard leaves it as it is, emails the admins
+    and fails, and the audit sends no second email; (c) amm554 closes its own
+    request: the guard runs as before and the audit sends nothing; (d) with the
+    grant removed, GitHub refuses amm554 adding a label or closing a request it
+    did not open.

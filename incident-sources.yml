@@ -200,6 +200,7 @@ workflows:
     - expire-shares.yml
     - follow-through.yml
     - guard-issue-close.yml
+    - audit-issue-changes.yml
     - reconcile-instances.yml
     - send-renewal-email.yml
     - test-workshop-deletion.yml
