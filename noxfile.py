@@ -239,6 +239,7 @@ def vendorize(session: nox.Session) -> None:
             # itself vendorized — omitting it makes CI fail downstream.
             "scripts/check-action-manifest-expressions.py",
             "scripts/check-workflow-clock.py",
+            "scripts/check-dispatch-logging.py",
             # The incident store's controlled vocabulary and source map
             # (INCIDENT_STORE_PLAN.md, "Signatures"): one copy per source repo.
             "incident-signatures.yml",
@@ -291,6 +292,7 @@ def vendorize_course(session: nox.Session) -> None:
             # itself vendorized — omitting it makes CI fail downstream.
             "scripts/check-action-manifest-expressions.py",
             "scripts/check-workflow-clock.py",
+            "scripts/check-dispatch-logging.py",
         ],
         [
             ".github/dependabot.yml",
