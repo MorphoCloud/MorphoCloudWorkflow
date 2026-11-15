@@ -194,13 +194,13 @@ workflows:
     - on-course-request-opened.yml # course repositories (not harvested)
     - validate-command-course.yml # course repositories (not harvested)
     - validate-request-course.yml # course repositories (not harvested)
+    - audit-issue-changes.yml
     - close-expired-issues.yml
     - collect-instance-uptime.yml
     - detect-dormant-workflows.yml
     - expire-shares.yml
     - follow-through.yml
     - guard-issue-close.yml
-    - audit-issue-changes.yml
     - reconcile-instances.yml
     - send-renewal-email.yml
     - test-workshop-deletion.yml

@@ -88,7 +88,6 @@ jobs:
             printf '%s\n' "- Check @$SENDER's role on this repository."
             printf '%s\n' "- If the change was not meant, undo it by hand."
           } > "$RUNNER_TEMP/audit-report-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.md"
-          echo "summary=@$SENDER $change #$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
         env:
           ACTION: ${{ github.event.action }}
           LABEL: ${{ github.event.label.name }}
@@ -118,8 +117,14 @@ jobs:
       - name: Fail visibly
         if: ${{ steps.admin.outputs.is_member != 'true' }}
         shell: bash
+        # Only the login, the action and the number go into the log command:
+        # a label name or an assignee is chosen by the person being reported,
+        # so it stays in the report file and out of step outputs and `::`
+        # workflow commands.
         run: |
-          echo "::error ::$SUMMARY — made by someone who is not an admin; reported to the admins, nothing undone"
+          echo "::error ::#$ISSUE_NUMBER: $ACTION by @$SENDER, who is not an admin; reported to the admins, nothing undone"
           exit 1
         env:
-          SUMMARY: ${{ steps.describe.outputs.summary }}
+          ACTION: ${{ github.event.action }}
+          SENDER: ${{ github.event.sender.login }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
