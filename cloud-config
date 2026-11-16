@@ -231,6 +231,43 @@ if [ $ANSIBLE_RETURN_CODE -eq 0 ]; then STATUS="complete"; else STATUS="error"; 
 # Collapse newlines and drop JSON-special chars so the status line stays valid
 # JSON regardless of how many names (or what characters) the file contains.
 FAILED_EXTENSIONS=$(cat /opt/instance-config-support/slicer_failed_extensions 2>/dev/null | tr '\n' ' ' | tr -d '"\\' || true)
+
+# Background security updates (STORAGE_REDESIGN_PLAN.md, decision 19). Turned on
+# here, after a successful setup, and not in the image: with them on at boot,
+# systemd's catch-up of a missed apt timer could start unattended-upgrade in the
+# middle of the playbook and hold the dpkg lock. The first run is 30-40 minutes
+# after each boot, at idle priority, so it neither delays setup nor competes
+# with Slicer. Kernel and NVIDIA packages are excluded: a kernel installed in
+# the background takes effect at the next unshelve, and if the driver module
+# was not rebuilt for it, the GPU is gone after that boot; newer NVIDIA user
+# libraries next to the loaded older module break nvidia-smi and GL until a
+# reboot. Those change only through a rebaked, validated image (issue #430).
+# Best effort: a failure here is logged and never changes the setup status.
+if [ "$STATUS" = "complete" ] && [ -f /etc/apt/apt.conf.d/50unattended-upgrades ]; then
+  {
+    cat > /etc/apt/apt.conf.d/20auto-upgrades <<'MORPHOCLOUD_AUTO_UPGRADES'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+MORPHOCLOUD_AUTO_UPGRADES
+    cat > /etc/apt/apt.conf.d/52morphocloud-unattended-upgrades <<'MORPHOCLOUD_UU'
+Unattended-Upgrade::Package-Blacklist {
+  "linux-";
+  "nvidia-";
+  "libnvidia-";
+};
+Unattended-Upgrade::Automatic-Reboot "false";
+MORPHOCLOUD_UU
+    mkdir -p /etc/systemd/system/apt-daily.timer.d \
+             /etc/systemd/system/apt-daily-upgrade.timer.d \
+             /etc/systemd/system/apt-daily-upgrade.service.d
+    printf '[Timer]\nPersistent=false\nOnBootSec=30min\n' > /etc/systemd/system/apt-daily.timer.d/50-morphocloud.conf
+    printf '[Timer]\nPersistent=false\nOnBootSec=40min\n' > /etc/systemd/system/apt-daily-upgrade.timer.d/50-morphocloud.conf
+    printf '[Service]\nNice=10\nIOSchedulingClass=idle\n' > /etc/systemd/system/apt-daily-upgrade.service.d/50-morphocloud.conf
+    systemctl daemon-reload
+    systemctl restart apt-daily.timer apt-daily-upgrade.timer
+  } || echo "WARNING: could not turn on background security updates"
+fi
+
 sleep 1  # Ensures that console log output from any previous commands complete before the following command begins
 echo '{"status":"'$STATUS'", "epoch": '$(date '+%s')'000, "failed_extensions": "'"$FAILED_EXTENSIONS"'"}' | tee --append /dev/console > /dev/kmsg || true
 

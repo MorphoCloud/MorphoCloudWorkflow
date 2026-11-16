@@ -36,6 +36,8 @@ These are settled. Revisit only with new facts, not preference.
 | 15  | The request issue's lifecycle covers the instance only. Volume commands and `volume:*` labels are removed; the share has its own lifecycle.                                                                                                                                                                                          |
 | 16  | Reset empties the share (share and key are kept). The only automatic deletion is the expiry sweep (decision 7), after its warnings and never while an instance holds the share. Revised 2026-10-14 (was: nothing ever deletes a share automatically).                                                                                |
 | 17  | **One instance per user.** Two instances would mount the same share at once. Enforced with the existing per-user limit, `MORPHOCLOUD_MAX_INSTANCES_PER_USER=1` (set on Test-Instances for the prototype). Admins are exempt from that limit, as today.                                                                               |
+| 18  | **OS updates arrive through the image.** `/create` from a baked image runs `apt-get update` but not the full `apt-get upgrade`; the bake keeps it. Both images are rebuilt monthly whether or not Slicer changed (issue #430). Added 2026-11-16.                                                                                     |
+| 19  | **Background security updates between rebakes.** `unattended-upgrades` (Ubuntu security sources) is turned on when an instance's setup completes, first run 30-40 minutes after each boot at idle priority. Kernel and NVIDIA packages are excluded; they change only with a rebake. Added 2026-11-16.                               |
 
 ## Why per-user shares, not one big share with folders
 
@@ -265,6 +267,27 @@ Test-Instances runner host.
   rendering. Today ansible makes this decision once and bakes it into the
   launcher, which would be wrong on a CPU flavor booted from a GPU image.
 - **Slicer upgrade procedure** becomes: rebuild both images.
+- **OS updates (decisions 18 and 19, 2026-11-16).** Until now every `/create`
+  ran cloud-init's full `apt-get upgrade` on the baked image. On Test-Instances
+  from 2026-11-09 to 2026-11-16, with images from 2026-09-26, that stage took
+  6.7 to 11.8 minutes on the creates that worked, because it installed a new
+  kernel and rebuilt the NVIDIA driver module (on #568 the driver moved from 590
+  to 595). 7 of 15 creates never left it within the 1200 s poll (#537, #541,
+  #543, #544, #545, #547, #560). Now:
+  - `/create` turns `package_upgrade` off when it boots a baked image
+    (`.github/actions/create-instance`). The stock-image fallback, course
+    instances and the bake keep the committed `package_upgrade: true`.
+  - Setup turns on `unattended-upgrades` after it completes (`cloud-config`, end
+    of `90-exosphere-ansible-setup.sh`): `APT::Periodic` on, kernel (`linux-`)
+    and NVIDIA (`nvidia-`, `libnvidia-`) packages excluded, no automatic reboot,
+    timers 30 and 40 minutes after boot with no catch-up run, `Nice=10` and idle
+    I/O. Both current images have `APT::Periodic` off (checked on #566 and #568;
+    ansible does not set it), so nothing runs during setup.
+  - The bake stops the apt timers, waits for a run in progress to finish, and
+    sets `APT::Periodic` back to off before the snapshot.
+  - Updating at shelve time was considered and rejected: the shelve's guest
+    shutdown can cut off dpkg mid-install, every shelve (including auto-shelve)
+    would take minutes longer, and a hung mirror would block the shelve.
 
 **Build plan (prototype, Test-Instances, share mode only).** Started 2026-09-26.
 
@@ -604,6 +627,18 @@ Run before building anything permanent.
     the user's own share; a reset while the share is unmounted is refused,
     alerts the admins, and the worker remounts the share with data intact.
     **Passed 2026-09-26.**
+16. OS updates (decisions 18 and 19). As amm554 through the portal, `/create`
+    one instance per image (a g3.medium and an m3.xl). Each run log says
+    "skipping the first-boot package upgrade"; the time at `starting` is under 2
+    minutes; setup is `complete`; `nvidia-smi` sees the GPU on the g3. On the
+    instance: `APT::Periodic` is `1` in `20auto-upgrades`, the blacklist file is
+    present, and `systemctl list-timers apt-daily*` shows runs about 30 and 40
+    minutes after boot. After 45 minutes,
+    `/var/log/unattended-upgrades/unattended-upgrades.log` shows a completed run
+    and no `linux-`, `nvidia-` or `libnvidia-` package in
+    `/var/log/apt/history.log` since boot. Shelve, unshelve: `nvidia-smi` still
+    works. Then one bake (after approval): the image has `APT::Periodic` set to
+    `0`.
 
 ## Out of scope for now
 

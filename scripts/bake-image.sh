@@ -13,6 +13,11 @@
 #   OS_CLOUD=BIO240357_IU scripts/bake-image.sh g3.large morphocloud-share-vgpu-20260926
 #   OS_CLOUD=BIO240357_IU scripts/bake-image.sh g3.xl    morphocloud-share-regular-20260926
 #
+# The bake keeps cloud-init's full `apt-get upgrade` (the committed
+# cloud-config has package_upgrade: true); /create turns it off for baked
+# images (decision 18). A rebake is therefore how OS updates, including the
+# kernel and NVIDIA driver, reach instances: rebake monthly (issue #430).
+#
 # Bake the vGPU image on a vGPU flavor (g3.large) and the regular-driver image
 # on a passthrough flavor (g3.xl or g4.xl): the NVIDIA driver installed during
 # setup follows the GPU the build instance sees.
@@ -108,6 +113,24 @@ truncate -s 0 /etc/machine-id
 rm -f /var/lib/dbus/machine-id
 rm -f /opt/instance-config-support/slicer_failed_extensions
 rm -rf /home/exouser/.cache/sessions /tmp/* /var/tmp/*
+# Setup turned on background security updates on the build instance too
+# (decision 19). The image ships with them off; each instance turns them on
+# when its own setup completes. Stop the timers, let a run already in progress
+# finish (a snapshot taken mid-dpkg is a broken image), then switch them off.
+systemctl stop apt-daily.timer apt-daily-upgrade.timer || true
+for _ in $(seq 1 120); do
+  systemctl is-active --quiet apt-daily.service \
+    || systemctl is-active --quiet apt-daily-upgrade.service \
+    || break
+  sleep 10
+done
+if systemctl is-active --quiet apt-daily.service \
+  || systemctl is-active --quiet apt-daily-upgrade.service; then
+  echo "a background apt run is still going after 20 minutes" >&2
+  exit 1
+fi
+printf 'APT::Periodic::Update-Package-Lists "0";\nAPT::Periodic::Unattended-Upgrade "0";\n' \
+  > /etc/apt/apt.conf.d/20auto-upgrades
 # Without this the per-instance guard stays satisfied and setup never runs
 # on instances created from the image.
 cloud-init clean --logs --seed

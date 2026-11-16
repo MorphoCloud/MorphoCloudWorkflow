@@ -429,6 +429,18 @@ runs:
         fi
         echo "Image for this instance: $INSTANCE_IMAGE"
 
+        # Decision 18 (STORAGE_REDESIGN_PLAN.md): a baked image is how OS
+        # updates reach an instance, so booting one skips cloud-init's full
+        # `apt-get upgrade`. On an image weeks old that upgrade replaced the
+        # kernel and NVIDIA driver at every boot and took 7-12 minutes of the
+        # 1200s setup budget. `apt-get update` stays. The stock image (no baked
+        # image configured) and the bake itself keep the full upgrade.
+        if [[ "$INSTANCE_IMAGE" != "Featured-Ubuntu24" ]]; then
+          sed -i 's|^package_upgrade: true # {install-os-updates}$|package_upgrade: false # {install-os-updates}|' ./cloud-config
+          grep -q '^package_upgrade: false' ./cloud-config || { echo "::error ::could not turn off package_upgrade in cloud-config"; exit 1; }
+          echo "Baked image: skipping the first-boot package upgrade"
+        fi
+
 
         openstack server create "$INSTANCE_NAME" \
           --nic net-id="auto_allocated_network" \
