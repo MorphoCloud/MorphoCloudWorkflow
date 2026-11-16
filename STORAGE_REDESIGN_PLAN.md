@@ -17,25 +17,27 @@ allocation. Nothing here is in production. Tracking issue:
 
 These are settled. Revisit only with new facts, not preference.
 
-| #   | Decision                                                                                                                                                                                                                                                                                                                             |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | Each user gets their own 100 GB Manila CephFS share. It replaces the per-instance MyData Cinder volume.                                                                                                                                                                                                                              |
-| 2   | Shares are keyed on the **GitHub numeric user ID**, not the login. Logins can be renamed or reclaimed; the ID never changes.                                                                                                                                                                                                         |
-| 3   | The home directory and all settings stay on the instance's root disk. Only the user-facing folders live on the share.                                                                                                                                                                                                                |
-| 4   | A data portal on its own VM provides browser upload and download to each user's share, with GitHub sign-in (members of MorphoCloudUsers only). It works with or without an instance.                                                                                                                                                 |
-| 5   | Two golden images, both with the NVIDIA driver: a vGPU (GRID) image for g3.large, and a regular-driver image for every other flavor, including CPU-only.                                                                                                                                                                             |
-| 6   | Slicer and the standard extension set are baked into the images. Extensions a user adds are lost when the instance is recreated. Accepted.                                                                                                                                                                                           |
-| 7   | Share lifecycle: a share with no activity for 180 days is deleted after two warning emails; "Keep my storage" on the portal, a create and an unshelve all reset the clock (see "Share expiry"). Revised 2026-10-14 by the maintainer (was: start with no expiry and measure first); the prototype runs it at 14 days to exercise it. |
-| 8   | No backups. Same as MyData volumes today.                                                                                                                                                                                                                                                                                            |
-| 9   | No migration path from MyData during testing. Designed only if this is adopted.                                                                                                                                                                                                                                                      |
-| 10  | The current per-instance upload page ("Data drop") stays in production until this design is adopted.                                                                                                                                                                                                                                 |
-| 11  | Workshop instances get no per-attendee share or volume. They use one centralized workshop share.                                                                                                                                                                                                                                     |
-| 12  | R libraries live on the root disk. MorphoCloud no longer installs them.                                                                                                                                                                                                                                                              |
-| 13  | Slicer's DICOM database moves to local disk. DICOM is not a common use case.                                                                                                                                                                                                                                                         |
-| 14  | Shares are created on demand, **only from the data portal** ("Create my storage"). `/create` without a share refuses and points to the portal; it never creates a share. No automatic provisioning of every member. Revised 2026-09-26 (was: `/create` creates it).                                                                  |
-| 15  | The request issue's lifecycle covers the instance only. Volume commands and `volume:*` labels are removed; the share has its own lifecycle.                                                                                                                                                                                          |
-| 16  | Reset empties the share (share and key are kept). The only automatic deletion is the expiry sweep (decision 7), after its warnings and never while an instance holds the share. Revised 2026-10-14 (was: nothing ever deletes a share automatically).                                                                                |
-| 17  | **One instance per user.** Two instances would mount the same share at once. Enforced with the existing per-user limit, `MORPHOCLOUD_MAX_INSTANCES_PER_USER=1` (set on Test-Instances for the prototype). Admins are exempt from that limit, as today.                                                                               |
+| #   | Decision                                                                                                                                                                                                                                                                                                                               |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Each user gets their own 100 GB Manila CephFS share. It replaces the per-instance MyData Cinder volume.                                                                                                                                                                                                                                |
+| 2   | Shares are keyed on the **GitHub numeric user ID**, not the login. Logins can be renamed or reclaimed; the ID never changes.                                                                                                                                                                                                           |
+| 3   | The home directory and all settings stay on the instance's root disk. Only the user-facing folders live on the share.                                                                                                                                                                                                                  |
+| 4   | A data portal on its own VM provides browser upload and download to each user's share, with GitHub sign-in (members of MorphoCloudUsers only). It works with or without an instance.                                                                                                                                                   |
+| 5   | Two golden images, both with the NVIDIA driver: a vGPU (GRID) image for g3.large, and a regular-driver image for every other flavor, including CPU-only.                                                                                                                                                                               |
+| 6   | Slicer and the standard extension set are baked into the images. Extensions a user adds are lost when the instance is recreated. Accepted.                                                                                                                                                                                             |
+| 7   | Share lifecycle: a share with no activity for 180 days is deleted after two warning emails; "Keep my storage" on the portal, a create and an unshelve all reset the clock (see "Share expiry"). Revised 2026-10-14 by the maintainer (was: start with no expiry and measure first); the prototype runs it at 14 days to exercise it.   |
+| 8   | No backups. Same as MyData volumes today.                                                                                                                                                                                                                                                                                              |
+| 9   | No migration path from MyData during testing. Designed only if this is adopted.                                                                                                                                                                                                                                                        |
+| 10  | The current per-instance upload page ("Data drop") stays in production until this design is adopted.                                                                                                                                                                                                                                   |
+| 11  | Workshop instances get no per-attendee share or volume. They use one centralized workshop share.                                                                                                                                                                                                                                       |
+| 12  | R libraries live on the root disk. MorphoCloud no longer installs them.                                                                                                                                                                                                                                                                |
+| 13  | Slicer's DICOM database moves to local disk. DICOM is not a common use case.                                                                                                                                                                                                                                                           |
+| 14  | Shares are created on demand, **only from the data portal** ("Create my storage"). `/create` without a share refuses and points to the portal; it never creates a share. No automatic provisioning of every member. Revised 2026-09-26 (was: `/create` creates it).                                                                    |
+| 15  | The request issue's lifecycle covers the instance only. Volume commands and `volume:*` labels are removed; the share has its own lifecycle.                                                                                                                                                                                            |
+| 16  | Reset empties the share (share and key are kept). The only automatic deletion is the expiry sweep (decision 7), after its warnings and never while an instance holds the share. Revised 2026-10-14 (was: nothing ever deletes a share automatically).                                                                                  |
+| 17  | **One instance per user.** Two instances would mount the same share at once. Enforced with the existing per-user limit, `MORPHOCLOUD_MAX_INSTANCES_PER_USER=1` (set on Test-Instances for the prototype). Admins are exempt from that limit, as today.                                                                                 |
+| 18  | **OS updates arrive through the image.** `/create` from a baked image runs `apt-get update` but not the full `apt-get upgrade`; the bake keeps it. Both images are rebuilt monthly whether or not Slicer changed (issue #430). Added 2026-11-16.                                                                                       |
+| 19  | **Background security updates between rebakes.** `unattended-upgrades` (Ubuntu security sources) is turned on when an instance's setup completes, first run 30-40 minutes after each boot, then the stock daily schedule, at idle priority. Kernel and NVIDIA packages are excluded; they change only with a rebake. Added 2026-11-16. |
 
 ## Why per-user shares, not one big share with folders
 
@@ -265,6 +267,29 @@ Test-Instances runner host.
   rendering. Today ansible makes this decision once and bakes it into the
   launcher, which would be wrong on a CPU flavor booted from a GPU image.
 - **Slicer upgrade procedure** becomes: rebuild both images.
+- **OS updates (decisions 18 and 19, 2026-11-16).** Until now every `/create`
+  ran cloud-init's full `apt-get upgrade` on the baked image. On Test-Instances
+  from 2026-11-09 to 2026-11-16, with images from 2026-09-26, that stage took
+  6.7 to 11.8 minutes on the creates that worked, because it installed a new
+  kernel and rebuilt the NVIDIA driver module (on #568 the driver moved from 590
+  to 595). 7 of 15 creates never left it within the 1200 s poll (#537, #541,
+  #543, #544, #545, #547, #560). Now:
+  - `/create` turns `package_upgrade` off when it boots a baked image
+    (`.github/actions/create-instance`). The stock-image fallback, course
+    instances and the bake keep the committed `package_upgrade: true`.
+  - Setup turns on `unattended-upgrades` after it completes (`cloud-config`, end
+    of `90-exosphere-ansible-setup.sh`): `APT::Periodic` on, kernel (`linux-`)
+    and NVIDIA (`nvidia-`, `libnvidia-`) packages excluded, no automatic reboot,
+    timers 30 and 40 minutes after boot with no catch-up run, `Nice=10` and idle
+    I/O. The stock daily calendar schedule stays, so an instance that is up for
+    days is still patched; apt limits runs to one a day. Both current images
+    have `APT::Periodic` off (checked on #566 and #568; ansible does not set
+    it), so nothing runs during setup.
+  - The bake stops the apt timers, waits for a run in progress to finish, and
+    sets `APT::Periodic` back to off before the snapshot.
+  - Updating at shelve time was considered and rejected: the shelve's guest
+    shutdown can cut off dpkg mid-install, every shelve (including auto-shelve)
+    would take minutes longer, and a hung mirror would block the shelve.
 
 **Build plan (prototype, Test-Instances, share mode only).** Started 2026-09-26.
 
@@ -604,6 +629,18 @@ Run before building anything permanent.
     the user's own share; a reset while the share is unmounted is refused,
     alerts the admins, and the worker remounts the share with data intact.
     **Passed 2026-09-26.**
+16. OS updates (decisions 18 and 19). As amm554 through the portal, `/create`
+    one instance per image (a g3.medium and an m3.xl). Each run log says
+    "skipping the first-boot package upgrade"; the time at `starting` is under 2
+    minutes; setup is `complete`; `nvidia-smi` sees the GPU on the g3. On the
+    instance: `APT::Periodic` is `1` in `20auto-upgrades`, the blacklist file is
+    present, and `systemctl list-timers apt-daily*` shows runs about 30 and 40
+    minutes after boot. After 45 minutes,
+    `/var/log/unattended-upgrades/unattended-upgrades.log` shows a completed run
+    and no `linux-`, `nvidia-` or `libnvidia-` package in
+    `/var/log/apt/history.log` since boot. Shelve, unshelve: `nvidia-smi` still
+    works. Then one bake (after approval): the image has `APT::Periodic` set to
+    `0`.
 
 ## Out of scope for now
 
