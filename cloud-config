@@ -236,15 +236,20 @@ FAILED_EXTENSIONS=$(cat /opt/instance-config-support/slicer_failed_extensions 2>
 # here, after a successful setup, and not in the image: with them on at boot,
 # systemd's catch-up of a missed apt timer could start unattended-upgrade in the
 # middle of the playbook and hold the dpkg lock. The first run is 30-40 minutes
-# after each boot, at idle priority, so it neither delays setup nor competes
-# with Slicer. Kernel and NVIDIA packages are excluded: a kernel installed in
+# after each boot (OnBootSec, no catch-up run); the stock daily calendar
+# schedule is kept on purpose so an instance that stays up for days is still
+# patched (apt itself limits runs to one a day). Every run is at idle priority
+# so it competes as little as possible with Slicer. Kernel and NVIDIA packages are excluded: a kernel installed in
 # the background takes effect at the next unshelve, and if the driver module
 # was not rebuilt for it, the GPU is gone after that boot; newer NVIDIA user
 # libraries next to the loaded older module break nvidia-smi and GL until a
 # reboot. Those change only through a rebaked, validated image (issue #430).
-# Best effort: a failure here is logged and never changes the setup status.
+# Best effort: a failure here is logged and never changes the setup status. The
+# subshell runs under `set -e` (this script is `set +e`), so a failure in any
+# step, not only the last, reaches the warning.
 if [ "$STATUS" = "complete" ] && [ -f /etc/apt/apt.conf.d/50unattended-upgrades ]; then
-  {
+  (
+    set -e
     cat > /etc/apt/apt.conf.d/20auto-upgrades <<'MORPHOCLOUD_AUTO_UPGRADES'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
@@ -265,7 +270,7 @@ MORPHOCLOUD_UU
     printf '[Service]\nNice=10\nIOSchedulingClass=idle\n' > /etc/systemd/system/apt-daily-upgrade.service.d/50-morphocloud.conf
     systemctl daemon-reload
     systemctl restart apt-daily.timer apt-daily-upgrade.timer
-  } || echo "WARNING: could not turn on background security updates"
+  ) || echo "WARNING: could not turn on background security updates"
 fi
 
 sleep 1  # Ensures that console log output from any previous commands complete before the following command begins
