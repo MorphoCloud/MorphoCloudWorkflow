@@ -132,6 +132,18 @@ if systemctl is-active --quiet apt-daily.service \
 fi
 printf 'APT::Periodic::Update-Package-Lists "0";\nAPT::Periodic::Unattended-Upgrade "0";\n' \
   > /etc/apt/apt.conf.d/20auto-upgrades
+# apt runs each background step at most once per calendar day and decides
+# from these stamp files. Left in the image they carry the build instance's
+# date, and every instance created that day skips its first upgrade.
+rm -f /var/lib/apt/periodic/*-stamp
+# The build's apt and unattended-upgrades logs are kept, under a name that
+# cannot be mistaken for the instance's own history.
+mkdir -p /var/log/morphocloud-bake
+for f in /var/log/apt/history.log /var/log/apt/term.log /var/log/dpkg.log \
+         /var/log/unattended-upgrades/unattended-upgrades.log \
+         /var/log/unattended-upgrades/unattended-upgrades-dpkg.log; do
+  if [ -f "$f" ]; then mv "$f" "/var/log/morphocloud-bake/$(basename "$f")"; fi
+done
 # Without this the per-instance guard stays satisfied and setup never runs
 # on instances created from the image.
 cloud-init clean --logs --seed
