@@ -13,9 +13,10 @@
 #   OS_CLOUD=BIO240357_IU scripts/bake-image.sh g3.large morphocloud-share-vgpu-20260926
 #   OS_CLOUD=BIO240357_IU scripts/bake-image.sh g3.xl    morphocloud-share-regular-20260926
 #
-# The bake keeps cloud-init's full `apt-get upgrade` (the committed
-# cloud-config has package_upgrade: true); /create turns it off for baked
-# images (decision 18). A rebake is therefore how OS updates, including the
+# The bake keeps cloud-init's `apt-get update` and full `apt-get upgrade` (the
+# committed cloud-config has package_update and package_upgrade true); /create
+# turns both off for baked images (decision 18), so every package ansible
+# installs must already be in the image. A rebake is therefore how OS updates, including the
 # kernel and NVIDIA driver, reach instances: rebake monthly (issue #430).
 #
 # Bake the vGPU image on a vGPU flavor (g3.large) and the regular-driver image
