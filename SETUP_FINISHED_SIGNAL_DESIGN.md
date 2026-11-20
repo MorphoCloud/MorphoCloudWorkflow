@@ -9,10 +9,11 @@ data portal `share-prototype` at `c299183`, and the Exosphere fork
 
 ## 1. What happened
 
-Test 4 stopped a create with `timeout-minutes` while the MyDrive mount step was
-running. On GitHub the member's `/create` got a 👎 and nothing else. Members do
-not read the request issue, though. They see the portal card and the assistant.
-Reading the code, this is what they get:
+Test 4 stopped a create with `timeout-minutes`. On GitHub the member's `/create`
+got a 👎 and nothing else. Members do not read the request issue, though; they
+see the portal card and the assistant. Following that up in the code showed a
+wider gap. When a create fails or is stopped after the instance's own setup
+finished (for example in the MyDrive mount step), this is what the member gets:
 
 1. The portal reads the 👎 as a failed `/create`, so the assistant speaks first
    (portal `app/guidance.py`, `attention()`).
@@ -30,8 +31,13 @@ Reading the code, this is what they get:
    so the card fills in the details of an instance without MyDrive.
 
 The member is left with an instance that looks ready and is not, and no way
-forward. This was not watched on the portal: #582 was deleted before anyone
-looked. It follows from the code above.
+forward. This follows from the code above; it was not watched on the portal.
+
+Correction (2026-11-20, during the build): #582 itself was stopped 26 s into
+"Setup instance", inside the setup poll, before `action.yml:168`. Its `exoSetup`
+was still `waiting`, so for #582 the portal would have shown "Building" and
+offered Delete, not "fine". #582 is how the gap was found, not an example of it.
+#576 (mount failed after the poll) is one.
 
 ## 2. The class of problem
 
@@ -41,7 +47,8 @@ That covers:
 - a step that fails: the MyDrive mount, the reboot, the check after the reboot
   (#576 failed its mount this way on 2026-11-20 and would have got the same
   "fine");
-- a job stopped by `timeout-minutes` or cancelled by hand (#582);
+- a job stopped by `timeout-minutes` or cancelled by hand during that stretch
+  (the 35-minute limit firing on a hang in the mount step, for example);
 - in volume mode, the volume steps (attach, copy, move home, Uploads, Renviron),
   which sit in the same stretch.
 
@@ -202,15 +209,18 @@ On Test-Instances (about 4 m3.xl creates, about 1 h of m3.xl time):
 
 1. Normal create. `mcSetup=pending` at boot, `complete` at the end; card Active
    with access details; label `status:active`.
-2. Stopped create (TEST-ONLY branch: `sleep 600` hook plus the 2-minute job
-   limit, as in test 4 of the earlier note). Card Building, no access details,
-   label `status:building`; the assistant's line with Try again and Delete.
-   Then, on the same server, set `exoSetup=complete` by hand to act as the
-   Exosphere client: still Building, still no details.
+2. Stopped create, after the setup poll. TEST-ONLY branch: a `sleep 600` hook
+   holds the mount script on requests labeled `test:hang-mount`, and the run is
+   cancelled by hand while it holds. (A 2-minute job limit, as in test 4 of the
+   earlier note, stops the create inside the setup poll, before the state this
+   tests; a cancel by hand ends the job the same way a time limit does.) Card
+   Building, no access details, label `status:building`; the assistant's line
+   with Try again and Delete. Then, on the same server, set `exoSetup=complete`
+   by hand to act as the Exosphere client: still Building, still no details.
 3. Try again from test 2 deletes the instance and creates a new one, which
-   finishes (hook off for this run).
-4. Failed step (mount script hits its 180 s limit through the hook, no job
-   limit): same member view as test 2.
+   finishes (the new request has no hook label).
+4. Failed step (the mount script hits its 180 s limit through the hook): same
+   member view as test 2.
 5. An instance created before the deploy (no `mcSetup`) still shows Active with
    its details.
 
