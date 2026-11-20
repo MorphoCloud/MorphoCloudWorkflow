@@ -120,7 +120,10 @@ runs:
               -o LogLevel=ERROR \
               -o ConnectTimeout=10 \
               exouser@"$instance_ip" \
-              'curl --silent --retry 3 --retry-delay 5 --retry-all-errors http://169.254.169.254/openstack/latest/password' 2>/dev/null || true)
+              'curl --silent --retry 3 --retry-delay 5 --retry-all-errors http://169.254.169.254/openstack/latest/password' 2>"$RUNNER_TEMP/mc-ssh-passphrase.err" || true)
+            # ssh's own messages while sshd is still coming up stay out of the
+            # log, as before; the helper's time-limit annotation is printed.
+            grep '^::error ::' "$RUNNER_TEMP/mc-ssh-passphrase.err" || true
             if [[ -n "$instance_pwd" ]]; then
               echo "::add-mask::$instance_pwd"
               echo "Retrieved password after $((SECONDS - start))s."

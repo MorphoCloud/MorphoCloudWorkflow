@@ -307,6 +307,9 @@ runs:
         # setup the instance may still be finishing cloud-init.
         start=$SECONDS
         until out=$(mc_ssh 30 "sshd probe" "${ssh_opts[@]}" exouser@"$INSTANCE_IP" true 2>&1); do
+          # $out holds ssh's stderr for the check below, and with it the
+          # helper's time-limit annotation; print that line to the log.
+          grep '^::error ::' <<<"$out" || true
           if grep -qi "permission denied" <<<"$out"; then
             echo "::error ::SSH auth rejected by $INSTANCE_IP"
             exit 1
@@ -949,6 +952,9 @@ runs:
         # boot is not mistaken for a missing share.
         start=$SECONDS
         until out=$(mc_ssh 30 "sshd probe after reboot" "${ssh_opts[@]}" exouser@"$INSTANCE_IP" true 2>&1); do
+          # $out holds ssh's stderr for the check below, and with it the
+          # helper's time-limit annotation; print that line to the log.
+          grep '^::error ::' <<<"$out" || true
           if grep -qi "permission denied" <<<"$out"; then
             echo "::error ::SSH auth rejected by $INSTANCE_IP after the reboot"
             exit 1
