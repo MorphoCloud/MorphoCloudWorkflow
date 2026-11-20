@@ -188,6 +188,9 @@ jobs:
 
   control:
     runs-on: self-hosted
+    # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
+    # measured p95 6.7 min; an unshelve's waits add up to about 37 min.
+    timeout-minutes: 45
     needs: authorize
     if: ${{ needs.authorize.outputs.continue == 'true' }}
     # Serialize all state-mutating work per issue. The group is shared with

@@ -17,6 +17,9 @@ permissions:
 jobs:
   extend:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
+    # measured p95 0.3 min; at most about 1.5 min of waits.
+    timeout-minutes: 10
     if:
       ${{ !github.event.issue.pull_request && vars.MORPHOCLOUD_MAINTENANCE == ''
       && contains(github.event.issue.labels.*.name, 'instance-request') &&
@@ -97,10 +100,14 @@ jobs:
           fi
           ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
                     -o ConnectTimeout=15 -o LogLevel=ERROR)
+          # Every SSH call has a total time limit (SETUP_SSH_BOUNDS_DESIGN.md).
+          source "$GITHUB_WORKSPACE/.github/actions/ssh/mc-ssh.sh"
           script=/opt/instance-config-support/dist/check-instance-shelve.sh
           # No arguments: reset the timer (what the desktop icon does, minus
-          # its on-screen notice). -d: hours since the last reset.
-          elapsed=$(ssh "${ssh_opts[@]}" exouser@"$ip" "$script >/dev/null && $script -d" < /dev/null)
+          # its on-screen notice). -d: hours since the last reset. A failed or
+          # timed-out call leaves $elapsed empty, so the error below is printed
+          # instead of the shell's -e ending the step without one.
+          elapsed=$(mc_ssh 30 "Reset the session timer" "${ssh_opts[@]}" exouser@"$ip" "$script >/dev/null && $script -d" < /dev/null) || elapsed=""
           if ! [[ "$elapsed" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
             echo "::error ::Could not reset the session timer on $INSTANCE_NAME"
             exit 1
@@ -111,7 +118,7 @@ jobs:
           target_file="$HOME/mc-data/portal_target"
           if [[ -s "$target_file" ]]; then
             printf '{"issue": %d, "elapsed_hours": %s}' "$ISSUE_NUMBER" "$elapsed" \
-              | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+              | mc_ssh 30 "Session to the data portal" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
                   "$(cat "$target_file")" session "$ISSUE_NUMBER" \
               || echo "::warning ::Could not update the session on the data portal"
           fi

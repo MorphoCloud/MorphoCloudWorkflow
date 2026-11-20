@@ -18,6 +18,9 @@ permissions:
 jobs:
   auto-shelve:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
+    # measured p95 0.8 min; about 2.5 min per instance that stops answering.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -44,10 +47,17 @@ jobs:
           # Returns 255 only when SSH itself could not connect (ssh's own code),
           # three tries 20 s apart; a command that ran and failed returns its
           # own code at once: the instance answered, it is not unreachable.
+          #
+          # Each try has a 30 s total limit (SETUP_SSH_BOUNDS_DESIGN.md), so one
+          # instance can no longer stop the sweep. A try that reaches the limit
+          # returns 124 at once: the instance answered, so it is left alone this
+          # tick, like any other failed command. An instance that stops
+          # answering mid-call is dropped by ServerAlive with 255 and retried.
+          source "$GITHUB_WORKSPACE/.github/actions/ssh/mc-ssh.sh"
           ssh_out() {  # $1 address, $2 command
             local i rc
             for i in 1 2 3; do
-              ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              mc_ssh 30 "Shelving check on $1" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                   -o LogLevel=ERROR -o ConnectTimeout=15 "exouser@$1" "$2" < /dev/null
               rc=$?
               (( rc == 0 )) && return 0
@@ -266,7 +276,7 @@ jobs:
               # failure here never affects shelving.
               if [[ -s "$HOME/mc-data/portal_target" ]]; then
                 printf '{"issue": %d, "elapsed_hours": %s}' "$issue_number" "$uptime_hours" \
-                  | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
+                  | mc_ssh 30 "Session age to the data portal" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 \
                       "$(cat "$HOME/mc-data/portal_target")" session "$issue_number" >/dev/null 2>&1 \
                   || echo "::warning ::Could not report the session age of #$issue_number to the data portal"
               fi

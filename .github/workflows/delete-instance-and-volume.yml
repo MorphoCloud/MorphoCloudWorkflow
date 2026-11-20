@@ -90,6 +90,9 @@ jobs:
 
   delete_instance:
     runs-on: self-hosted
+    # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
+    # measured p95 0.9 min; action wait 10 min + delete wait 3 min.
+    timeout-minutes: 20
     needs: authorize
     if: ${{ needs.authorize.outputs.continue == 'true' }}
     # Shared per-issue group (see control-instance.yml): deleting must not race
