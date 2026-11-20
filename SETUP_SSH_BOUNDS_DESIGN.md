@@ -1,7 +1,8 @@
 # Design note: time limits on runner-to-instance SSH
 
-Status: approved and built, 2026-11-19 (section 8). Tests 2–6 pending, after the
-vendorize to Test-Instances (section 9).
+Status: approved and built, 2026-11-19 (section 8). Tests 2–6 run on
+Test-Instances 2026-11-20 (section 9); the gap test 4 found is handled in a
+separate note (section 10).
 
 Scope: item 1 of the three found on Test-Instances #575. Items 2 and 3 have
 their own notes later:
