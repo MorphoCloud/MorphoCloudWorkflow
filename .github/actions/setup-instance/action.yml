@@ -471,6 +471,12 @@ runs:
 
         echo "Share mounted at $MP; home folders linked."
         EOF
+          # TEST ONLY (SETUP_FINISHED_SIGNAL_DESIGN.md tests 2 and 4; never
+          # merge): on requests labeled test:hang-mount, leave a process
+          # holding the session's output, so the mount step hangs.
+          if [[ "$TEST_HANG_MOUNT" == true ]]; then
+            echo 'echo "TEST HOOK: leaving sleep 600 holding stdout"; sleep 600 &'
+          fi
         # 180 s: the mount unit may take its full TimeoutSec=90, each launcher
         # its 20 s, and the rest takes seconds (whole step p95 13 s).
         } | mc_ssh 180 "Mount script" "${ssh_opts[@]}" exouser@"$INSTANCE_IP" 'sudo bash -s'
@@ -479,6 +485,8 @@ runs:
           ${{ steps.identity.outputs.instance_ip || inputs.instance_ip }}
         GITHUB_ID: ${{ inputs.github_id }}
         GITHUB_LOGIN: ${{ inputs.github_login }}
+        TEST_HANG_MOUNT:
+          ${{ contains(github.event.issue.labels.*.name, 'test:hang-mount') }}
         OS_CLOUD: ${{ inputs.os_cloud }}
 
     # Share expiry (STORAGE_REDESIGN_PLAN.md): the share records which instance
