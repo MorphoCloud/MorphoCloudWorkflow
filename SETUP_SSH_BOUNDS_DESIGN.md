@@ -337,4 +337,37 @@ Because the race did not reproduce on demand, A is shipped on the evidence of
 left by the command holds the SSH session) under today's code and its absence
 under A.
 
-Tests 2–6 run after the vendorize to Test-Instances.
+Tests 2–6 on Test-Instances (2026-11-20). The PR was vendorized as `51835208`.
+Tests 2–4 used the TEST-ONLY branch `test-only-ssh-bounds-hooks` (218889f,
+vendorized as `efec45df`). That branch leaves a `sleep 600` holding the mount
+script's output on amm554's requests, and sets a 2-minute create job limit on
+requests labeled `test:job-timeout`. The PR code was vendorized back as
+`cfb11e1d`, identical to `51835208`. All requests were opened by amm554 in the
+portal's format, and the admin typed the commands.
+
+| Test                                           | Request    | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 6, m3.xl create                                | #578       | **Passed.** Success in 9.3 min. Mount step 13.4 s, reboot and post-reboot check passed. Both launchers `metadata::trusted: true`. No private gvfsd-fuse left.                                                                                                                                                                                                                                                                                                              |
+| 6, first try (before the JS2 fix)              | #576       | Not a test result. FIP 149.165.149.82 could not reach the Ceph monitors (a JS2 fault in 149.165.149.0/24, fixed by JS2 on 2026-11-20). The mount failed in 70 s with an error, the failed-mount comment and the admin email: the right behaviour.                                                                                                                                                                                                                          |
+| 6, g3.medium create                            | #579, #583 | Not run: JS2 had no g3.medium host on two tries ("No instance of type g3.medium is available"). Replaced by g3.large, which uses the same vGPU image.                                                                                                                                                                                                                                                                                                                      |
+| 6, g3.large create (vGPU image)                | #584       | **Passed.** Success in 6.9 min. Mount step 10.5 s, reboot and post-reboot check passed. GPU `GRID A100X-20C` present. Both launchers `metadata::trusted: true`. The one gvfsd-fuse running was started after the reboot by the desktop session, not left by setup.                                                                                                                                                                                                         |
+| 5, sweep with one instance whose command hangs | #578       | **Passed.** `check-instance-shelve.sh` made to sleep 600 s on #578. Sweep: `Shelving check on 149.165.155.234: SSH did not finish within 30s`, then `exit 124; it answers, so it is left alone`; the sweep went on through the six other Test instances and finished in 42 s. Script restored.                                                                                                                                                                             |
+| 2, forced hang in a real create                | #580       | **Passed.** Mount script finished at 19:18:43; the hook left `sleep 600`; at 19:21:41 (180 s) `Mount script: SSH did not finish within 180s (time limit reached)`. Step failed; admin email sent; member got the failed-mount comment.                                                                                                                                                                                                                                     |
+| 3, instance stops answering mid-call           | #581       | **Passed.** Port 22 dropped on the instance at 19:33:17 while the hook held the call; the step ended at 19:34:28 (71 s) with ssh exit 255, not at the 180 s limit. GitHub shows only the generic "Process completed with exit code 255" for this case; the failed-mount comment and admin email follow as for any failure.                                                                                                                                                 |
+| 4, job reaches `timeout-minutes`               | #582       | **Gap found.** The job was cancelled at 2:00 ("The job has exceeded the maximum execution time of 2m0s"). Only the `always()` outcome step ran: 👎 on `/create`. No admin email (that step is `failure()` only), no explanation for the member (progress comment left at ⏳), and the half-set-up instance stayed ACTIVE with its address. Report Dropped Command skipped it on purpose ("cancelled after its worker job had started; that run reported its own outcome"). |
+
+Test 4 answers the open question in section C: a job stopped by
+`timeout-minutes` reports nothing on GitHub beyond the 👎. Members do not read
+the request issue, though; they see the portal card and the assistant. There the
+stopped create is read as a failed `/create`, but the runner reports the server
+as set up (the workflow marks `exoSetup` complete before the MyDrive mount), so
+the assistant says "Nothing needs to be done". The same happens after an
+ordinary failure of any step after that point.
+
+## 10. Follow-up (not in this change)
+
+The gap test 4 found is handled in a separate design note,
+`SETUP_FINISHED_SIGNAL_DESIGN.md`. It is a sign that MorphoCloud's own setup
+finished, set at the end of a create, so the portal and the assistant can tell a
+finished instance from one that stopped partway and guide the member to delete
+it and create a new one. This change ships with test 4's gap as it is.
