@@ -21,12 +21,14 @@ outputs:
     value: ${{ steps.check_instance.outputs.status }}
   setup_complete:
     description:
-      "'true' when the exoSetup server property reports the software setup
-      finished, 'false' otherwise (including when the instance does not exist).
-      ACTIVE is a Nova power state, not a provisioning verdict: a server whose
-      setup died mid-playbook sits ACTIVE and unusable indefinitely. Callers
-      that hand out connection details, or that tell a user an existing instance
-      is fine as-is, must gate on this and not on status alone."
+      "'true' when MorphoCloud's setup of the instance finished (the mcSetup
+      server property, or exoSetup on servers without it; see
+      SETUP_FINISHED_SIGNAL_DESIGN.md), 'false' otherwise (including when the
+      instance does not exist). ACTIVE is a Nova power state, not a provisioning
+      verdict: a server whose setup died mid-playbook sits ACTIVE and unusable
+      indefinitely. Callers that hand out connection details, or that tell a
+      user an existing instance is fine as-is, must gate on this and not on
+      status alone."
     value: ${{ steps.check_instance.outputs.setup_complete }}
 runs:
   using: "composite"
@@ -70,26 +72,22 @@ runs:
           jq -r --arg instance_name "$INSTANCE_NAME" \
             '[.[] | select(.Name == $instance_name)] | last | .Status // empty')
 
-        # Nor is ACTIVE "provisioned". The exoSetup property is seeded
-        # {"status":"waiting","epoch":null} at boot by create-instance and only
-        # advanced to "complete" by setup-instance once the playbook has
-        # finished, so a server whose setup failed (or is still running) keeps
-        # the waiting marker while Nova reports ACTIVE. This is the same rule
-        # update-request-status-label.yml uses to hold such a server at
-        # status:building rather than status:active.
+        # Nor is ACTIVE "provisioned". A server whose setup failed, was
+        # stopped, or is still running stays ACTIVE in Nova. The rule for
+        # "MorphoCloud's setup finished" is shared with every other reader
+        # (mc_setup_done in .github/actions/setup-state/mc-setup.jq,
+        # SETUP_FINISHED_SIGNAL_DESIGN.md): the mcSetup property when the
+        # server has one, otherwise exoSetup.
         #
-        # Read defensively: some openstack client versions render .Properties
-        # as a flat string rather than an object, and this step runs under
-        # `set -e`, so an unguarded `.Properties.exoSetup` would turn a shape
-        # change into a hard failure of /create, /email and /delete_volume.
-        setup_marker=$(echo "$servers" | \
-          jq -r --arg instance_name "$INSTANCE_NAME" \
-            '[.[] | select(.Name == $instance_name)] | last | .Properties as $p |
-             if ($p | type) == "object" then (($p.exoSetup // "") | tostring)
-             elif ($p | type) == "string" then $p
-             else "" end')
-
-        [[ "$setup_marker" == *complete* ]] && setup_complete="true" || setup_complete="false"
+        # The shared rule reads defensively: some openstack client versions
+        # render .Properties as a flat string rather than an object, and this
+        # step runs under `set -e`, so a shape change must not turn into a
+        # hard failure of /create, /email and /delete_volume.
+        setup_complete=$(echo "$servers" | \
+          jq -r -L "$GITHUB_ACTION_PATH/../setup-state" --arg instance_name "$INSTANCE_NAME" \
+            'include "mc-setup";
+             [.[] | select(.Name == $instance_name)] | last | (.Properties // null) | mc_setup_done')
+        [[ "$setup_complete" == "true" ]] || setup_complete="false"
 
         [[ $instance == "$INSTANCE_NAME" ]] && exists="true" || exists="false"
         [[ $exists == "true" ]] || setup_complete="false"

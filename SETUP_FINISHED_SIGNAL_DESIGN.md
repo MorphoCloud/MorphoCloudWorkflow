@@ -1,6 +1,6 @@
 # Design note: a sign that MorphoCloud's setup of an instance finished
 
-Status: proposed, 2026-11-20. NOT APPROVED.
+Status: approved 2026-11-20 (section 9); being built.
 
 Origin: test 4 of `SETUP_SSH_BOUNDS_DESIGN.md` (Test-Instances #582). Code
 references are to MorphoCloudWorkflow (MWF) `share-prototype` at `aabe3f5`, the
@@ -118,9 +118,20 @@ made by a course repo pinned to an older branch, reading as it does today. No
 backfill of production servers. The readers changed: the portal runner's
 `snapshot()`, `update-request-status-label.yml`, `check-instance-exists`,
 `follow-through.yml:114` and `resume-setup.yml:67`. The four MWF readers share
-one small jq function in a file under `.github/scripts/`, so the rule exists
-once in MWF and once in the portal runner. The `error` checks on `exoSetup` stay
-as they are.
+one jq function, `mc_setup_done` in `.github/actions/setup-state/mc-setup.jq`
+(next to `.github/actions/ssh/mc-ssh.sh`), so the rule exists once in MWF and
+once in the portal runner. The `error` checks on `exoSetup` stay as they are.
+
+The function handles both value shapes and both property shapes (review of
+#436):
+
+- `exoSetup` is a JSON string (`{"status":"complete","epoch":…}`) and is
+  unwrapped to its `status`; `mcSetup` is a plain word and is compared as it is.
+- Some `openstack` client versions print a server's whole properties as one flat
+  string (`exoSetup='…', mcSetup='pending'`) instead of an object.
+  `check-instance-exists` already guards against this; the shared function
+  carries that guard to all four readers. `update-request-status-label.yml` read
+  `.Properties.exoSetup` directly before and gets the guard with it.
 
 ### C. What the assistant says for a create that did not finish
 
@@ -157,18 +168,20 @@ finish. Click Try again to delete it and create a new one of the same type."
 
 ## 5. Other actors on the same servers
 
-| Actor                                          | Touches                            | Effect of this change                                                                                       |
-| ---------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Exosphere web client (admins)                  | writes `exoSetup` from the console | no longer able to mark a MorphoCloud create ready early                                                     |
-| Follow-through sweep (`follow-through.yml`)    | reads; writes `exoSetup=error`     | stops dropping the marker on an Exosphere-written `complete`; still resumes when the console says complete  |
-| Resume Setup (`resume-setup.yml`)              | reads; runs the rest of setup      | refuses only when `mcSetup=complete`; its own run ends by writing it                                        |
-| Status-label sync                              | reads                              | `status:building` until `mcSetup=complete`                                                                  |
-| Portal runner (`pickup`, every minute)         | reads                              | `setup_done` false until `mcSetup=complete`; no access details pushed and no portal auto-shelve before that |
-| Instance's idle auto-shelve (on the instance)  | none                               | unchanged; still shelves an idle half-built instance                                                        |
-| Shelve / unshelve                              | Nova keeps server properties       | an unshelved instance keeps `mcSetup=complete`                                                              |
-| Course repos on pinned branches                | write only `exoSetup`              | no `mcSetup`, so the fallback rule applies; same as today                                                   |
-| Production instances created before the change | have no `mcSetup`                  | fallback rule; same as today                                                                                |
-| Admins by hand (`openstack server set`)        | can set either property            | an admin can mark a repaired instance finished with `mcSetup=complete`                                      |
+| Actor                                           | Touches                                                 | Effect of this change                                                                                       |
+| ----------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Exosphere web client (admins)                   | writes `exoSetup` from the console                      | no longer able to mark a MorphoCloud create ready early                                                     |
+| Follow-through sweep (`follow-through.yml`)     | reads; writes `exoSetup=error`                          | stops dropping the marker on an Exosphere-written `complete`; still resumes when the console says complete  |
+| Resume Setup (`resume-setup.yml`)               | reads; runs the rest of setup                           | refuses only when `mcSetup=complete`; its own run ends by writing it                                        |
+| Status-label sync                               | reads                                                   | `status:building` until `mcSetup=complete`                                                                  |
+| Portal runner (`pickup`, every minute)          | reads                                                   | `setup_done` false until `mcSetup=complete`; no access details pushed and no portal auto-shelve before that |
+| Instance's idle auto-shelve (on the instance)   | none                                                    | unchanged; still shelves an idle half-built instance                                                        |
+| Shelve / unshelve                               | Nova keeps server properties                            | an unshelved instance keeps `mcSetup=complete`                                                              |
+| Course repos on pinned branches                 | write only `exoSetup`                                   | no `mcSetup`, so the fallback rule applies; same as today                                                   |
+| Production instances created before the change  | have no `mcSetup`                                       | fallback rule; same as today                                                                                |
+| Admins by hand (`openstack server set`)         | can set either property                                 | an admin can mark a repaired instance finished with `mcSetup=complete`                                      |
+| E2E tests (MorphoCloudE2ETests `_lifecycle.py`) | read `exoSetup` before their own in-guest check         | unchanged: `exoSetup` is still written; the E2E in-guest probe checks the rest. Not changed here            |
+| Kubernetes POC (`morphocloud-k8s`)              | its own copy of the share runner; no per-member servers | unaffected; not changed here                                                                                |
 
 ## 6. What the member and the admins see
 
@@ -212,4 +225,6 @@ in before or after the ~11-24 cutover is the maintainer's call.
 
 ## 9. Approval
 
-Not approved yet.
+Approved by the maintainer, 2026-11-20 ("do as designed"), after the review of
+#436. The review's two points are folded into section 4.B. Timing against the
+~11-24 cutover is still the maintainer's call.

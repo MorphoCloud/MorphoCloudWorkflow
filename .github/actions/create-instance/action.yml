@@ -460,6 +460,7 @@ runs:
           --property "exoCreatorUsername=jfillionrobin@access-ci.org" \
           --property "exoFloatingIpOption=useFloatingIp" \
           --property "exoSetup={\"status\":\"waiting\",\"epoch\":null}" \
+          --property "mcSetup=pending" \
           --user-data ./cloud-config \
           --column created \
           --column flavor \
