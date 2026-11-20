@@ -1,0 +1,215 @@
+# Design note: a sign that MorphoCloud's setup of an instance finished
+
+Status: proposed, 2026-11-20. NOT APPROVED.
+
+Origin: test 4 of `SETUP_SSH_BOUNDS_DESIGN.md` (Test-Instances #582). Code
+references are to MorphoCloudWorkflow (MWF) `share-prototype` at `aabe3f5`, the
+data portal `share-prototype` at `c299183`, and the Exosphere fork
+`share-prototype`.
+
+## 1. What happened
+
+Test 4 stopped a create with `timeout-minutes` while the MyDrive mount step was
+running. On GitHub the member's `/create` got a 👎 and nothing else. Members do
+not read the request issue, though. They see the portal card and the assistant.
+Reading the code, this is what they get:
+
+1. The portal reads the 👎 as a failed `/create`, so the assistant speaks first
+   (portal `app/guidance.py`, `attention()`).
+2. The runner's report to the portal says the server is ACTIVE and its setup is
+   done. It takes "setup done" from the `exoSetup` server property
+   (`runner/mc_share_runner.py`, `snapshot()`). The workflow writes
+   `exoSetup=complete` right after the instance's own setup script finishes
+   (`.github/actions/setup-instance/action.yml:168`), and that is before the
+   MyDrive mount, the reboot, the check after the reboot, and the access
+   details.
+3. So the card shows "Active", and the assistant's rule table picks "fine":
+   "Your instance is running. Nothing needs to be done." There is no button.
+4. The portal reconciler also sees "ACTIVE, setup done, no access details" and
+   asks the runner to push the access details (`admin/cli.py`, `need.append`),
+   so the card fills in the details of an instance without MyDrive.
+
+The member is left with an instance that looks ready and is not, and no way
+forward. This was not watched on the portal: #582 was deleted before anyone
+looked. It follows from the code above.
+
+## 2. The class of problem
+
+Any create that ends after `action.yml:168` and before the last step of setup.
+That covers:
+
+- a step that fails: the MyDrive mount, the reboot, the check after the reboot
+  (#576 failed its mount this way on 2026-11-20 and would have got the same
+  "fine");
+- a job stopped by `timeout-minutes` or cancelled by hand (#582);
+- in volume mode, the volume steps (attach, copy, move home, Uploads, Renviron),
+  which sit in the same stretch.
+
+A second way into the same state: the Exosphere web client writes `exoSetup`
+too. When anyone has the project open in Exosphere, the client reads each new
+server's console log and sets `exoSetup=complete` as soon as the instance's own
+setup script prints its complete line (Exosphere fork `src/State/State.elm`,
+`ReceiveConsoleLog`, `requestSetServerMetadata`). Our servers carry
+`exoServerVersion` and `exoClientUuid`, so Exosphere treats them as its own. So
+even a create that is still running, or one whose setup poll timed out, can be
+marked complete early by an admin's open browser tab.
+
+So `exoSetup` means "the instance's own setup finished". Nothing records "the
+whole MorphoCloud setup finished", yet several readers use `exoSetup` as if it
+did.
+
+## 3. Evidence inventory (every writer and reader)
+
+Writers of `exoSetup`:
+
+| Where                                                      | Writes                         | When                                                 |
+| ---------------------------------------------------------- | ------------------------------ | ---------------------------------------------------- |
+| `create-instance/action.yml:462`                           | `waiting`                      | server create                                        |
+| `setup-instance/action.yml:136`                            | `error`                        | the instance's setup script reported an error        |
+| `setup-instance/action.yml:168`                            | `complete`                     | the instance's setup script finished; before MyDrive |
+| `setup-instance/action.yml:1005` (Set instance properties) | `complete`                     | last setup step, after the check after the reboot    |
+| `follow-through.yml:137`                                   | `error`                        | follow-through sweep sees the setup script's error   |
+| Exosphere web client                                       | `running`, `complete`, `error` | any open Exosphere session, from the console log     |
+| `scripts/bake-image.sh:68`                                 | `waiting`                      | the image bake VM only (not an instance; no reader)  |
+
+Readers that take `complete` to mean "ready for the member":
+
+| Reader                                                      | What it decides                                                                                                                     |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| portal runner `snapshot()` → `setup_done`                   | card "Active" vs "Building"; the assistant's verdict; re-push of access details; auto-shelve of unreachable instances (decision 23) |
+| `update-request-status-label.yml:32–45`                     | `status:active` vs `status:building` (the portal's fallback when no runner report)                                                  |
+| `check-instance-exists/action.yml:88–92` (`setup_complete`) | the advice in "Instance Already Exists" on a second `/create` (#290)                                                                |
+| `follow-through.yml:114`                                    | "setup already finished": drops the follow-through marker, so the rest of setup never runs                                          |
+| `resume-setup.yml:67`                                       | "nothing to resume": refuses to run the rest of setup                                                                               |
+| Exosphere UI                                                | the admin's view of the server; not a member surface                                                                                |
+
+`setup-instance`'s own poll reads the console log, not the property
+(`cloud-config:146`), so it is not a reader.
+
+## 4. Proposed change
+
+### A. A new server property written only by the workflow: `mcSetup`
+
+1. At server create, next to the `exoSetup` seed
+   (`create-instance/action.yml:462`), add `--property mcSetup=pending`.
+2. In the last setup step, "Set instance properties"
+   (`setup-instance/action.yml:998`), also set `mcSetup=complete`. That step
+   runs after the check after the reboot, in share mode and volume mode, for
+   individual, workshop and course creates, and for `resume-setup.yml`, which
+   ends through the same action.
+3. Nothing else writes `mcSetup`. Exosphere does not know it and leaves it
+   alone. A failure or a stop anywhere before the last step leaves it at
+   `pending`.
+4. `exoSetup` stays as it is, so Exosphere's own view is unchanged.
+
+The access details come after this step (the Send email step in the create job).
+If they are lost, the portal reconciler already re-pushes them for an instance
+that is set up (#467's fix), so the property marks the right point.
+
+### B. One rule in every reader
+
+"Setup finished" =
+
+- `mcSetup` present: finished only when `mcSetup` is `complete`;
+- `mcSetup` absent: the old rule, `exoSetup` status `complete`.
+
+The fallback keeps every instance created before this change, and every instance
+made by a course repo pinned to an older branch, reading as it does today. No
+backfill of production servers. The readers changed: the portal runner's
+`snapshot()`, `update-request-status-label.yml`, `check-instance-exists`,
+`follow-through.yml:114` and `resume-setup.yml:67`. The four MWF readers share
+one small jq function in a file under `.github/scripts/`, so the rule exists
+once in MWF and once in the portal runner. The `error` checks on `exoSetup` stay
+as they are.
+
+### C. What the assistant says for a create that did not finish
+
+With A and B, a stopped or failed create reads as ACTIVE and not set up. The
+rule table already maps that to "recreate" (`guidance.py`, `verdict()`), with a
+Delete button only. Two changes:
+
+1. Offer "Try again" next to Delete, when the request's type is known. It
+   deletes the instance and creates a new one of the same type
+   (`instances.request_recreate`, already used for the shortage case), behind
+   the existing confirmation "Delete this instance and create a new {type}? Your
+   files in your storage are kept." Members keep the consent step for a delete
+   (decision 19).
+2. Count tries. Today "recreate" is picked before the twice-in-a-row check, so a
+   create that keeps failing the same way loops the member. Proposed: the second
+   failed create in a row gets "contact" (Send to the MorphoCloud team) instead.
+
+Proposed line, for the maintainer to reword: "Setting up your instance did not
+finish. Click Try again to delete it and create a new one of the same type."
+
+### Not in this change
+
+- No admin email for a stopped job. The incident store already harvests the
+  record of every run, "including crashed, cancelled and dropped ones"
+  (INCIDENT_STORE_PLAN.md, the Envelope row); a hang that got past the per-call
+  time limits is found there.
+- No automatic delete without the member's click.
+- The card label. The card keeps showing "Building" for an instance whose create
+  failed, while the assistant says it did not finish. This is how an
+  `exoSetup=error` create already looks today. Changing the card is a separate
+  question.
+- A create whose runner died mid-job (no 👎 at all) stays "still working" on the
+  card. That is the dropped-command class, not this one.
+
+## 5. Other actors on the same servers
+
+| Actor                                          | Touches                            | Effect of this change                                                                                       |
+| ---------------------------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Exosphere web client (admins)                  | writes `exoSetup` from the console | no longer able to mark a MorphoCloud create ready early                                                     |
+| Follow-through sweep (`follow-through.yml`)    | reads; writes `exoSetup=error`     | stops dropping the marker on an Exosphere-written `complete`; still resumes when the console says complete  |
+| Resume Setup (`resume-setup.yml`)              | reads; runs the rest of setup      | refuses only when `mcSetup=complete`; its own run ends by writing it                                        |
+| Status-label sync                              | reads                              | `status:building` until `mcSetup=complete`                                                                  |
+| Portal runner (`pickup`, every minute)         | reads                              | `setup_done` false until `mcSetup=complete`; no access details pushed and no portal auto-shelve before that |
+| Instance's idle auto-shelve (on the instance)  | none                               | unchanged; still shelves an idle half-built instance                                                        |
+| Shelve / unshelve                              | Nova keeps server properties       | an unshelved instance keeps `mcSetup=complete`                                                              |
+| Course repos on pinned branches                | write only `exoSetup`              | no `mcSetup`, so the fallback rule applies; same as today                                                   |
+| Production instances created before the change | have no `mcSetup`                  | fallback rule; same as today                                                                                |
+| Admins by hand (`openstack server set`)        | can set either property            | an admin can mark a repaired instance finished with `mcSetup=complete`                                      |
+
+## 6. What the member and the admins see
+
+- Member, create succeeds: no change.
+- Member, create fails or is stopped after the instance's own setup: card
+  "Building", no access details, the assistant says setup did not finish, with
+  Try again and Delete. A second failure in a row: Send to the MorphoCloud team.
+- Admins: a failed step still emails them as today. A stopped job is in the
+  incident store. An escalation from the assistant carries the run link when a
+  bot comment on the request has one.
+
+## 7. Tests (Test-Instances, BIO240357_IU, as amm554 through the portal)
+
+Portal unit tests for the rule (present/absent/pending/complete, flat-string
+properties), `verdict()` and `actions()`; a jq test for the MWF function.
+
+On Test-Instances (about 4 m3.xl creates, about 1 h of m3.xl time):
+
+1. Normal create. `mcSetup=pending` at boot, `complete` at the end; card Active
+   with access details; label `status:active`.
+2. Stopped create (TEST-ONLY branch: `sleep 600` hook plus the 2-minute job
+   limit, as in test 4 of the earlier note). Card Building, no access details,
+   label `status:building`; the assistant's line with Try again and Delete.
+   Then, on the same server, set `exoSetup=complete` by hand to act as the
+   Exosphere client: still Building, still no details.
+3. Try again from test 2 deletes the instance and creates a new one, which
+   finishes (hook off for this run).
+4. Failed step (mount script hits its 180 s limit through the hook, no job
+   limit): same member view as test 2.
+5. An instance created before the deploy (no `mcSetup`) still shows Active with
+   its details.
+
+## 8. Delivery
+
+Two PRs against `share-prototype`: MWF (A, B's four readers, the jq file) and
+the portal (B's runner rule, C). Either order is safe: before the MWF change no
+server has `mcSetup`, so the portal's new rule reads like the old one; before
+the portal change the portal ignores `mcSetup`. Vendorize MWF to Test-Instances
+and deploy the portal to the Test portal, then run section 7. Whether this goes
+in before or after the ~11-24 cutover is the maintainer's call.
+
+## 9. Approval
+
+Not approved yet.
