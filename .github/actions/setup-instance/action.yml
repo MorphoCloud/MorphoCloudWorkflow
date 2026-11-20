@@ -471,6 +471,12 @@ runs:
 
         echo "Share mounted at $MP; home folders linked."
         EOF
+          # TEST ONLY (SETUP_SSH_BOUNDS_DESIGN.md tests 2 and 3; never merge):
+          # for amm554's requests, leave a process holding the session's
+          # output, as gvfsd-fuse did on #575.
+          if [[ "$GITHUB_LOGIN" == amm554 ]]; then
+            echo 'echo "TEST HOOK: leaving sleep 600 holding stdout"; sleep 600 &'
+          fi
         # 180 s: the mount unit may take its full TimeoutSec=90, each launcher
         # its 20 s, and the rest takes seconds (whole step p95 13 s).
         } | mc_ssh 180 "Mount script" "${ssh_opts[@]}" exouser@"$INSTANCE_IP" 'sudo bash -s'

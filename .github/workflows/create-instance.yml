@@ -200,7 +200,11 @@ jobs:
     runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
     # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
     # measured p95 20 min; longest legitimate run about 27 min.
-    timeout-minutes: 35
+    # TEST ONLY (SETUP_SSH_BOUNDS_DESIGN.md test 4; never merge): 2 min when
+    # the request has the test:job-timeout label.
+    timeout-minutes:
+      ${{ contains(github.event.issue.labels.*.name, 'test:job-timeout') && 2 ||
+      35 }}
     needs: authorize
     if: ${{ needs.authorize.outputs.continue == 'true' }}
     # Shared per-issue group (see control-instance.yml): provisioning must not
