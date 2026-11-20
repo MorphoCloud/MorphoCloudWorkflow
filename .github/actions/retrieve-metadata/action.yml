@@ -110,8 +110,11 @@ runs:
           max_wait=300   # up to 5 min — a cold unshelve can be slow to boot
           interval=15
           start=$SECONDS
+          # Each try has a 60 s total limit (SETUP_SSH_BOUNDS_DESIGN.md); the
+          # remote curl retries for up to about 30 s of its own.
+          source "$GITHUB_ACTION_PATH/../ssh/mc-ssh.sh"
           while (( SECONDS - start < max_wait )); do
-            instance_pwd=$(ssh \
+            instance_pwd=$(mc_ssh 60 "Passphrase read" \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
               -o LogLevel=ERROR \

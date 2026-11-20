@@ -78,6 +78,9 @@ jobs:
 
   send-email:
     runs-on: self-hosted
+    # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
+    # measured p95 0.6 min; address check 5 min + passphrase read 5 min.
+    timeout-minutes: 15
     needs: authorize
     if: ${{ needs.authorize.outputs.continue == 'true' }}
     # Shared per-issue group (see control-instance.yml): /email must not read

@@ -170,6 +170,9 @@ jobs:
 
   create:
     runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
+    # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
+    # same steps as the individual create.
+    timeout-minutes: 35
     needs: authorize
     if: ${{ needs.authorize.outputs.continue == 'true' }}
     # Lock 2 — the same shared per-issue mutation group the /delete_all,

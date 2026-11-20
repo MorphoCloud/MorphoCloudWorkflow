@@ -628,7 +628,9 @@ runs:
       run: |
         target_file="$HOME/mc-data/portal_target"
         [[ -s "$target_file" ]] || exit 0
-        if ! ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "$(cat "$target_file")" \
+        # A total time limit on the call (SETUP_SSH_BOUNDS_DESIGN.md).
+        source "$GITHUB_ACTION_PATH/../ssh/mc-ssh.sh"
+        if ! mc_ssh 30 "Clear access details on the data portal" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "$(cat "$target_file")" \
             connection-clear "$ISSUE_NUMBER" < /dev/null; then
           echo "::warning ::Could not clear the access details on the data portal for #$ISSUE_NUMBER."
         fi

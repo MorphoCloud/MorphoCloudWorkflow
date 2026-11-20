@@ -59,6 +59,9 @@ permissions:
 jobs:
   control:
     runs-on: self-hosted
+    # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
+    # same steps as control-instance.yml.
+    timeout-minutes: 45
     # Shared per-issue group (see control-instance.yml). Job-level so it
     # applies on both invocation paths: workflow-level concurrency is ignored
     # when a reusable workflow is invoked via workflow_call.

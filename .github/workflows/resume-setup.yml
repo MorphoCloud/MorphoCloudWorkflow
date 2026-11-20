@@ -24,6 +24,9 @@ permissions:
 jobs:
   resume:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
+    # post-setup steps and email; their waits add up to about 25 min.
+    timeout-minutes: 30
     # Same per-issue lock as every command worker: never beside a /shelve or
     # /delete on the same instance.
     concurrency:
