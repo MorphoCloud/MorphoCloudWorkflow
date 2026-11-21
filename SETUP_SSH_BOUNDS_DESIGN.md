@@ -420,3 +420,24 @@ running: 3 of 3 saved, still there at +45 s, no half-written files.
 **Test.** One create on Test-Instances as amm554 through the portal. After
 setup, the desktop shows both launchers by their names without the emblem, and
 `~/.local/share/gvfs-metadata` has no `root.XXXXXX` or `home.XXXXXX` files.
+
+**Second test (#594): the mark was set, the emblem stayed.** With the helper
+fixed, setup marked both launchers before the reboot (`run-u131`/`run-u132`,
+"Deactivated successfully"), and no half-written files were left. After the
+reboot the desktop still drew both launchers with the emblem. In the desktop's
+own environment every one of its checks passed (valid file, executable, mode
+755, `metadata::trusted` true, Desktop folder 750). The desktop decides when it
+draws a file and reads it again only when the file changes; touching the two
+launchers on #594 cleared the emblem at once (confirmed by the maintainer). So
+whatever the desktop saw when it first drew them (the mark lost when the
+pre-reboot session shut down, or set later by the login autostart), a change to
+the files after the mark fixes it.
+
+**Fix, part 2 (approved 2026-11-21):** the login autostart in the Exosphere fork
+(`ansible/roles/slicer/autostart-update-desktop-settings.desktop`, installed by
+Ansible at create) touches both launchers after marking them (exosphere#13,
+`5d0c289`). `cloud-config` pins that commit until exosphere#13 merges. Instances
+check out the pin from a plain clone, so the pin must always be on a branch:
+when exosphere#13 merges, move the pin to the merge commit on `share-prototype`
+before the `launcher-touch` branch is deleted. The setup step above stays: it no
+longer kills the metadata service before it saves.
