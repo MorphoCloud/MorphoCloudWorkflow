@@ -224,6 +224,33 @@ On Test-Instances (about 4 m3.xl creates, about 1 h of m3.xl time):
 5. An instance created before the deploy (no `mcSetup`) still shows Active with
    its details.
 
+### Results (2026-11-20/21)
+
+The portal build under test was the Test portal's combined build (the
+MorphoSource cart plus this change), last 9386ad7. All runs were on
+Test-Instances, with requests opened as amm554 and viewed in the portal signed
+in as amm554.
+
+| Test             | Request     | Result                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 Normal create  | #585        | PASS. `mcSetup` went pending → complete. The card went Building → Active with access details. Label `status:active`.                                                                                                                                                                                                                                                                                                                                      |
+| 2 Stopped create | #587        | PASS. Cancelled by hand while the hook held the mount script. The server was ACTIVE, `exoSetup` complete, `mcSetup` pending. The card showed Building, no details, and "The last create did not complete". The assistant said the line with Try again and Delete. The Exosphere step is moot: `exoSetup` was already complete, which is the case this change exists for. A second failed create in a row gave "Send to the MorphoCloud team" as designed. |
+| 3 Try again      | #587 → #588 | PASS. The portal deleted #587 and opened #588 as amm554, with no hook label. #588 finished with `mcSetup` complete and access details on the card.                                                                                                                                                                                                                                                                                                        |
+| 4 Failed step    | #590        | PASS. "Mount script: SSH did not finish within 180s (time limit reached)", and the job failed. The server was ACTIVE, `exoSetup` complete, `mcSetup` pending. Label `status:building`. The card showed Building with no details. In a new tab, the assistant's line came with Try again and Delete at once. The verdict was unfinished, not contact, because #588 succeeded in between.                                                                   |
+| 5 Old instances  | —           | PASS. Instances created before the deploy (no `mcSetup`) still read as set up.                                                                                                                                                                                                                                                                                                                                                                            |
+
+Found during the tests, not part of this change:
+
+- A portal tab left open across a portal restart did not speak about the #590
+  failure. The card in that tab refreshed, but no `/chatbot/auto` request
+  reached the portal. A new tab spoke at once. This belongs with the known issue
+  that the assistant's message is lost on reload while the card still points to
+  it.
+- After an unshelve, the card shows Active with "Access details appear here once
+  the instance is ready" for about 1–2 minutes. That is the time until the
+  unshelve job sends the details (#588: unshelve finished 06:25:06, details
+  stored 06:25:04). This is by design.
+
 ## 8. Delivery
 
 Two PRs against `share-prototype`: MWF (A, B's four readers, the jq file) and
