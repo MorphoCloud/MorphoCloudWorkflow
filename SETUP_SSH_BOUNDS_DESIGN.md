@@ -372,3 +372,80 @@ The gap test 4 found is handled in a separate design note,
 finished, set at the end of a create, so the portal and the assistant can tell a
 finished instance from one that stopped partway and guide the member to delete
 it and create a new one. This change ships with test 4's gap as it is.
+
+## 11. Regression: launchers left untrusted (found 2026-11-21, Test-Instances #592)
+
+**What the member saw.** On #592, created with this change, the desktop showed
+`Slicer.desktop` and `ExtendInstanceSession.desktop` as file names with a red
+"not allowed" emblem, instead of "3D Slicer" and "Extend Instance Session".
+
+**Cause.** Change A runs the launcher-trust `gio set` in a transient unit. When
+the unit's main process ends, systemd kills every process in the unit. That
+includes the `gvfsd-metadata` that `gio` started on the private bus. That
+process saves the mark when its bus closes, and it was killed before it
+finished. On #592, two half-written `root.XXXXXX` files from 19:57 (the trust
+step) were left in `~/.local/share/gvfs-metadata`.
+
+The mark was set again later by the login-time autostart (section 4). But the
+desktop reads the mark only when it draws an icon, and by then it had drawn
+them. The code comment "before the first desktop session" was also wrong: the
+image's GNOME session was already running during setup, as section 4 says.
+
+**Evidence (on #592, with its desktop session running, scratch files only):**
+
+| Method                                                               | Mark visible afterwards, to the session and to a fresh read |
+| -------------------------------------------------------------------- | ----------------------------------------------------------- |
+| A as shipped (private bus in a unit)                                 | no; a new half-written `home.XXXXXX` file was left behind   |
+| Before this change (private bus, no unit, 54b6238)                   | yes, still at +75 s                                         |
+| Fixed A (the unit waits for its own `gvfsd-metadata` to exit, ≤ 5 s) | yes, 3 of 3, still at +60 s; each run about 0.2 s           |
+
+Without a running session (scratch home), both A and the old method kept the
+mark. The loss needs the session's own metadata service on the same files.
+
+**Fix.** The unit runs a small helper written to `/run` by the mount script. It
+marks the launcher through the private bus, then waits up to 5 s for the unit's
+own `gvfsd-metadata` (found through the unit's cgroup, so the member's session
+is not touched) to exit by itself. Then the unit ends, and systemd still kills
+`gvfsd-fuse`, the #575 cause. RuntimeMaxSec=20 still bounds the whole helper.
+The 180 s limit on the mount script is unchanged.
+
+**First test (#593) found a bug in the fix.** `/run` is mounted `noexec`, so the
+unit could not execute the helper ("Failed to find executable
+/run/mc-trust-launcher.sh: Permission denied"). Both launchers printed "Could
+not mark ... as trusted", setup went on, and the login-time autostart marked
+them after the reboot. The #592 runs had used a helper in `/tmp`. The unit now
+runs `/bin/sh /run/mc-trust-launcher.sh`, tested on #593 with its session
+running: 3 of 3 saved, still there at +45 s, no half-written files.
+
+**Test.** One create on Test-Instances as amm554 through the portal. After
+setup, the desktop shows both launchers by their names without the emblem, and
+`~/.local/share/gvfs-metadata` has no `root.XXXXXX` or `home.XXXXXX` files.
+
+**Second test (#594): the mark was set, the emblem stayed.** With the helper
+fixed, setup marked both launchers before the reboot (`run-u131`/`run-u132`,
+"Deactivated successfully"), and no half-written files were left. After the
+reboot the desktop still drew both launchers with the emblem. In the desktop's
+own environment every one of its checks passed (valid file, executable, mode
+755, `metadata::trusted` true, Desktop folder 750). The desktop decides when it
+draws a file and reads it again only when the file changes; touching the two
+launchers on #594 cleared the emblem at once (confirmed by the maintainer). So
+whatever the desktop saw when it first drew them (the mark lost when the
+pre-reboot session shut down, or set later by the login autostart), a change to
+the files after the mark fixes it.
+
+**Fix, part 2 (approved 2026-11-21):** the login autostart in the Exosphere fork
+(`ansible/roles/slicer/autostart-update-desktop-settings.desktop`, installed by
+Ansible at create) touches both launchers after marking them (exosphere#13,
+`5d0c289`). exosphere#13 was merged with a merge commit (`547bd530`, so
+`5d0c289` stays reachable), and `cloud-config` pins `547bd530` on
+`share-prototype`. Instances check out the pin from a plain clone, so the pin
+must always be on a branch: when exosphere#13 merges, move the pin to the merge
+commit on `share-prototype` before the `launcher-touch` branch is deleted. The
+setup step above stays: it no longer kills the metadata service before it saves.
+
+**Result (2026-11-21, Test-Instances #595, amm554, MWF fbe5c14 + exosphere
+5d0c289): PASS.** Setup marked both launchers before the reboot (no "Could not
+mark" lines, no half-written metadata files). After the reboot (22:35:18) the
+login autostart marked and touched them (22:35:33). The maintainer confirmed "3D
+Slicer" and "Extend Instance Session" without the emblem; nothing was touched by
+hand.

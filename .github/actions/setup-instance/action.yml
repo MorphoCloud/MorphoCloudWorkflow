@@ -443,10 +443,14 @@ runs:
         else
           echo 'enabled=False' >> /etc/xdg/user-dirs.conf
         fi
-        # Trust the desktop launchers before the first desktop session, so they
-        # start without "Allow Launching". The login-time autostart that also
-        # does this can run after GNOME has drawn the icons (seen on #452). The
-        # mark lives in exouser's local home, set through a private session bus.
+        # Trust the desktop launchers before the desktop draws them after the
+        # reboot, so they start without "Allow Launching": the desktop reads
+        # the mark only when it draws an icon, and the login-time autostart
+        # that also marks them can run after that (seen on #452 and #592).
+        # The mark lives in exouser's local home (gvfs metadata), set through
+        # a private session bus. The image's own desktop session is already
+        # running at this point, with its own metadata service on the same
+        # files; that is fine, as long as ours finishes saving.
         #
         # gio starts gvfsd, which starts gvfsd-fuse. On #575 that gvfsd-fuse
         # outlived the private bus, kept this SSH session's output open, and
@@ -456,18 +460,45 @@ runs:
         # all when the unit stops; --wait returns only after that. Processes
         # outside the unit (the member's own desktop session and its gvfsd)
         # are not touched. RuntimeMaxSec bounds a gio that never returns.
+        #
+        # gio also starts gvfsd-metadata, which saves the mark when its bus
+        # closes. Killed before that, the mark is lost (#592: every launcher
+        # untrusted, half-written root.XXXXXX files left behind). So the unit
+        # ends only once its own gvfsd-metadata has exited, or after 5 s.
         # A launcher left untrusted is not fatal: the login-time autostart
         # marks it again.
+        cat > /run/mc-trust-launcher.sh <<'TRUSTEOF'
+        #!/bin/sh
+        dbus-run-session -- sh -c \
+          'gio set "$1" metadata::trusted true && gio set "$2" metadata::trusted true' \
+          sh "$1" "$2" || exit 1
+        cg=/sys/fs/cgroup$(cut -d: -f3- /proc/self/cgroup)
+        i=0
+        while [ $i -lt 50 ]; do
+          saving=0
+          for p in $(cat "$cg/cgroup.procs"); do
+            [ "$(cat "/proc/$p/comm" 2>/dev/null)" = gvfsd-metadata ] && saving=1
+          done
+          [ $saving = 0 ] && exit 0
+          i=$((i + 1))
+          sleep 0.1
+        done
+        echo "gvfsd-metadata still running after 5 s" >&2
+        exit 1
+        TRUSTEOF
+        chmod 0644 /run/mc-trust-launcher.sh
+        # /run is mounted noexec: sh reads the helper, nothing executes it
+        # (#593: "Failed to find executable ... Permission denied").
         for f in "$MP"/Desktop/*.desktop; do
           [ -e "$f" ] || continue
           systemd-run --quiet --wait --pipe --collect \
             --uid=exouser --setenv=HOME="$H" \
             -p RuntimeMaxSec=20 -p TimeoutStopSec=5 \
-            dbus-run-session -- sh -c \
-            'gio set "$1" metadata::trusted true && gio set "$2" metadata::trusted true' \
-            sh "$f" "$H/Desktop/$(basename "$f")" < /dev/null > /dev/null \
+            /bin/sh /run/mc-trust-launcher.sh "$f" "$H/Desktop/$(basename "$f")" \
+            < /dev/null > /dev/null \
             || echo "Could not mark $(basename "$f") as trusted" >&2
         done
+        rm -f /run/mc-trust-launcher.sh
 
         echo "Share mounted at $MP; home folders linked."
         EOF
