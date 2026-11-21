@@ -436,11 +436,12 @@ the files after the mark fixes it.
 **Fix, part 2 (approved 2026-11-21):** the login autostart in the Exosphere fork
 (`ansible/roles/slicer/autostart-update-desktop-settings.desktop`, installed by
 Ansible at create) touches both launchers after marking them (exosphere#13,
-`5d0c289`). `cloud-config` pins that commit until exosphere#13 merges. Instances
-check out the pin from a plain clone, so the pin must always be on a branch:
-when exosphere#13 merges, move the pin to the merge commit on `share-prototype`
-before the `launcher-touch` branch is deleted. The setup step above stays: it no
-longer kills the metadata service before it saves.
+`5d0c289`). exosphere#13 was merged with a merge commit (`547bd530`, so
+`5d0c289` stays reachable), and `cloud-config` pins `547bd530` on
+`share-prototype`. Instances check out the pin from a plain clone, so the pin
+must always be on a branch: when exosphere#13 merges, move the pin to the merge
+commit on `share-prototype` before the `launcher-touch` branch is deleted. The
+setup step above stays: it no longer kills the metadata service before it saves.
 
 **Result (2026-11-21, Test-Instances #595, amm554, MWF fbe5c14 + exosphere
 5d0c289): PASS.** Setup marked both launchers before the reboot (no "Could not
