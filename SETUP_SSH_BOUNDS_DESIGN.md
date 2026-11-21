@@ -372,3 +372,43 @@ The gap test 4 found is handled in a separate design note,
 finished, set at the end of a create, so the portal and the assistant can tell a
 finished instance from one that stopped partway and guide the member to delete
 it and create a new one. This change ships with test 4's gap as it is.
+
+## 11. Regression: launchers left untrusted (found 2026-11-21, Test-Instances #592)
+
+**What the member saw.** On #592, created with this change, the desktop showed
+`Slicer.desktop` and `ExtendInstanceSession.desktop` as file names with a red
+"not allowed" emblem, instead of "3D Slicer" and "Extend Instance Session".
+
+**Cause.** Change A runs the launcher-trust `gio set` in a transient unit. When
+the unit's main process ends, systemd kills every process in the unit. That
+includes the `gvfsd-metadata` that `gio` started on the private bus. That
+process saves the mark when its bus closes, and it was killed before it
+finished. On #592, two half-written `root.XXXXXX` files from 19:57 (the trust
+step) were left in `~/.local/share/gvfs-metadata`.
+
+The mark was set again later by the login-time autostart (section 4). But the
+desktop reads the mark only when it draws an icon, and by then it had drawn
+them. The code comment "before the first desktop session" was also wrong: the
+image's GNOME session was already running during setup, as section 4 says.
+
+**Evidence (on #592, with its desktop session running, scratch files only):**
+
+| Method                                                               | Mark visible afterwards, to the session and to a fresh read |
+| -------------------------------------------------------------------- | ----------------------------------------------------------- |
+| A as shipped (private bus in a unit)                                 | no; a new half-written `home.XXXXXX` file was left behind   |
+| Before this change (private bus, no unit, 54b6238)                   | yes, still at +75 s                                         |
+| Fixed A (the unit waits for its own `gvfsd-metadata` to exit, ≤ 5 s) | yes, 3 of 3, still at +60 s; each run about 0.2 s           |
+
+Without a running session (scratch home), both A and the old method kept the
+mark. The loss needs the session's own metadata service on the same files.
+
+**Fix.** The unit runs a small helper written to `/run` by the mount script. It
+marks the launcher through the private bus, then waits up to 5 s for the unit's
+own `gvfsd-metadata` (found through the unit's cgroup, so the member's session
+is not touched) to exit by itself. Then the unit ends, and systemd still kills
+`gvfsd-fuse`, the #575 cause. RuntimeMaxSec=20 still bounds the whole helper.
+The 180 s limit on the mount script is unchanged.
+
+**Test.** One create on Test-Instances as amm554 through the portal. After
+setup, the desktop shows both launchers by their names without the emblem, and
+`~/.local/share/gvfs-metadata` has no `root.XXXXXX` or `home.XXXXXX` files.
