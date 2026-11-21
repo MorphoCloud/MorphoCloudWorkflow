@@ -409,6 +409,14 @@ is not touched) to exit by itself. Then the unit ends, and systemd still kills
 `gvfsd-fuse`, the #575 cause. RuntimeMaxSec=20 still bounds the whole helper.
 The 180 s limit on the mount script is unchanged.
 
+**First test (#593) found a bug in the fix.** `/run` is mounted `noexec`, so the
+unit could not execute the helper ("Failed to find executable
+/run/mc-trust-launcher.sh: Permission denied"). Both launchers printed "Could
+not mark ... as trusted", setup went on, and the login-time autostart marked
+them after the reboot. The #592 runs had used a helper in `/tmp`. The unit now
+runs `/bin/sh /run/mc-trust-launcher.sh`, tested on #593 with its session
+running: 3 of 3 saved, still there at +45 s, no half-written files.
+
 **Test.** One create on Test-Instances as amm554 through the portal. After
 setup, the desktop shows both launchers by their names without the emblem, and
 `~/.local/share/gvfs-metadata` has no `root.XXXXXX` or `home.XXXXXX` files.

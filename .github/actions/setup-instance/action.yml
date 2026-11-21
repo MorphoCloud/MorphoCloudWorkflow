@@ -486,13 +486,15 @@ runs:
         echo "gvfsd-metadata still running after 5 s" >&2
         exit 1
         TRUSTEOF
-        chmod 0755 /run/mc-trust-launcher.sh
+        chmod 0644 /run/mc-trust-launcher.sh
+        # /run is mounted noexec: sh reads the helper, nothing executes it
+        # (#593: "Failed to find executable ... Permission denied").
         for f in "$MP"/Desktop/*.desktop; do
           [ -e "$f" ] || continue
           systemd-run --quiet --wait --pipe --collect \
             --uid=exouser --setenv=HOME="$H" \
             -p RuntimeMaxSec=20 -p TimeoutStopSec=5 \
-            /run/mc-trust-launcher.sh "$f" "$H/Desktop/$(basename "$f")" \
+            /bin/sh /run/mc-trust-launcher.sh "$f" "$H/Desktop/$(basename "$f")" \
             < /dev/null > /dev/null \
             || echo "Could not mark $(basename "$f") as trusted" >&2
         done
