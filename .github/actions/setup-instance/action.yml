@@ -1004,8 +1004,16 @@ runs:
         # Explicitly set status to complete
         exoSetup='{"status":"complete", "epoch": '$(date '+%s')'000}'
 
+        # mcSetup=complete is the one sign that MorphoCloud's setup finished
+        # (SETUP_FINISHED_SIGNAL_DESIGN.md). Only this step writes it, and it
+        # runs only when every step before it succeeded, after the check that
+        # follows the reboot. exoSetup is already complete before the MyDrive
+        # mount, and the Exosphere web client writes it too, so it cannot say
+        # this. A create that fails or is stopped before here keeps
+        # mcSetup=pending from create-instance.
         openstack server set \
             --property "exoSetup=$exoSetup" \
+            --property "mcSetup=complete" \
           $INSTANCE_NAME
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
