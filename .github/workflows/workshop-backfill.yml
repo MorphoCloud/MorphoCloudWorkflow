@@ -12,6 +12,9 @@ name: Workshop Backfill
 # closed/unapproved, or its workshop-end has passed.
 
 on:
+  # dispatch: */10 * * * *
+  # The runner's crontab is the clock (scripts/runner-cron-dispatcher.md). The
+  # schedule below is only a backstop: GitHub fires it a few times a day.
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:

@@ -208,7 +208,7 @@ retry git clone \
   /opt/instance-config-mgt \
   || fail "could not clone MorphoCloud/exosphere"
 
-exosphere_sha="60900808f3749166d1904a6f1fbfcae4254cb623" # morpho-cloud-portal-2026.06-ubuntu24-prep
+exosphere_sha="53a2178af96f05c5fcc672704ec4ba031edb533c" # share-prototype
 (cd /opt/instance-config-mgt && git reset --hard "$exosphere_sha") \
   || fail "could not check out exosphere commit $exosphere_sha"
 
@@ -231,6 +231,64 @@ if [ $ANSIBLE_RETURN_CODE -eq 0 ]; then STATUS="complete"; else STATUS="error"; 
 # Collapse newlines and drop JSON-special chars so the status line stays valid
 # JSON regardless of how many names (or what characters) the file contains.
 FAILED_EXTENSIONS=$(cat /opt/instance-config-support/slicer_failed_extensions 2>/dev/null | tr '\n' ' ' | tr -d '"\\' || true)
+
+# Background security updates (STORAGE_REDESIGN_PLAN.md, decision 19). Turned on
+# here, after a successful setup, and not in the image: with them on at boot,
+# systemd's catch-up of a missed apt timer could start unattended-upgrade in the
+# middle of the playbook and hold the dpkg lock. After each boot the package
+# lists are refreshed at 30-40 minutes and the upgrade runs at 45-55 minutes,
+# so the upgrade always sees fresh lists (OnBootSec, no catch-up run). An
+# instance that stays up for days is refreshed at 06:00 and 18:00 UTC and
+# upgraded at 06:30 UTC, each within 10 minutes; apt itself runs each step at
+# most once per calendar day. Ubuntu's own random delays (up to 12 hours for
+# the refresh, 1 hour for the upgrade) are replaced: they also apply after
+# boot and let the upgrade run hours before the refresh. Every run is at idle
+# priority so it competes as little as possible with Slicer.
+# Security fixes only: the allowed sources are replaced with the Ubuntu
+# security pocket alone (no noble-updates, no ESM), so an update is the same
+# package version with the security patch, never a feature update. The rule
+# is written here rather than inherited from Ubuntu's default file, which a
+# later release could change. Kernel and NVIDIA packages are excluded: a kernel installed in
+# the background takes effect at the next unshelve, and if the driver module
+# was not rebuilt for it, the GPU is gone after that boot; newer NVIDIA user
+# libraries next to the loaded older module break nvidia-smi and GL until a
+# reboot. Those change only through a rebaked, validated image (issue #430).
+# Best effort: a failure here is logged and never changes the setup status. The
+# subshell runs under `set -e` (this script is `set +e`), so a failure in any
+# step, not only the last, reaches the warning.
+if [ "$STATUS" = "complete" ] && [ -f /etc/apt/apt.conf.d/50unattended-upgrades ]; then
+  (
+    set -e
+    cat > /etc/apt/apt.conf.d/20auto-upgrades <<'MORPHOCLOUD_AUTO_UPGRADES'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+MORPHOCLOUD_AUTO_UPGRADES
+    cat > /etc/apt/apt.conf.d/52morphocloud-unattended-upgrades <<'MORPHOCLOUD_UU'
+#clear Unattended-Upgrade::Allowed-Origins;
+#clear Unattended-Upgrade::Origins-Pattern;
+Unattended-Upgrade::Allowed-Origins {
+  "${distro_id}:${distro_codename}-security";
+};
+Unattended-Upgrade::Package-Blacklist {
+  "linux-";
+  "nvidia-";
+  "libnvidia-";
+};
+Unattended-Upgrade::Automatic-Reboot "false";
+MORPHOCLOUD_UU
+    mkdir -p /etc/systemd/system/apt-daily.timer.d \
+             /etc/systemd/system/apt-daily-upgrade.timer.d \
+             /etc/systemd/system/apt-daily-upgrade.service.d
+    printf '[Timer]\nPersistent=false\nOnBootSec=30min\nRandomizedDelaySec=10min\n' > /etc/systemd/system/apt-daily.timer.d/50-morphocloud.conf
+    # The empty OnCalendar= resets every trigger set before it, OnBootSec
+    # included, so it must come first.
+    printf '[Timer]\nOnCalendar=\nPersistent=false\nOnBootSec=45min\nOnCalendar=*-*-* 06:30\nRandomizedDelaySec=10min\n' > /etc/systemd/system/apt-daily-upgrade.timer.d/50-morphocloud.conf
+    printf '[Service]\nNice=10\nIOSchedulingClass=idle\n' > /etc/systemd/system/apt-daily-upgrade.service.d/50-morphocloud.conf
+    systemctl daemon-reload
+    systemctl restart apt-daily.timer apt-daily-upgrade.timer
+  ) || echo "WARNING: could not turn on background security updates"
+fi
+
 sleep 1  # Ensures that console log output from any previous commands complete before the following command begins
 echo '{"status":"'$STATUS'", "epoch": '$(date '+%s')'000, "failed_extensions": "'"$FAILED_EXTENSIONS"'"}' | tee --append /dev/console > /dev/kmsg || true
 

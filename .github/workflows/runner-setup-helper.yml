@@ -1,6 +1,7 @@
 name: Runner Setup Helper
 
 on:
+  # dispatch: manual
   workflow_dispatch:
 
 permissions:
