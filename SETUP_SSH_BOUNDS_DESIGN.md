@@ -441,3 +441,10 @@ check out the pin from a plain clone, so the pin must always be on a branch:
 when exosphere#13 merges, move the pin to the merge commit on `share-prototype`
 before the `launcher-touch` branch is deleted. The setup step above stays: it no
 longer kills the metadata service before it saves.
+
+**Result (2026-11-21, Test-Instances #595, amm554, MWF fbe5c14 + exosphere
+5d0c289): PASS.** Setup marked both launchers before the reboot (no "Could not
+mark" lines, no half-written metadata files). After the reboot (22:35:18) the
+login autostart marked and touched them (22:35:33). The maintainer confirmed "3D
+Slicer" and "Extend Instance Session" without the emblem; nothing was touched by
+hand.
