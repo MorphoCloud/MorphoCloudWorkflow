@@ -108,11 +108,14 @@ jobs:
               echo "  $inst is $status; waiting"
               return
             fi
-            # A setup job that already finished wrote exoSetup=complete on the
-            # server (and rebooted it, so the console no longer shows the
-            # instance's own "complete" line): nothing to resume, drop the marker.
-            if echo "$j" | jq -r '(.properties | if type == "object" then (.exoSetup // "") else tostring end)' 2>/dev/null | grep -q '"complete"'; then
-              echo "$inst (issue #$n): setup already finished (exoSetup complete); dropping the marker"
+            # A setup job that already finished marked it on the server (and
+            # rebooted it, so the console no longer shows the instance's own
+            # "complete" line): nothing to resume, drop the marker. "Finished"
+            # is the shared rule (mcSetup, or exoSetup on servers without it;
+            # SETUP_FINISHED_SIGNAL_DESIGN.md): exoSetup alone can be written
+            # complete early by the Exosphere web client.
+            if echo "$j" | jq -e -L "$GITHUB_WORKSPACE/.github/actions/setup-state" 'include "mc-setup"; (.properties // null) | mc_setup_done' >/dev/null 2>&1; then
+              echo "$inst (issue #$n): setup already finished; dropping the marker"
               clear_markers "$n"
               return
             fi
