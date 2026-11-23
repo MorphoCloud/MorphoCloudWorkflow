@@ -3,6 +3,7 @@
 # DELETE THIS FILE before merging to production.
 name: "[TEST] Workshop Deletion"
 on:
+  # dispatch: manual
   workflow_dispatch:
     inputs:
       issue_number:

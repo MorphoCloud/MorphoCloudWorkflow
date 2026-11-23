@@ -8,6 +8,7 @@ markdown all pass through untouched.
 
 import json
 import os
+import secrets
 import sys
 from pathlib import Path
 
@@ -24,24 +25,31 @@ subs = {
     # or the page did not respond): every template line using it is dropped.
     "{{upload_url}}": os.environ.get("UPLOAD_URL", ""),
     "{{passphrase}}": os.environ["PASSPHRASE"],
+    # The data portal, where the prototype's email sends the user to connect.
+    # Empty where there is no portal (production).
+    "{{portal_url}}": os.environ.get("PORTAL_URL", ""),
     "{{contact_email}}": t["contact_email"],
 }
 
 
 def render(text: str) -> str:
-    if not subs["{{upload_url}}"]:
-        text = "\n".join(
-            line for line in text.split("\n") if "{{upload_url}}" not in line
-        )
+    # A line built around a missing value is dropped whole, never left as a
+    # fragment ("Sign in at:" with nothing after it).
+    for key in ("{{upload_url}}", "{{portal_url}}"):
+        if not subs[key]:
+            text = "\n".join(line for line in text.split("\n") if key not in line)
     for key, value in subs.items():
         text = text.replace(key, value)
     return text
 
 
+# A per-run delimiter: a rendered line equal to a fixed one would end the
+# value early and silently drop the rest of the email (#228).
+delim = f"__RENDER_{secrets.token_hex(8)}__"
 with Path(os.environ["GITHUB_OUTPUT"]).open("a") as out:
-    out.write("subject<<__RENDER_EOF__\n")
+    out.write(f"subject<<{delim}\n")
     out.write(render(t["credentials_subject"]) + "\n")
-    out.write("__RENDER_EOF__\n")
-    out.write("body<<__RENDER_EOF__\n")
+    out.write(f"{delim}\n")
+    out.write(f"body<<{delim}\n")
     out.write(render(t["credentials_body"]) + "\n")
-    out.write("__RENDER_EOF__\n")
+    out.write(f"{delim}\n")

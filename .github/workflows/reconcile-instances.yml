@@ -10,7 +10,8 @@ name: Reconcile Instances
 # floating IP that was missing.
 #
 # Invariants (instances with a pending task_state, or updated within the
-# grace window, are skipped as in-flight):
+# grace window — 30 minutes, or 5 for a running server with no address, which
+# is repaired rather than reported (decision 34) — are skipped as in-flight):
 #   ACTIVE            -> has a floating IP
 #   SHELVED_OFFLOADED -> no floating IP left bound to its port
 #   SHELVED           -> transient; persisting means a failed/corrupt shelve
@@ -21,6 +22,10 @@ name: Reconcile Instances
 # instance is healthy again, re-arming the alert.
 
 on:
+  # dispatch: 7,37 * * * *
+  # The runner's crontab is the clock (scripts/runner-cron-dispatcher.md). The
+  # schedule below is only a backstop: GitHub fires it a few times a day — which
+  # is all this workflow ever got until it was registered with the clock.
   schedule:
     - cron: "7,37 * * * *"
   workflow_dispatch:
@@ -59,12 +64,14 @@ jobs:
           instance_basename="${instance_prefix}instance"
 
           grace_seconds=1800
+          repair_grace_seconds=300  # decision 34: the no-address repair acts sooner
           now_epoch=$(date +%s)
 
           # Newly-flagged violations accumulate here for the direct admin
           # email below. Written from inside the `while read` pipeline, so it
           # has to be a file — that subshell cannot export variables out.
           : > /tmp/reconcile-violations.txt
+          : > /tmp/reconcile-flagged.txt
 
           # One snapshot for all port-binding lookups below; a slightly stale
           # view is fine — a violation that appears mid-run is caught by the
@@ -90,10 +97,6 @@ jobs:
                 continue
               fi
               updated_epoch=$(date -d "$updated" +%s 2>/dev/null || echo 0)
-              if (( now_epoch - updated_epoch < grace_seconds )); then
-                echo "Updated within grace window; skipping."
-                continue
-              fi
 
               # Floating-IP presence is judged from the Neutron port binding
               # (same as the action's verify_end_state step), not from Nova's
@@ -106,9 +109,27 @@ jobs:
               fi
               echo "port [$port_id] floating IPs bound [$fip_count]"
 
+              # Decision 34: a running server with no address is repaired on
+              # a short grace — an address is bound within a couple of
+              # minutes of any legitimate change, and the unreachable-shelve
+              # (decision 23/26) would otherwise shelve the member's session
+              # before this sweep gets to repair it. Everything else keeps
+              # the full grace.
+              if [[ "$status" == "ACTIVE" && "$fip_count" -lt 1 ]] && (( now_epoch - updated_epoch >= repair_grace_seconds )); then
+                :
+              elif (( now_epoch - updated_epoch < grace_seconds )); then
+                echo "Updated within grace window; skipping."
+                continue
+              fi
+
               reason=""
+              repair=""
               if [[ "$status" == "ACTIVE" && "$fip_count" -lt 1 ]]; then
                 reason="the instance is ACTIVE but has no floating IP — it is unreachable (users cannot connect, auto-shelving cannot measure uptime) while still consuming SUs"
+                # Decision 34: this one is repaired, not only reported — an
+                # unshelve of an already running server is the action's no-op
+                # path, which attaches an address and sends the access email.
+                repair="unshelve"
               elif [[ "$status" == "SHELVED" ]]; then
                 reason="the instance is stuck in SHELVED — the offload never completed, typically a failed shelve that /unshelve cannot recover"
               elif [[ "$status" == "ERROR" ]]; then
@@ -123,24 +144,59 @@ jobs:
                 continue
               fi
 
-              if ! has_label=$(gh issue view "$issue_number" --json labels --jq 'any(.labels[].name; . == "invariant-violation")'); then
+              if ! issue_json=$(gh issue view "$issue_number" --json labels,author); then
                 echo "::warning ::Failed to retrieve labels for issue $issue_number (instance $instance_name); skipping."
                 continue
               fi
+              has_label=$(echo "$issue_json" | jq -r 'any(.labels[].name; . == "invariant-violation")')
+              has_admin=$(echo "$issue_json" | jq -r 'any(.labels[].name; . == "needs-admin")')
+              author=$(echo "$issue_json" | jq -r '.author.login // ""')
 
               if [[ -n "$reason" ]]; then
                 echo "::warning ::$instance_name violates an invariant: $reason"
                 if [[ "$has_label" == "true" ]]; then
-                  echo "Issue #$issue_number already flagged; not re-alerting."
+                  if [[ -n "$repair" && "$has_admin" != "true" ]]; then
+                    # The repair was dispatched last run and the address is
+                    # still missing: hand it to the admins, once.
+                    echo "Repair of $instance_name did not take; escalating."
+                    gh issue edit "$issue_number" --add-label "needs-admin" || echo "::warning ::Failed to label issue $issue_number needs-admin"
+                    printf '### Instance state alert\n\n**%s** is running but still has no public address after an automatic repair. This request is flagged for the MorphoCloud admins (`needs-admin`), who take it from here.\n' "$instance_name" > /tmp/reconcile-comment.md
+                    gh issue comment "$issue_number" --body-file /tmp/reconcile-comment.md || echo "::warning ::Failed to comment on issue $issue_number"
+                    printf -- '- %s (issue #%s): %s; the automatic repair (an unshelve) did not attach one\n' "$instance_name" "$issue_number" "$reason" >> /tmp/reconcile-violations.txt
+                    # Which label this run added, for the un-flag step below.
+                    printf '%s needs-admin\n' "$issue_number" >> /tmp/reconcile-flagged.txt
+                  else
+                    echo "Issue #$issue_number already flagged; not re-alerting."
+                  fi
                   continue
                 fi
-                printf '### Instance state alert\n\nAutomated reconciliation found **%s** in an inconsistent state: %s.\n\n@MorphoCloud/morphocloud-admins — please take a look.\n\nSee details at %s\n' "$instance_name" "$reason" "$RUN_URL" > /tmp/reconcile-comment.md
+                if [[ -n "$repair" ]]; then
+                  echo "Repairing $instance_name: dispatching $repair for issue #$issue_number"
+                  gh issue edit "$issue_number" --add-label "invariant-violation" || echo "::warning ::Failed to add label to issue $issue_number"
+                  printf 'Your instance is running but has no public address, so nothing can reach it. MorphoCloud is attaching one now; a new access email follows in a few minutes.\n' > /tmp/reconcile-comment.md
+                  gh issue comment "$issue_number" --body-file /tmp/reconcile-comment.md || echo "::warning ::Failed to comment on issue $issue_number"
+                  if ! gh workflow run control-instance-from-workflow.yml \
+                      -f issue_number="$issue_number" -f command_name="$repair" \
+                      -f issue_creator="$author" -f course_team_slug="$COURSE_TEAM_SLUG"; then
+                    echo "::error ::Could not dispatch the $repair for $instance_name (issue #$issue_number)"
+                    printf -- '- %s (issue #%s): %s; the automatic repair could not be dispatched\n' "$instance_name" "$issue_number" "$reason" >> /tmp/reconcile-violations.txt
+                    printf '%s invariant-violation\n' "$issue_number" >> /tmp/reconcile-flagged.txt
+                  fi
+                  continue
+                fi
+                # No admin mention here: the email below is the channel (decision
+                # 27), and a mention would make it two emails per violation.
+                printf '### Instance state alert\n\nAutomated reconciliation found **%s** in an inconsistent state: %s.\n\nThe MorphoCloud admins have been emailed.\n\nSee details at %s\n' "$instance_name" "$reason" "$RUN_URL" > /tmp/reconcile-comment.md
                 gh issue edit "$issue_number" --add-label "invariant-violation" || echo "::warning ::Failed to add label to issue $issue_number"
                 gh issue comment "$issue_number" --body-file /tmp/reconcile-comment.md || echo "::warning ::Failed to comment on issue $issue_number"
                 printf -- '- %s (issue #%s): %s\n' "$instance_name" "$issue_number" "$reason" >> /tmp/reconcile-violations.txt
+                printf '%s invariant-violation\n' "$issue_number" >> /tmp/reconcile-flagged.txt
               elif [[ "$has_label" == "true" ]]; then
                 echo "Instance $instance_name is healthy again; clearing label on issue #$issue_number."
                 gh issue edit "$issue_number" --remove-label "invariant-violation" || echo "::warning ::Failed to remove label from issue $issue_number"
+                if [[ "$has_admin" == "true" ]]; then
+                  gh issue edit "$issue_number" --remove-label "needs-admin" || echo "::warning ::Failed to remove needs-admin from issue $issue_number"
+                fi
               fi
             done
         env:
@@ -148,6 +204,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
+          COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
           RUN_URL:
             https://github.com/${{ github.repository }}/actions/runs/${{
             github.run_id }}
@@ -175,6 +232,7 @@ jobs:
           } >> $GITHUB_OUTPUT
 
       - name: Notify admins by email (new violations)
+        id: mail_violations
         # The mail step is the whole point of this step, so a send failure must
         # turn the run red rather than be swallowed.
         if:
@@ -198,3 +256,80 @@ jobs:
             ${{ steps.violations.outputs.details }}
 
             Run log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      # Decision 27: a notification that could not be sent is never lost. If
+      # the email above failed, un-flag the issues so the next run alerts
+      # again once mail works (the label would otherwise silence them).
+      - name: Un-flag the violations whose email did not go out
+        if: ${{ always() && steps.mail_violations.outcome == 'failure' }}
+        run: |
+          # Each line is "<issue> <label added this run>": the report-only
+          # path adds invariant-violation, the escalation of a failed repair
+          # (decision 34) adds needs-admin on an issue already flagged.
+          sort -u /tmp/reconcile-flagged.txt 2>/dev/null | while read -r n label; do
+            [[ -n "$n" && -n "$label" ]] || continue
+            gh issue edit "$n" --remove-label "$label" \
+              && echo "un-flagged issue #$n ($label): it alerts again next run" \
+              || echo "::warning ::Could not un-flag issue #$n"
+          done
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+
+      # Decision 27: the catch-up for notifications other workflows could not
+      # send (the notify-admins action labels the issue admin-email-failed).
+      - name: Collect undelivered admin notifications
+        id: undelivered
+        if: ${{ always() }}
+        run: |
+          gh issue list --label admin-email-failed --state all --limit 100 \
+            --json number,title,url --jq '.[] | "- #\(.number) \(.title): \(.url)"' > /tmp/undelivered.txt || true
+          if [[ ! -s /tmp/undelivered.txt ]]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "count=$(wc -l < /tmp/undelivered.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          {
+            echo "details<<UNDELIVERED_EOF"
+            cat /tmp/undelivered.txt
+            echo "UNDELIVERED_EOF"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+
+      - name: Send the catch-up email
+        id: catch_up
+        if:
+          ${{ always() && steps.undelivered.outputs.found == 'true' &&
+          vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS != '' }}
+        uses: dawidd6/action-send-mail@42942bc2f8fba4e611b459a018967a6a7c78c68c # v17
+        with:
+          server_address: webhost.dynadot.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          from: MorphoCloudPortal <no-reply@morphocloud.org>
+          to: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          subject:
+            "[${{ github.repository }}] ${{ steps.undelivered.outputs.count }}
+            admin notification(s) could not be sent earlier"
+          body: |
+            The mail server was failing when these were raised. Each issue carries the full notification as a comment:
+
+            ${{ steps.undelivered.outputs.details }}
+
+            Run log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Clear the flags now that the catch-up went out
+        if: ${{ always() && steps.catch_up.outcome == 'success' }}
+        run: |
+          grep -oE '^- #[0-9]+' /tmp/undelivered.txt | grep -oE '[0-9]+' | while read -r n; do
+            gh issue edit "$n" --remove-label "admin-email-failed" \
+              || echo "::warning ::Could not clear the admin-email-failed label on issue #$n"
+          done
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}

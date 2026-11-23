@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Read-only front for the OpenStack client (INCIDENT_STORE_PLAN.md decision 18,
+# the fallback). The incident harvester holds the runner's read-write
+# credential; every OpenStack call it makes goes through this script, which
+# accepts exactly the read commands below and refuses anything else with exit 2
+# before touching the network. Installed beside the venv's `openstack`
+# (install-harvester.sh); test_harvest_incidents.py asserts the harvester never
+# calls `openstack` directly and that this script rejects writes.
+set -u
+case "${1:-} ${2:-} ${3:-}" in
+  "server show "*|"server list "*|"server event list"|"server event show") ;;
+  "console log show") ;;
+  "port show "*|"port list "*) ;;
+  "floating ip show"|"floating ip list") ;;
+  "limits show "*) ;;
+  "volume show "*|"image show "*) ;;
+  *)
+    echo "openstack-ro: refused: '${1:-} ${2:-} ${3:-}' is not a read command" >&2
+    exit 2
+    ;;
+esac
+exec "$(dirname "$0")/openstack" "$@"

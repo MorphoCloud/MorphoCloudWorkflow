@@ -69,6 +69,9 @@ jobs:
   # instance facts to the setup job via outputs (the baton is just these values).
   acquire:
     runs-on: ${{ vars.MORPHOCLOUD_ACQUIRE_RUNNER || 'self-hosted' }}
+    # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
+    # measured p95 3.3 min; ACTIVE wait 5 min + address 2 min.
+    timeout-minutes: 20
     needs:
       - call-validate-request
       - call-request-labeler
@@ -127,6 +130,9 @@ jobs:
   # reconstructs all instance facts from the acquire job's outputs.
   setup:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
+    # measured p95 12 min; setup poll 20 min + post-setup steps.
+    timeout-minutes: 30
     needs:
       - acquire
     if: ${{ !failure() && !cancelled() }}

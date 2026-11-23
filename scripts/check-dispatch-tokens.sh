@@ -18,11 +18,17 @@ dispatch_alert() {
   if [[ ! -s "$ALERT_TOKEN_FILE" ]]; then
     echo "$(ts) ERROR: $ALERT_TOKEN_FILE missing; cannot send alert for $name"; return
   fi
-  if GH_TOKEN="$(tr -d '\r\n' <"$ALERT_TOKEN_FILE")" gh workflow run token-expiry-alert.yml \
+  # The DISPATCH line is the incident harvester's record that this was
+  # automation (INCIDENT_STORE_PLAN.md rule 1; scripts/check-dispatch-logging.py).
+  if err=$(GH_TOKEN="$(tr -d '\r\n' <"$ALERT_TOKEN_FILE")" gh workflow run token-expiry-alert.yml \
        --repo MorphoCloud/MorphoCloudAnalytics --ref main \
-       -f token_name="$name" -f expires_at="$val" -f days="$days"; then
+       -f token_name="$name" -f expires_at="$val" -f days="$days" 2>&1 >/dev/null); then
+    echo "$(ts) DISPATCH token-expiry-alert.yml repo=MorphoCloud/MorphoCloudAnalytics issue=- by=check-dispatch-tokens.sh result=ok"
     echo "$(ts) $name: alert dispatched ($days days left)"
   else
+    err=$(printf '%s' "$err" | tr '\n' ' ')
+    if (( ${#err} > 200 )); then err="${err: -200}"; fi  # "${err: -200}" is empty when shorter
+    echo "$(ts) DISPATCH token-expiry-alert.yml repo=MorphoCloud/MorphoCloudAnalytics issue=- by=check-dispatch-tokens.sh result=FAILED $err"
     echo "$(ts) $name: FAILED to dispatch alert"
   fi
 }
@@ -41,3 +47,6 @@ check() {
 
 check "MorphoCloud-workflow-dispatcher"     "$CFG/dispatch.pat"
 check "GH_MorphoCloud-analytics-dispatcher" "$CFG/analytics-dispatch.pat"
+# The incident harvester's two tokens (INCIDENT_STORE_PHASE1_DESIGN.md).
+check "GH_MorphoCloud-incidents-source"     "$CFG/harvest-source.pat"
+check "GH_MorphoCloud-incidents-store"      "$CFG/harvest-store.pat"

@@ -1,7 +1,9 @@
 name: Update Request Status Label
 on:
+  # dispatch: */5 * * * *
+  # The runner's crontab is the clock (scripts/runner-cron-dispatcher.md). The
+  # schedule below is only a backstop: GitHub fires it a few times a day.
   schedule:
-    # Run every 5 mins
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
@@ -27,17 +29,28 @@ jobs:
           instance_basename="${instance_prefix}instance"
 
           openstack server list --name "^${instance_basename}-\d+" --long -f json | \
-          jq -r '.[] | [.Name, .Status, ((.Properties.exoSetup // "") | tostring)] | @tsv' | \
-            while IFS=$'\t' read -r instance_name status exosetup; do
+          # setup_done comes before exosetup: tab is IFS whitespace, so an
+          # empty field in the middle would shift the ones after it.
+          jq -r -L "$GITHUB_WORKSPACE/.github/actions/setup-state" \
+            'include "mc-setup";
+             .[] | (.Properties // null) as $p
+             | [.Name, .Status, ($p | mc_setup_done | tostring), ($p | mc_exo_setup_text)] | @tsv' | \
+            while IFS=$'\t' read -r instance_name status setup_done exosetup; do
               issue_number=${instance_name##*-}
               status_lowercase=${status,,}
 
               add_label="status:$status_lowercase"
 
-              # An OpenStack-ACTIVE server is still installing until the
-              # exoSetup marker reports complete — labeling it "active" misled
+              # An OpenStack-ACTIVE server is still installing until
+              # MorphoCloud's setup finished — labeling it "active" misled
               # users into thinking the instance was ready (tester feedback).
-              if [[ "$status" == "ACTIVE" && "$exosetup" != *complete* ]]; then
+              # "Finished" is the shared rule (mcSetup, or exoSetup on servers
+              # without it; SETUP_FINISHED_SIGNAL_DESIGN.md).
+              if [[ "$status" == "ACTIVE" && "$exosetup" == *'"error"'* ]]; then
+                # Decision 33: the instance's own setup script failed; the
+                # server is up but will never be usable as built.
+                add_label="status:error"
+              elif [[ "$status" == "ACTIVE" && "$setup_done" != "true" ]]; then
                 add_label="status:building"
               fi
 

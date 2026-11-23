@@ -1,7 +1,9 @@
 name: Collect Instance Uptime
 on:
+  # dispatch: */15 * * * *
+  # The runner's crontab is the clock (scripts/runner-cron-dispatcher.md). The
+  # schedule below is only a backstop: GitHub fires it a few times a day.
   schedule:
-    # Run every 15 mins
     - cron: "*/15 * * * *"
   workflow_dispatch:
 
@@ -15,6 +17,9 @@ permissions:
 jobs:
   collect-instance-uptime:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
+    # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
+    # measured p95 0.7 min; at most 1 min per instance.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -54,6 +59,9 @@ jobs:
         id: collect-instance-uptime
         run: |
           source ~/venv/bin/activate
+          # Every SSH call has a total time limit (SETUP_SSH_BOUNDS_DESIGN.md),
+          # so one instance can no longer stop the collection.
+          source "$GITHUB_WORKSPACE/.github/actions/ssh/mc-ssh.sh"
 
           instance_prefix=${PREFIX:+${PREFIX}_}
           instance_basename="${instance_prefix}instance"
@@ -119,9 +127,10 @@ jobs:
               #   Reference: https://stackoverflow.com/questions/9393038/ssh-breaks-out-of-while-loop-in-bash
 
               # Retrieve the instance uptime using SSH
-              if ! uptime=$(ssh \
+              if ! uptime=$(mc_ssh 30 "Uptime of $instance_name" \
                 -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null \
+                -o ConnectTimeout=15 \
                 -o LogLevel=ERROR \
                 exouser@$instance_ip \
                   'cat /proc/uptime | awk  "{print \$1}"' < /dev/null); then
@@ -130,9 +139,10 @@ jobs:
               fi
 
               # Retrieve the startup time of the instance in yyyy-mm-dd HH:MM:SS format
-              if ! startup_time=$(ssh \
+              if ! startup_time=$(mc_ssh 30 "Startup time of $instance_name" \
                 -o StrictHostKeyChecking=no \
                 -o UserKnownHostsFile=/dev/null \
+                -o ConnectTimeout=15 \
                 -o LogLevel=ERROR \
                 exouser@$instance_ip \
                   'uptime -s' < /dev/null); then
