@@ -433,21 +433,21 @@ makes sure the member's share exists (the share runner's `ensure`, same name
 runner; detaches the volume from the old server (allowed while shelved),
 attaches it to the runner, mounts it read-only and measures it; refuses when the
 data would not fit the share. Without `commit` it stops there and reports ("dry
-run": measured size, file count, free room). With `commit` it copies `MyData/`
-(the old volume's layout: `/media/volume/MyData`, which also held the Slicer
-install) into `MyData/` at the share's root — what an instance mounts as
-MyDrive, beside Desktop, Documents and Downloads — with rsync, preserving owner,
-times and links, **excluding the old Slicer install (`Slicer-*-linux-amd64`)**,
-`lost+found` and trash — Slicer lives on the image in share mode and extensions
-are reinstalled; verifies with a checksum pass that must report no difference
-and matching file counts and sizes; then unmounts and detaches, renames the
-volume `legacy-My-Data-N` and the old server `legacy-instance-N` so no workflow
-finds them (the rollback copy, deleted 30 days after reopening), and stamps the
-share (`mc_migrated_from`, `mc_migrated_at`, `mc_migrated_files`). The report —
-sizes, counts, duration, what was excluded — is posted on the member's issue by
-the workflow, which also labels it `storage:migrated`. Resumable: a volume
-already attached to the runner from an interrupted run is picked up where it
-was. Rehearsed on Test with seeded volumes before the 23rd. |
+run": what goes where, what is left out, sizes, file counts, free room). With
+`commit` it copies with rsync (owner, times and links kept) by the layout in
+"Volume layout on the share" under Migration (amended 2026-11-23: the first
+version copied `MyData/` whole into `MyData/` on the share, which buried the
+member's Desktop under `MyData/home/exouser`), verifies each part with a
+checksum pass that must report no difference, then unmounts and detaches,
+renames the volume `legacy-My-Data-N` and the old server `legacy-instance-N` so
+no workflow finds them (the rollback copy, deleted 30 days after reopening), and
+stamps the share (`mc_migrated_from`, `mc_migrated_at`, `mc_migrated_files`).
+The report — sizes, counts, duration, what was excluded — is posted on the
+member's issue by the workflow, which also labels it `storage:migrated`.
+Resumable: a volume already attached to the runner from an interrupted run is
+picked up where it was. Rehearsed on Test with seeded volumes before the 23rd;
+the seeded layout did not match production (no `home/exouser`), so the amended
+layout is rehearsed again before any production commit. |
 
 | 33 | **A slow setup is not a failure; only the instance's own error line is.**
 (maintainer, 2026-11-04; the last item of the June review backlog, #228: a
@@ -850,6 +850,41 @@ integration; the card and chatbot work; the landing page draft; items 2, 3 and 5
 of the reliability work (decisions 28 to 30 are 1 and 4); a rehearsal of the
 `share-prototype` into `main` merge in a scratch branch (today it conflicts in
 two files, the hotfixes of 2026-11-04 that exist on both branches).
+
+### Volume layout on the share (decision 32; amended 2026-11-23, maintainer)
+
+A production volume holds the member's whole home directory: setup moved it to
+`MyData/home/exouser`, put the Slicer install in `MyData/Slicer`, R libraries in
+`MyData/R`, and the folder the Desktop's `Uploads` shortcut opens in
+`MyData/Uploads`. On the share (what an instance mounts as MyDrive):
+
+| From the volume                                                     | To the share                                                                |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `MyData/home/exouser/Desktop`                                       | `Desktop/`                                                                  |
+| `MyData/home/exouser/Documents`                                     | `Documents/`                                                                |
+| `MyData/home/exouser/Downloads`                                     | `Downloads/`                                                                |
+| everything else in `MyData/home/exouser`                            | `MyOldData/` (one level up: `home/exouser/Pictures` → `MyOldData/Pictures`) |
+| everything else in `MyData` (incl. `Uploads` → `MyOldData/Uploads`) | `MyOldData/`                                                                |
+
+**Left out (not copied):** the Slicer install (`MyData/Slicer` and any
+`Slicer-*-linux-amd64`; handled separately), `MyData/R`, every hidden entry
+(name starting with `.`) at the top of `MyData` and of the home folder (`.local`
+with the trash, `.cache`, `.config`, `.ssh`, `.vnc`, …), the Desktop's `Uploads`
+shortcut and its `.desktop` launchers (share-mode setup writes fresh ones),
+`lost+found` and `.Trash-*`. Hidden files inside the member's own folders (for
+example a project's `.git` under `Documents`) are kept.
+
+**Nothing is overwritten.** The copy refuses when `Desktop`, `Documents`,
+`Downloads` or `MyOldData` already hold anything on the share, except when the
+share records (`mc_migrating_from`) that an earlier run of the same volume
+started the copy; it refuses when an entry of the home folder and an entry of
+`MyData` would land under the same name in `MyOldData`. Refusals are handled by
+hand. The dry run lists both, so they are seen before `commit`.
+
+**The dry run changes Jetstream2, not the data:** it detaches the volume from
+the shelved server (the volume is only ever mounted read-only). Rollback
+therefore re-attaches the volume to the old server as well as restoring the
+names.
 
 ### Closure access (maintainer, 2026-11-22)
 
