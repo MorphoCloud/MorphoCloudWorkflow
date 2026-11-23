@@ -188,9 +188,18 @@ def get_or_none(conn, ip_id: str):
         raise
 
 
-def attach(conn, name: str, prefer: str = "", deadline: float = 300, sleep=time.sleep):
+def attach(  # noqa: PLR0913 — the knobs are what the callers vary
+    conn,
+    name: str,
+    prefer: str = "",
+    deadline: float = 300,
+    sleep=time.sleep,
+    minted: list | None = None,
+):
     """Attach a routable address to the server's port and return it, as read
-    back from Neutron. Idempotent: an address already on the port is kept."""
+    back from Neutron. Idempotent: an address already on the port is kept.
+    `minted`, when given, comes back holding how many addresses this attach
+    had to mint (the pool had none free)."""
     _, port = server_port(conn, name)
     have = mine(conn, port.id)
     if have is not None:
@@ -203,7 +212,8 @@ def attach(conn, name: str, prefer: str = "", deadline: float = 300, sleep=time.
             release(conn, ip, port.id, name, sleep)
     start = time.monotonic()
     taken: set[str] = set()
-    minted = [0]
+    minted = minted if minted is not None else [0]
+    minted[0] = 0
     while True:
         got = bind_first(
             conn, candidates(conn, taken, prefer, minted, name), port.id, name, taken
@@ -451,10 +461,18 @@ def main(argv: list[str]) -> int:
         if args.cmd == "ensure-spare":
             ensure_spare(conn)
         elif args.cmd == "attach":
-            ip = attach(conn, args.server, args.prefer, args.deadline)
+            minted = [0]
+            ip = attach(conn, args.server, args.prefer, args.deadline, minted=minted)
             print(f"floating_ip_address={ip.floating_ip_address}")  # noqa: T201
             print(f"floating_ip_uuid={ip.id}")  # noqa: T201
-            keep_one_in_hand(conn)
+            if minted[0]:
+                # The pool had no spare and this attach had to mint: Jetstream2
+                # is already short, and a second mint right away takes two from
+                # a dry pool. The policing script refills the spare within
+                # minutes (decision 24, as the old create-ip action did).
+                log("minted for this attach; no second spare minted now")
+            else:
+                keep_one_in_hand(conn)
         elif args.cmd == "verify":
             ip = verify(conn, args.server, args.ip, args.wait, args.reattach)
             print(f"instance_ip={ip}")  # noqa: T201

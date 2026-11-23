@@ -646,8 +646,7 @@ def run(dry_run: bool) -> int:
         + (f" starting: {', '.join(starting)}" if starting else "")
     )
     seen = {a[1] for a in actions if a[0] == "alert"}
-    for a in actions:
-        apply(a, state, dry_run, counts)
+    apply_all(actions, state, dry_run, counts)
     for key in [k for k in state if k.startswith("nonroutable:") and k not in seen]:
         clear_alert(state, key)  # gone: the next one alerts again
     if not dry_run:
@@ -747,6 +746,37 @@ def apply(action: tuple, state: dict, dry_run: bool, counts: dict) -> None:
             log(f"would alert: {action[2]}")
         else:
             alert_once(state, action[1], action[2], action[3])
+
+
+HTTP_SERVER_ERROR = 500
+_TRANSIENT_NAMES = ("ConnectFailure", "ConnectTimeout", "RetriableConnectionFailure")
+
+
+def transient(e: Exception) -> bool:
+    """A Neutron hiccup, not a bug: a 5xx answer or a lost connection. The
+    action is left for the next tick (as the old CLI path did) instead of
+    ending the run and alerting that policing is crashing (review on #311)."""
+    code = getattr(e, "status_code", None)
+    if isinstance(code, int) and code >= HTTP_SERVER_ERROR:
+        return True
+    if isinstance(e, (ConnectionError, TimeoutError)):
+        return True
+    return type(e).__name__.endswith(_TRANSIENT_NAMES)
+
+
+def apply_all(actions: list, state: dict, dry_run: bool, counts: dict) -> None:
+    """Every planned action; a transient Neutron error on one address skips
+    that address this tick and the rest still run."""
+    for a in actions:
+        try:
+            apply(a, state, dry_run, counts)
+        except Exception as e:
+            if a[0] in ("unset", "delete") and transient(e):
+                log(
+                    f"{a[0]} of {a[2]} hit a Neutron error ({type(e).__name__}: {e}); left for the next tick"
+                )
+                continue
+            raise
 
 
 def main(argv: list[str]) -> int:

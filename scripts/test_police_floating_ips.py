@@ -618,3 +618,50 @@ def test_the_probe_leaves_an_address_taken_meanwhile(fake_net, monkeypatch):
     police.probe(state, NOW)
     assert n.fips["p"]["port_id"] == "port-create"
     assert state == {}  # the pool has addresses again all the same
+
+
+def test_a_transient_neutron_error_skips_that_address_not_the_run(fake_net):
+    # Review on #311: a 503 on one delete used to end the run and send the
+    # "policing is crashing" alert. Now that address waits for the next tick
+    # and the other actions still run.
+    n = fake_net(a=None, b=None)
+
+    def hiccup():
+        raise Rev(503)
+
+    n.before_write.append(hiccup)
+    actions = [
+        ("delete", "a", "149.165.1.1", "surplus"),
+        ("delete", "b", "149.165.1.2", "surplus"),
+    ]
+    police.apply_all(actions, {}, False, {})
+    assert "a" in n.fips  # skipped this tick
+    assert "b" not in n.fips  # still done
+
+
+def test_a_real_bug_in_an_action_still_raises(fake_net):
+    n = fake_net(a=None)
+
+    def bug():
+        msg = "bad"
+        raise TypeError(msg)
+
+    n.before_write.append(bug)
+    with pytest.raises(TypeError):
+        police.apply_all([("delete", "a", "149.165.1.1", "surplus")], {}, False, {})
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        (Rev(503), True),
+        (Rev(500), True),
+        (Rev(412), False),
+        (Rev(404), False),
+        (ConnectionError(), True),
+        (TimeoutError(), True),
+        (ValueError(), False),
+    ],
+)
+def test_transient_classification(exc, expected):
+    assert police.transient(exc) is expected
