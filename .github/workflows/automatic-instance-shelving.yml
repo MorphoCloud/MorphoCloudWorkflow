@@ -19,7 +19,10 @@ jobs:
   auto-shelve:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
-    # measured p95 0.8 min; about 2.5 min per instance that stops answering.
+    # measured p95 0.8 min; up to about 4.5 min per instance that stops
+    # answering (three tries, each a 30 s call and a 25 s probe, both with
+    # timeout's 10 s kill grace, 20 s apart). A sweep that runs out of time
+    # leaves the rest to the next run.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7

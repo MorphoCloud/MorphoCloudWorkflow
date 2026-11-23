@@ -56,6 +56,7 @@ MAIL_PASSWORD=first tailone
 "password": "json spaced tailthree"
 secret: 'single tailfour'
 OS_PASSWORD="quoted tailfive"
+vnc_password=two tailsix
 """
 
 
@@ -82,6 +83,7 @@ def test_redaction_fixture_comes_out_clean():
         "tailthree",
         "tailfour",
         "tailfive",
+        "tailsix",
     ):
         assert secret not in out, out
     assert "BEGIN OPENSSH PRIVATE KEY" not in out

@@ -24,7 +24,8 @@ s/("?(password|passwd|secret|application_credential_secret)"?[[:space:]]*[=:][[:
 s/((password|passwd|secret|application_credential_secret)"?[[:space:]]*[=:][[:space:]]*)[^"'[:space:]].*$/\1[redacted]/
 # The instance passphrase, kept as a Nova tag `exoPw:<passphrase>`.
 s/exoPw:[^[:space:]"',]*/exoPw:[redacted]/g
-# VNC password lines (vncpasswd, VNC password, vnc_password=...).
-s/([Vv][Nn][Cc][^[:space:]]*([Pp][Aa][Ss][Ss]|[Pp][Ww])[^[:space:]]*[=:][[:space:]]*)[^[:space:]]+/\1[redacted]/g
+# VNC password lines (vncpasswd, VNC password, vnc_password=...), to the end
+# of the line like the unquoted rules above.
+s/([Vv][Nn][Cc][^[:space:]]*([Pp][Aa][Ss][Ss]|[Pp][Ww])[^[:space:]]*[=:][[:space:]]*)[^[:space:]].*$/\1[redacted]/
 # The CephFS share access key from mc_share_runner.py's output.
 s/("?access_key"?[[:space:]]*[=:][[:space:]]*"?)[A-Za-z0-9+\/=]+/\1[redacted]/g
