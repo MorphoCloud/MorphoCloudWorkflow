@@ -56,7 +56,7 @@ MAIL_PASSWORD=first tailone
 "password": "json spaced tailthree"
 secret: 'single tailfour'
 OS_PASSWORD="quoted tailfive"
-vnc_password=two tailsix
+VNCPW: two tailsix
 """
 
 
