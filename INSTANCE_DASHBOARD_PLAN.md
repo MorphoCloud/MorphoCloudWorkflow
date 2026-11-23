@@ -878,10 +878,6 @@ of `MyData`. Everything below those levels is kept, hidden or not (maintainer,
 `Desktop`, `Documents` and `Downloads` are always created on the share, empty
 when the volume has nothing for one (maintainer, 2026-11-23).
 
-**A member with two volumes** (maintainer, 2026-11-23): the second is copied
-with `--merge` after the first, only when no file of the second already exists
-on the share (folders merge); `mc_migrated_from` lists both volumes.
-
 **Nothing is overwritten.** The copy refuses when `Desktop`, `Documents`,
 `Downloads` or `MyOldData` already hold anything on the share, except when the
 share records (`mc_migrating_from`) that an earlier run of the same volume
@@ -893,6 +889,15 @@ run starts copying and is not removed; `mc_migrated_from` is written only after
 the copy is verified. A share with the first and not the second is a copy that
 did not finish, and only such a copy is resumed; once `mc_migrated_from` is
 written, a later run passes every check again.
+
+The one other exception is **a member's second volume** (maintainer,
+2026-11-23), copied with `--merge` after the first volume's copy is verified:
+the folders above may then hold the first volume's files, so instead of the
+empty-folder rule the copy refuses when any file or link of the second volume
+already exists on the share (folders merge), and its checksum pass compares only
+the second volume's files. `mc_migrating_from` then names the second volume
+while it copies; `mc_migrated_from` lists both volumes, comma-separated, once
+the second is verified.
 
 **The dry run changes Jetstream2, not the data:** it detaches the volume from
 the shelved server (the volume is only ever mounted read-only). Rollback
