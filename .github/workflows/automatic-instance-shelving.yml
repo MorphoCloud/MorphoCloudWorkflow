@@ -19,7 +19,10 @@ jobs:
   auto-shelve:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     # Backstop if an SSH time limit is missed (SETUP_SSH_BOUNDS_DESIGN.md):
-    # measured p95 0.8 min; about 2.5 min per instance that stops answering.
+    # measured p95 0.8 min; up to about 4.5 min per instance that stops
+    # answering (three tries, each a 30 s call and a 25 s probe, both with
+    # timeout's 10 s kill grace, 20 s apart). A sweep that runs out of time
+    # leaves the rest to the next run.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -49,10 +52,13 @@ jobs:
           # own code at once: the instance answered, it is not unreachable.
           #
           # Each try has a 30 s total limit (SETUP_SSH_BOUNDS_DESIGN.md), so one
-          # instance can no longer stop the sweep. A try that reaches the limit
-          # returns 124 at once: the instance answered, so it is left alone this
-          # tick, like any other failed command. An instance that stops
-          # answering mid-call is dropped by ServerAlive with 255 and retried.
+          # instance can no longer stop the sweep. ServerAlive needs about 70 s
+          # to notice a connection that died mid-call, longer than the limit, so
+          # a try that reaches the limit (124, or 137) is followed by a short
+          # probe (`true`, 25 s): if it answers, the command hung on a live
+          # instance, which is left alone this tick like any other failed
+          # command; if it does not, the try counts as a lost connection and is
+          # retried like 255 (review on #311).
           source "$GITHUB_WORKSPACE/.github/actions/ssh/mc-ssh.sh"
           ssh_out() {  # $1 address, $2 command
             local i rc
@@ -61,6 +67,13 @@ jobs:
                   -o LogLevel=ERROR -o ConnectTimeout=15 "exouser@$1" "$2" < /dev/null
               rc=$?
               (( rc == 0 )) && return 0
+              if (( rc == 124 || rc == 137 )); then
+                if mc_ssh 25 "Reachability probe on $1" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                    -o LogLevel=ERROR -o ConnectTimeout=15 "exouser@$1" true < /dev/null; then
+                  return "$rc"
+                fi
+                rc=255
+              fi
               (( rc != 255 )) && return "$rc"
               [[ $i -lt 3 ]] && sleep 20
             done

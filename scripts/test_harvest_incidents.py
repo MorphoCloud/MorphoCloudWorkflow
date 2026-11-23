@@ -51,6 +51,12 @@ exoPw:Correct-Horse-Battery
 vncpasswd=abc123 VNC_PASSWORD: zzz
 "access_key": "AQBhZmFjZXM4Zm9vYmFyYmF6Cg=="
 alice.smith@example.edu wrote to Bob.Jones@uw.edu
+MAIL_PASSWORD=first tailone
+  password: spaced tailtwo
+"password": "json spaced tailthree"
+secret: 'single tailfour'
+OS_PASSWORD="quoted tailfive"
+VNCPW: two tailsix
 """
 
 
@@ -71,6 +77,13 @@ def test_redaction_fixture_comes_out_clean():
         "AQBhZmFjZXM4",
         "alice.smith@example.edu",
         "Bob.Jones@uw.edu",
+        # values with spaces (review on #311): nothing after the first space
+        "tailone",
+        "tailtwo",
+        "tailthree",
+        "tailfour",
+        "tailfive",
+        "tailsix",
     ):
         assert secret not in out, out
     assert "BEGIN OPENSSH PRIVATE KEY" not in out
