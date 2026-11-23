@@ -53,7 +53,7 @@ jobs:
           issue_number: ${{ steps.collect_inputs.outputs.issue_number }}
 
       - name: description (instance name)
-        uses: julien-deramond/update-issue-body@a7fae45395cac5a23318d38f7b09a58650dfe84f # v1.1.0
+        uses: julien-deramond/update-issue-body@0cd723f2d6e07a1381afeb9a65e97ce1804e8ba2 # v1.2.1
         with:
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
           body: |
@@ -73,7 +73,7 @@ jobs:
           suffix: ${{ vars.VOLUME_NAME_SUFFIX }}
 
       - name: description (volume name)
-        uses: julien-deramond/update-issue-body@a7fae45395cac5a23318d38f7b09a58650dfe84f # v1.1.0
+        uses: julien-deramond/update-issue-body@0cd723f2d6e07a1381afeb9a65e97ce1804e8ba2 # v1.2.1
         with:
           issue-number: ${{ steps.collect_inputs.outputs.issue_number }}
           body: |
