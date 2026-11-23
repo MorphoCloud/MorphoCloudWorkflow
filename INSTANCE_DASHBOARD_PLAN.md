@@ -878,6 +878,10 @@ of `MyData`. Everything below those levels is kept, hidden or not (maintainer,
 `Desktop`, `Documents` and `Downloads` are always created on the share, empty
 when the volume has nothing for one (maintainer, 2026-11-23).
 
+**A member with two volumes** (maintainer, 2026-11-23): the second is copied
+with `--merge` after the first, only when no file of the second already exists
+on the share (folders merge); `mc_migrated_from` lists both volumes.
+
 **Nothing is overwritten.** The copy refuses when `Desktop`, `Documents`,
 `Downloads` or `MyOldData` already hold anything on the share, except when the
 share records (`mc_migrating_from`) that an earlier run of the same volume
