@@ -895,6 +895,30 @@ the shelved server (the volume is only ever mounted read-only). Rollback
 therefore re-attaches the volume to the old server as well as restoring the
 names.
 
+### Test-Instances shares to production (maintainer, 2026-11-23)
+
+Every member share on Test-Instances (BIO240357, `mc-user-<github id>`) is
+copied into the same member's production share (BIO180006, created with
+`ensure`, the same convention as decision 32). The Test share is only read
+(mounted read-only) and stays as it is. For a member who also has a production
+volume, the volume is migrated first (decision 32), then the Test share.
+
+- **Where the files go:** to the top of the production share, as they were on
+  Test (`Desktop`, `Documents`, `Downloads`, anything else beside them). Folders
+  with the same name merge.
+- **Nothing is overwritten:** if any file, link or other non-folder in the Test
+  share has the same path as anything already on the production share (or a
+  folder meets a file of the same name), the whole Test share goes into
+  `test-share/` on the production share instead. `test-share/` must not already
+  hold files.
+- **Verified** with a checksum pass of the Test share against where it landed.
+- **Stamped** on the production share: `mc_test_share_from` (the Test share's
+  id), `mc_test_share_at`, `mc_test_share_dest` (`/` or `test-share/`). A share
+  that already has `mc_test_share_from` is not copied again.
+- Run by an admin on a production runner (`mc_migrate_test_share.py`, portal
+  repository, `runner/`); the Test share's access key is handed to it on
+  standard input, never on the command line. No issue comment, no email.
+
 ### Closure access (maintainer, 2026-11-22)
 
 While MorphoCloud is closed, `amm554` (a member with no privileges) must be able
