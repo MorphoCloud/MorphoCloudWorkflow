@@ -1222,4 +1222,17 @@ amm554 before the 23rd.
     and fails, and the audit sends no second email; (c) amm554 closes its own
     request: the guard runs as before and the audit sends nothing; (d) with the
     grant removed, GitHub refuses amm554 adding a label or closing a request it
-    did not open.
+    did not open. **Passed 2026-11-15 05:03Z** (Test-Instances at MWF 6ad93d1).
+    (a) On #549 (opened by amm554), amm554 added `instance-request`, added
+    `renewed:1` and removed it: three audit runs, each "not a member of
+    morphocloud-admins", the email sent and the run failed; the labels stayed as
+    amm554 left them. (b) #550 was opened by `muratmaga` as the fixture (setup
+    only; the audit run for its label passed as an admin's change and reported
+    nothing); amm554 closed it: `authorize` decided "not the author, an admin or
+    the course instructor", emailed the admins and failed, `guard` was skipped,
+    and the audit run was skipped. (c) amm554 closed #549: `authorize` "the
+    request's author", `guard` ran ("No resources for #549 — close is fine"),
+    the audit run was skipped. (d) amm554's grant removed (`triage: false`): on
+    `muratmaga`'s #540, closing, adding `renewed:1` and removing `expiration:7d`
+    each returned 403 and assigning itself 404; adding a label to its own #549
+    returned 403; #540 unchanged.
