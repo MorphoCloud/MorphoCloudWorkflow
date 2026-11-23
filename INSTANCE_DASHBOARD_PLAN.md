@@ -798,13 +798,15 @@ MorphoCloud is closed to members for four days and reopens on 2026-11-27 with
 the share-based stack on production. Six steps, in this order; the build work is
 done before the 23rd so the four days hold only execution and testing.
 
-1. **Close.** `MORPHOCLOUD_MAINTENANCE` set (decision 31); the running
-   production instances shelved. Tags `pre-migration-2026-11` on
-   MorphoCloudWorkflow `main`, Instances `main`, the exosphere fork's base
-   branch and the portal repository; a copy of the Test portal database.
-   `share-prototype` merged into `main` as a merge commit (history kept; #311
-   closes as superseded); `main` vendorized into Instances with the diff shown
-   first; the production runner's crontab re-rendered and reinstalled.
+1. **Close.** Members' access removed as described in "Closure access" below
+   (amended 2026-11-22; `MORPHOCLOUD_MAINTENANCE` is not the way members are
+   kept out, because it would also refuse `amm554`); the running production
+   instances shelved. Tags `pre-migration-2026-11` on MorphoCloudWorkflow
+   `main`, Instances `main`, the exosphere fork's base branch and the portal
+   repository; a copy of the Test portal database. `share-prototype` merged into
+   `main` as a merge commit (history kept; #311 closes as superseded); `main`
+   vendorized into Instances with the diff shown first; the production runner's
+   crontab re-rendered and reinstalled.
 2. **Shares.** One share per existing member (the 32 approved requests;
    two-instance owners get one share and a separate email, decided 2026-10-24).
    Each `My-Data-N` volume is attached to a migration VM that mounts the
@@ -849,10 +851,46 @@ of the reliability work (decisions 28 to 30 are 1 and 4); a rehearsal of the
 `share-prototype` into `main` merge in a scratch branch (today it conflicts in
 two files, the hotfixes of 2026-11-04 that exist on both branches).
 
+### Closure access (maintainer, 2026-11-22)
+
+While MorphoCloud is closed, `amm554` (a member with no privileges) must be able
+to use production Instances and the production portal, and every other member
+must be kept out. Members are kept out by GitHub access and by team checks, all
+pointed at one team, `mc-migration-testers` (members: `amm554`; `muratmaga` was
+added by GitHub as the team's creator). The maintenance switch
+`MORPHOCLOUD_MAINTENANCE` (decision 31) refuses every member, `amm554` included,
+so it is **not set** while `amm554` tests; it stays available as the rollback
+lever.
+
+Members were told by email on 2026-11-22 (141 verified registrants) that
+MorphoCloud is unavailable from 12:00 AM US Pacific on 2026-11-23 through
+2026-11-29, and that they will be emailed when it is available again.
+
+Every change made for the closure, and how to undo it at reopening:
+
+| #   | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | When                                                                                   | Undo at reopening                                                                                                                                                                                                                                                                                                     |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | morphocloud.org, www.morphocloud.org and join.morphocloud.org show a maintenance page (HTTP 503: "MorphoCloud is unavailable November 23–29, 2026 while we move to the new MorphoCloud portal. Questions: portal@morphocloud.org"). On the join VM (`exouser@149.165.151.191`) the two `sites-enabled` symlinks point to `morphocloud.org.maintenance` and `join.morphocloud.org.maintenance` in `/etc/nginx/sites-available`; the page is `/var/www/maintenance/maintenance.html`. The join app keeps running behind it, and its cron jobs still reach it on `127.0.0.1:8000`. | 2026-11-23 06:56 UTC, by the one-time systemd timer `mc-maintenance-on` on the join VM | On the join VM: `sudo /usr/local/sbin/mc-site-maintenance off`. It points the symlinks back to the original files, runs `nginx -t` (puts the old links back if it fails), reloads nginx, checks that all three addresses return HTTP 200, and emails maga@uw.edu the result. Log: `/var/log/mc-site-maintenance.log`. |
+| 2   | Teams `morphocloudusers`, `morphocloudworkshoporganizers` and `morphocloudcourseinstructors` lost their access to MorphoCloud/Instances (each had `pull`, which is enough to open issues and comment in a private repository). `morphocloud-admins` keeps `triage`. The organization's default repository permission is `none` and Instances has no direct collaborators, so nobody else has access.                                                                                                                                                                            | 2026-11-23 06:56 UTC, from the maintainer's laptop                                     | For each of the three teams: `gh api -X PUT orgs/MorphoCloud/teams/<team>/repos/MorphoCloud/Instances -f permission=pull`                                                                                                                                                                                             |
+| 3   | Team `mc-migration-testers` created and given `pull` on MorphoCloud/Instances.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | 2026-11-22                                                                             | `gh api -X DELETE orgs/MorphoCloud/teams/mc-migration-testers/repos/MorphoCloud/Instances`; delete the team when it is no longer needed.                                                                                                                                                                              |
+| 4   | Instances variable `MORPHOCLOUD_USERS_TEAM_SLUG` changed from `MorphoCloudUsers` to `mc-migration-testers` (`amm554` is not in MorphoCloudUsers, so the request handler would refuse it).                                                                                                                                                                                                                                                                                                                                                                                       | With the vendorize of step 1                                                           | `gh variable set MORPHOCLOUD_USERS_TEAM_SLUG -R MorphoCloud/Instances -b MorphoCloudUsers`                                                                                                                                                                                                                            |
+| 5   | Production portal sign-in team `GITHUB_TEAM_SLUG` set to `mc-migration-testers`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | When the production portal is deployed                                                 | Set `GITHUB_TEAM_SLUG=MorphoCloudUsers` in the production portal's env file and restart the portal.                                                                                                                                                                                                                   |
+| 6   | Join app `ONBOARDING_PAUSED=true` and the maintenance `ONBOARDING_BANNER_TEXT` (since 2026-10-28).                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | 2026-10-28                                                                             | In `/etc/morphocloud-intake/env` on the join VM: `ONBOARDING_PAUSED=false`, then `sudo systemctl restart morphocloud-intake`.                                                                                                                                                                                         |
+| 7   | `MORPHOCLOUD_MAINTENANCE` — only if it is set at some point (not while `amm554` tests).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | —                                                                                      | `gh variable delete MORPHOCLOUD_MAINTENANCE -R MorphoCloud/Instances`                                                                                                                                                                                                                                                 |
+| 8   | Email to every registrant that MorphoCloud is available again (promised in the 2026-11-22 email).                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | —                                                                                      | Send after rows 1–7 are undone.                                                                                                                                                                                                                                                                                       |
+
+Still to check before step 2: whether creating a member's MyDrive (step 2) or an
+instance the admins create for a member (step 3) emails the member while they
+cannot get in.
+
 ## Not decided
 
-Nothing open. Renew (decision 4) and the expiry dates (decision 17) were decided
-on 2026-09-26. Anything new needs the maintainer's decision before it is added.
+- Whether production Instances gets `MORPHOCLOUD_PORTAL_ONLY_EXEMPT=amm554`
+  while `amm554` tests (Test-Instances has it; it lets `amm554` type commands as
+  well as use the portal).
+
+Renew (decision 4) and the expiry dates (decision 17) were decided on
+2026-09-26. Anything new needs the maintainer's decision before it is added.
 
 ## Later: one site (agreed direction, 2026-09-26)
 
