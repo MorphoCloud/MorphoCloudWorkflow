@@ -208,7 +208,7 @@ retry git clone \
   /opt/instance-config-mgt \
   || fail "could not clone MorphoCloud/exosphere"
 
-exosphere_sha="a5bd5ad7feab72911d166202982a4129df85c074" # share-prototype
+exosphere_sha="526ba1c903393a03ca46f4d5c14f38619d5993bf" # morpho-cloud-portal-2026.06-ubuntu24-prep
 (cd /opt/instance-config-mgt && git reset --hard "$exosphere_sha") \
   || fail "could not check out exosphere commit $exosphere_sha"
 
