@@ -867,12 +867,13 @@ A production volume holds the member's whole home directory: setup moved it to
 | everything else in `MyData` (incl. `Uploads` → `MyOldData/Uploads`) | `MyOldData/`                                                                |
 
 **Left out (not copied):** the Slicer install (`MyData/Slicer` and any
-`Slicer-*-linux-amd64`; handled separately), `MyData/R`, every hidden entry
-(name starting with `.`) at the top of `MyData` and of the home folder (`.local`
-with the trash, `.cache`, `.config`, `.ssh`, `.vnc`, …), the Desktop's `Uploads`
-shortcut and its `.desktop` launchers (share-mode setup writes fresh ones),
-`lost+found` and `.Trash-*`. Hidden files inside the member's own folders (for
-example a project's `.git` under `Documents`) are kept.
+`Slicer-*-linux-amd64` at the top of `MyData` or of the home folder; handled
+separately), `MyData/R`, every hidden entry (name starting with `.`) directly in
+`MyData/home/exouser` (`.local` with the trash, `.cache`, `.config`, `.ssh`,
+`.vnc`, …), the Desktop's `Uploads` shortcut and its `.desktop` launchers
+(share-mode setup writes fresh ones), and `lost+found` and `.Trash-*` at the top
+of `MyData`. Everything below those levels is kept, hidden or not (maintainer,
+2026-11-23).
 
 **Nothing is overwritten.** The copy refuses when `Desktop`, `Documents`,
 `Downloads` or `MyOldData` already hold anything on the share, except when the
@@ -883,7 +884,8 @@ hand. The dry run lists both, so they are seen before `commit`.
 `mc_migrating_from` (the volume's name) is written on the share when a `commit`
 run starts copying and is not removed; `mc_migrated_from` is written only after
 the copy is verified. A share with the first and not the second is a copy that
-did not finish.
+did not finish, and only such a copy is resumed; once `mc_migrated_from` is
+written, a later run passes every check again.
 
 **The dry run changes Jetstream2, not the data:** it detaches the volume from
 the shelved server (the volume is only ever mounted read-only). Rollback
