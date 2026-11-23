@@ -13,8 +13,15 @@ s/(^|[^A-Za-z0-9_])github_pat_[A-Za-z0-9_]{20,}/\1[token]/g
 /-----BEGIN [A-Z ]*PRIVATE KEY-----/,/-----END [A-Z ]*PRIVATE KEY-----/s/.*/[private-key]/
 # OpenStack credentials: OS_PASSWORD, application-credential secrets, and the
 # clouds.yaml / JSON shapes `password: x`, "password": "x", `secret: x`.
-s/(OS_PASSWORD|OS_APPLICATION_CREDENTIAL_SECRET|MAIL_PASSWORD|SMTP_PASSWORD)([=:][[:space:]]*)[^[:space:]"']+/\1\2[redacted]/g
-s/("?(password|passwd|secret|application_credential_secret)"?[[:space:]]*[=:][[:space:]]*"?)[^[:space:]"',]+/\1[redacted]/g
+# A value may contain spaces: a quoted value is redacted up to its closing
+# quote, an unquoted one to the end of the line (over-redaction is the safe
+# direction). Quoted forms first, so the unquoted rule never sees them.
+s/(OS_PASSWORD|OS_APPLICATION_CREDENTIAL_SECRET|MAIL_PASSWORD|SMTP_PASSWORD)([=:][[:space:]]*")[^"]*/\1\2[redacted]/g
+s/(OS_PASSWORD|OS_APPLICATION_CREDENTIAL_SECRET|MAIL_PASSWORD|SMTP_PASSWORD)([=:][[:space:]]*')[^']*/\1\2[redacted]/g
+s/(OS_PASSWORD|OS_APPLICATION_CREDENTIAL_SECRET|MAIL_PASSWORD|SMTP_PASSWORD)([=:][[:space:]]*)[^"'[:space:]].*$/\1\2[redacted]/
+s/("?(password|passwd|secret|application_credential_secret)"?[[:space:]]*[=:][[:space:]]*")[^"]*/\1[redacted]/g
+s/("?(password|passwd|secret|application_credential_secret)"?[[:space:]]*[=:][[:space:]]*')[^']*/\1[redacted]/g
+s/((password|passwd|secret|application_credential_secret)"?[[:space:]]*[=:][[:space:]]*)[^"'[:space:]].*$/\1[redacted]/
 # The instance passphrase, kept as a Nova tag `exoPw:<passphrase>`.
 s/exoPw:[^[:space:]"',]*/exoPw:[redacted]/g
 # VNC password lines (vncpasswd, VNC password, vnc_password=...).

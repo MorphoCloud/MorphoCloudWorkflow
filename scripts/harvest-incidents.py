@@ -89,7 +89,7 @@ from pathlib import Path
 import yaml
 
 SCHEMA_VERSION = 1
-RULES_VERSION = 1  # bump with redact.sed
+RULES_VERSION = 2  # bump with redact.sed
 HERE = Path(__file__).resolve().parent
 # MORPHOCLOUD_CFG_DIR lets a dry run from a laptop use a scratch directory.
 CFG_DIR = Path(
