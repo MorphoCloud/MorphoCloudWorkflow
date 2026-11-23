@@ -321,6 +321,25 @@ def test_main_prints_outputs_and_exit_codes(monkeypatch, capsys):
     assert fip.main(["attach", "--server", "nope"]) == fip.EXIT_NO_SERVER
 
 
+def test_main_mints_no_second_spare_after_minting_for_the_attach(monkeypatch, capsys):
+    # Review on #311: when the pool had no free address and attach minted,
+    # keep_one_in_hand must not mint a second one right away (decision 24;
+    # the old create-ip action skipped it on the mint path).
+    n = FakeNeutron(pool=["149.165.2.2", "149.165.3.3"], servers=["a"])
+    monkeypatch.setattr(fip, "connect", lambda: n)
+    monkeypatch.setenv("OS_CLOUD", "test")
+    calls = []
+    monkeypatch.setattr(fip, "keep_one_in_hand", lambda conn: calls.append(conn))
+    assert fip.main(["attach", "--server", "a"]) == 0
+    capsys.readouterr()
+    assert calls == []
+    # With a free address in the pool (no mint), the spare is still kept.
+    n2 = FakeNeutron(addresses=["149.165.1.1"], servers=["b"])
+    monkeypatch.setattr(fip, "connect", lambda: n2)
+    assert fip.main(["attach", "--server", "b"]) == 0
+    assert calls == [n2]
+
+
 # --- verify: nothing logs in to an instance before it proves who it is ----
 
 

@@ -19,9 +19,13 @@ s/(^|[^A-Za-z0-9_])github_pat_[A-Za-z0-9_]{20,}/\1[token]/g
 s/(OS_PASSWORD|OS_APPLICATION_CREDENTIAL_SECRET|MAIL_PASSWORD|SMTP_PASSWORD)([=:][[:space:]]*")[^"]*/\1\2[redacted]/g
 s/(OS_PASSWORD|OS_APPLICATION_CREDENTIAL_SECRET|MAIL_PASSWORD|SMTP_PASSWORD)([=:][[:space:]]*')[^']*/\1\2[redacted]/g
 s/(OS_PASSWORD|OS_APPLICATION_CREDENTIAL_SECRET|MAIL_PASSWORD|SMTP_PASSWORD)([=:][[:space:]]*)[^"'[:space:]].*$/\1\2[redacted]/
-s/("?(password|passwd|secret|application_credential_secret)"?[[:space:]]*[=:][[:space:]]*")[^"]*/\1[redacted]/g
-s/("?(password|passwd|secret|application_credential_secret)"?[[:space:]]*[=:][[:space:]]*')[^']*/\1[redacted]/g
-s/((password|passwd|secret|application_credential_secret)"?[[:space:]]*[=:][[:space:]]*)[^"'[:space:]].*$/\1[redacted]/
+# Generic keys in any case (Password, PASSWORD, ...; bracket expressions, as
+# the VNC rule below, because BSD sed has no case-insensitive flag), with the
+# key bare or in double or single quotes (Python reprs: {'password': 'x'}).
+# "secret" also covers application_credential_secret and *_SECRET names.
+s/(["']?([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt])["']?[[:space:]]*[=:][[:space:]]*")[^"]*/\1[redacted]/g
+s/(["']?([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt])["']?[[:space:]]*[=:][[:space:]]*')[^']*/\1[redacted]/g
+s/(([Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Aa][Ss][Ss][Ww][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt])["']?[[:space:]]*[=:][[:space:]]*)[^"'[:space:]].*$/\1[redacted]/
 # The instance passphrase, kept as a Nova tag `exoPw:<passphrase>`.
 s/exoPw:[^[:space:]"',]*/exoPw:[redacted]/g
 # VNC password lines (vncpasswd, VNC password, vnc_password=...), to the end

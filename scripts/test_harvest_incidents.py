@@ -57,6 +57,10 @@ MAIL_PASSWORD=first tailone
 secret: 'single tailfour'
 OS_PASSWORD="quoted tailfive"
 VNCPW: two tailsix
+Password: Capital tailseven
+PASSWORD=upper taileight
+{'password': 'pyrepr taillnine', 'user': 'kept'}
+APPLICATION_CREDENTIAL_SECRET: appcred tailten
 """
 
 
@@ -84,6 +88,11 @@ def test_redaction_fixture_comes_out_clean():
         "tailfour",
         "tailfive",
         "tailsix",
+        # any case, and single-quoted keys (second review on #311)
+        "tailseven",
+        "taileight",
+        "taillnine",
+        "tailten",
     ):
         assert secret not in out, out
     assert "BEGIN OPENSSH PRIVATE KEY" not in out
