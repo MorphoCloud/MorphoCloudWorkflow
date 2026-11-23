@@ -880,6 +880,10 @@ share records (`mc_migrating_from`) that an earlier run of the same volume
 started the copy; it refuses when an entry of the home folder and an entry of
 `MyData` would land under the same name in `MyOldData`. Refusals are handled by
 hand. The dry run lists both, so they are seen before `commit`.
+`mc_migrating_from` (the volume's name) is written on the share when a `commit`
+run starts copying and is not removed; `mc_migrated_from` is written only after
+the copy is verified. A share with the first and not the second is a copy that
+did not finish.
 
 **The dry run changes Jetstream2, not the data:** it detaches the volume from
 the shelved server (the volume is only ever mounted read-only). Rollback
