@@ -38,6 +38,7 @@ These are settled. Revisit only with new facts, not preference.
 | 17  | **One instance per user.** Two instances would mount the same share at once. Enforced with the existing per-user limit, `MORPHOCLOUD_MAX_INSTANCES_PER_USER=1` (set on Test-Instances for the prototype). Admins are exempt from that limit, as today.                                                                                                                                                                                                                                                                                                   |
 | 18  | **OS updates arrive through the image.** `/create` from a baked image runs neither `apt-get update` nor `apt-get upgrade` (amended 2026-11-16: setup installs nothing on a baked image); the bake keeps both. A package ansible installs must be in the image. Both images are rebuilt monthly whether or not Slicer changed (issue #430). Added 2026-11-16.                                                                                                                                                                                             |
 | 19  | **Background security updates between rebakes.** `unattended-upgrades` is turned on when an instance's setup completes. Security fixes only: the Ubuntu security pocket is the only allowed source (no `noble-updates`, no feature updates). After each boot the lists are refreshed at 30-40 minutes and the upgrade runs at 45-55 minutes; daily at 06:00/18:00 (refresh) and 06:30 UTC (upgrade), at idle priority. Kernel and NVIDIA packages are excluded; they change only with a rebake. Added 2026-11-16; sources and timing amended 2026-11-17. |
+| 20  | **The desktop does not prompt members to upgrade.** Software Updater does not open on its own, and no new Ubuntu release is offered. Security fixes still install in the background (decision 19). Software Updater stays in the app menu for a member who wants to run it. Added 2026-11-23.                                                                                                                                                                                                                                                            |
 
 ## Why per-user shares, not one big share with folders
 
@@ -317,6 +318,66 @@ Test-Instances runner host.
   - Updating at shelve time was considered and rejected: the shelve's guest
     shutdown can cut off dpkg mid-install, every shelve (including auto-shelve)
     would take minutes longer, and a hung mirror would block the shelve.
+- **No upgrade prompts on the desktop (decision 20, 2026-11-23).** Read from
+  Ubuntu 24.04's `update-notifier` source (noble-updates); not yet seen on an
+  instance, so test item 17 starts by checking the current image.
+  - What prompts today: `update-notifier` starts 60 seconds after the desktop
+    session starts (`/etc/xdg/autostart/update-notifier.desktop`). Each time
+    apt's package lists change, it counts the pending updates and opens Software
+    Updater if the last time Software Updater opened is more than
+    `regular-auto-launch-interval` days ago (7). A new instance has no last
+    time, so Software Updater opens after the first list refresh (30-40 minutes
+    after boot, decision 19) and again every 7 days. Software Updater offers
+    every pending update from `noble-updates` and `noble-security`, including
+    the `linux-` and `nvidia-` packages decision 19 holds back. A member who
+    clicks "Install Now" installs them, and after the next boot (an unshelve)
+    the GPU is gone if the driver module was not rebuilt for the new kernel.
+  - Already off, nothing to change: the new-release offer ("Ubuntu 26.04 is
+    available"). The exosphere Slicer role sets `Prompt=never` in
+    `/etc/update-manager/release-upgrades` (exosphere dec0592e). Both desktop
+    triggers (`update-notifier` itself and the user unit
+    `update-notifier-release.path`) run `check-new-release-gtk`, which reads
+    that setting, and so does the SSH login message. A member who sees the offer
+    anyway means `Prompt=never` is not taking effect: a bug to report.
+  - Change: the exosphere Slicer role, when `gui_enabled`, writes
+    `/home/exouser/.config/autostart/update-notifier.desktop` (owner exouser)
+    with `Hidden=true`. In the autostart standard, a file in the user's
+    autostart folder replaces the system file of the same name, and
+    `Hidden=true` means it is not started. The role already puts
+    `update-desktop-settings.desktop` in that folder, and it runs at every login
+    (exosphere #13), so the folder is read in our VNC desktop session.
+  - Not changed: the background security updates (root systemd timers, not part
+    of the desktop session); Software Updater in the app menu; crash-report
+    pop-ups (they come from the separate user unit
+    `update-notifier-crash.path`); the SSH login message "N updates can be
+    applied immediately" and its Ubuntu Pro lines (left out by the maintainer,
+    2026-11-23).
+  - To turn the check back on for one instance, delete that file. It is not
+    listed in Startup Applications, because Ubuntu's entry has `NoDisplay=true`.
+  - Rejected: removing the `update-notifier` package (`ubuntu-desktop-minimal`
+    depends on it, so apt removes the meta-package too and marks the whole
+    desktop for `apt autoremove`); editing Ubuntu's file in `/etc/xdg/autostart`
+    (the package owns it); the setting `regular-auto-launch-interval` (0 or less
+    means open every time; any value below about 20,800 days still opens at once
+    on a new instance, whose last time is 0; above about 24,850 days the
+    program's day-to-seconds multiplication overflows).
+- **Slicer's runtime libraries (2026-11-23).** Slicer now keeps its own list of
+  the Ubuntu packages it needs
+  (`Utilities/Scripts/SlicerInstallers/deps/apt.txt`, added by Slicer#9294,
+  merged 2026-11-03). One package on it is missing from ours
+  (`ansible/roles/slicer/vars/Ubuntu.yml`): `libsm6`. It is added to our list.
+  Switching from our vendored `slicer-download.sh` to Slicer's `install.sh` is a
+  separate change, after the migration; Slicer stays in `/opt/slicer`, owned by
+  exouser (maintainer, 2026-11-23).
+- **Rollout of decision 20 and `libsm6`.** One exosphere PR (both changes), then
+  one MWF PR that moves `exosphere_sha` in `cloud-config`. Order matters because
+  of decision 18: a create from a baked image runs no `apt-get update`, so a
+  package that ansible installs and the image lacks fails at create. The current
+  images most likely have `libsm6` already (the desktop needs it), but that is
+  not checked. So: bake both images from the MWF PR's `cloud-config`, point the
+  Test image variables at them, run test item 17, and only then vendorize the
+  new `cloud-config` to Test-Instances. Production gets both together at the
+  migration.
 
 **Build plan (prototype, Test-Instances, share mode only).** Started 2026-09-26.
 
@@ -677,6 +738,19 @@ Run before building anything permanent.
     image's stamp files, and the timers' random delays. Still open: the regular
     image (g3.xl bake not yet placed), and the timer and stamp checks on the
     next image.
+17. No upgrade prompts and `libsm6` (decision 20). First, on an instance from
+    the current image if one is running: open the desktop, wait 2 minutes, and
+    record whether `pgrep -u exouser -x update-notifier` finds it (it should).
+    Then on the build instance of each bake, and on one instance created from
+    each new image: `/home/exouser/.config/autostart/update-notifier.desktop`
+    exists with `Hidden=true`; `dpkg -s libsm6` says installed;
+    `/etc/update-manager/release-upgrades` says `Prompt=never`. On the created
+    instance, open the desktop through Guacamole and keep it open past the first
+    list refresh (about 40 minutes after boot):
+    `pgrep -u exouser -x update-notifier` and `pgrep -f update-manager` find
+    nothing, no Software Updater window appeared, and test item 16's timer
+    checks still pass (`systemctl list-timers apt-daily*`). Software Updater
+    still opens from the app menu.
 
 ## Out of scope for now
 
