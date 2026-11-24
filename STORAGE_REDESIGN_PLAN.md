@@ -40,7 +40,7 @@ These are settled. Revisit only with new facts, not preference.
 | 19  | **Background security updates between rebakes.** `unattended-upgrades` is turned on when an instance's setup completes. Security fixes only: the Ubuntu security pocket is the only allowed source (no `noble-updates`, no feature updates). After each boot the lists are refreshed at 30-40 minutes and the upgrade runs at 45-55 minutes; daily at 06:00/18:00 (refresh) and 06:30 UTC (upgrade), at idle priority. Kernel and NVIDIA packages are excluded; they change only with a rebake. Added 2026-11-16; sources and timing amended 2026-11-17.                                                                                                 |
 | 20  | **The desktop does not prompt members to upgrade.** Software Updater does not open on its own, and no new Ubuntu release is offered. Security fixes still install in the background (decision 19). Software Updater stays in the app menu for a member who wants to run it. Added 2026-11-23.                                                                                                                                                                                                                                                                                                                                                            |
 | 21  | **Long-shelved instances are deleted.** Once a week, an instance shelved for more than 28 days is deleted and its request closed; the member's files stay on the storage, and a new instance can be created from the portal at any time (see "Long-shelved instances"). Decided 2026-11-24 by the maintainer.                                                                                                                                                                                                                                                                                                                                            |
-| 22  | **Golden images are rebaked monthly** (decided 2026-11-24, see "Monthly bake"). On the first Tuesday of each month, runner-1 bakes both images from MWF `main`, checks each with one create, emails the admins through `admin-alert.yml`, and keeps the image in use plus the one before. Promotion of the image variables: by hand or automatic, to decide.                                                                                                                                                                                                                                                                                             |
+| 22  | **Golden images are rebaked monthly** (decided 2026-11-24, see "Monthly bake"). On the first Tuesday of each month, runner-1 bakes both images from MWF `main`, checks each with one create, emails the admins through `admin-alert.yml`, and keeps the image in use plus the one before. The image variables are switched by hand (maintainer, 2026-11-24).                                                                                                                                                                                                                                                                                             |
 
 ## Why per-user shares, not one big share with folders
 
@@ -707,55 +707,75 @@ monthly rebake. Today a bake is started by hand on a runner (the production bake
 of 2026-11-23 was a loop script on runner-2). This makes it automatic, up to the
 switch of the image variables.
 
-- **Where:** `scripts/bake-monthly.sh` on runner-1 (the acquire runner). It has
+- **Where:** `scripts/bake-monthly.py` on runner-1 (the acquire runner). It has
   the dispatcher token, which the script needs to email the admins, and it holds
   the clock crontab and the harvester. The bake runs outside GitHub Actions, as
   the 2026-11-23 bake did: it waits up to hours for a GPU host, and an Actions
   job would hold the runner that long.
 - **When:** a crontab line `0 8 * * 2` (every Tuesday 08:00 UTC, night in the
-  US) whose script goes on only when the day of the month is 7 or less: the
-  first Tuesday. (A cron line with both a day of the month and a weekday fires
-  on either, so the rule is in the script.) A run started by hand (`--now`)
-  skips that rule. The runner is the clock (INSTANCE_DASHBOARD_PLAN.md decision
-  21), not GitHub's schedule.
+  US; runner-1 runs on UTC, and the script counts the day in UTC) whose script
+  goes on only when the day of the month is 7 or less: the first Tuesday. (A
+  cron line with both a day of the month and a weekday fires on either, so the
+  rule is in the script.) A run started by hand (`--now`) skips that rule. The
+  runner is the clock (INSTANCE_DASHBOARD_PLAN.md decision 21), not GitHub's
+  schedule.
 - **One run at a time:** the lock file holds the run's PID and start time. The
   lock is checked before the day rule, so a Tuesday that finds a run still going
-  (one waiting out its 48 hours) emails that it skipped. A lock whose PID is
+  (one still waiting for a host) emails that it skipped. A lock whose PID is
   gone is a run that died: it is reported by email and cleared, and the run that
   found it goes on. `touch ~/bake/STOP` ends a run.
 - **What it bakes:** both images, from MWF `main` at that moment. The script
-  clones `main` (depth 1; the repository is public, so no credential) and uses
-  its `scripts/bake-image.sh` and `cloud-config`, so the image gets the
+  clones `main` once per run (depth 1; the repository is public, so no
+  credential) and uses that clone's `scripts/bake-image.sh`,
+  `scripts/check-image.sh` and `cloud-config` for both images, so a merge during
+  a run cannot give the two images different revisions. The image gets the
   exosphere revision `main` pins. Names: `morphocloud-share-vgpu-YYYYMMDD` and
   `morphocloud-share-regular-YYYYMMDD` (the run's date). After each image is
   created the script adds `mc_mwf_sha` and `mc_exosphere_sha` as Glance
   properties (`bake-image.sh` already sets `mc_baked_on_flavor` and
   `mc_baked_at`).
-- **Flavors and retries,** as on 2026-11-23:
-  - vGPU image: g3.large and g3.medium on alternate tries;
-  - regular image: g3.xl, then g4.xl on alternate tries.
+- **Flavors and retries:** the first choice, then the fallback, on alternate
+  attempts (maintainer, 2026-11-24: g3.medium first, the easiest vGPU flavor to
+  get):
+  - vGPU image: g3.medium, then g3.large;
+  - regular image: g3.xl, then g4.xl (it needs a passthrough GPU for its
+    driver).
 
-  A failed try saves the evidence (server, events, console) and deletes the
-  build instance. The next try is 20 minutes later. The run stops when both
-  images exist, after 9 tries per image, or after 48 hours.
+  A failed bake saves the evidence (server, events, console) and deletes the
+  build instance. The next attempt is 20 minutes later. **Jetstream2's GPU
+  shortage must not fail a month's bake** (maintainer, 2026-11-24): a bake or a
+  check that finds no host ("Exhausted all hosts", "No valid host") is not
+  counted, and the run keeps trying. Only real failures count: 9 failed bakes,
+  or 2 failed checks, end an image. The run stops when both images are checked,
+  or after 7 days (first Tuesdays are at least 28 days apart).
 
-- **Check before anyone uses it:** for each new image, one instance is created
-  from it with the `/create` cloud-config, on the flavor the image was baked on
-  (vGPU image: g3.large or g3.medium; regular image: g3.xl or g4.xl). It passes
+- **Check before anyone uses it** (`scripts/check-image.sh`): for each new
+  image, one instance is created from it with the cloud-config `/create` uses
+  for a baked image (package refresh and upgrade off), on a flavor of its kind
+  (vGPU image: g3.medium or g3.large; regular image: g3.xl or g4.xl). It passes
   when:
-  - setup completes;
+  - setup completes, with no failed Slicer extension;
   - `nvidia-smi` lists the GPU;
-  - Slicer starts headless and exits
-    (`morphocloud-slicer --no-main-window --python-code 'exit()'`).
+  - Slicer, started as the member on the desktop's display with no main window
+    (`morphocloud-slicer --no-splash --no-main-window --python-code 'slicer.app.exit(0)'`),
+    exits by itself within 5 minutes;
+  - the Desktop has the Slicer launcher and no Extend Instance Session one.
 
-  The instance (`mc-bakecheck-…`) is then deleted. A failed check keeps the
-  image unpromoted and says why.
+  The instance (`mc-bakecheck-…`) is deleted on every exit. A check that gets no
+  host is tried again in the next round. A failed check is tried once more (an
+  SSH or setup timeout on a slow host is not always the image's fault); a second
+  failure keeps the image unpromoted and says why.
 
-- **Leaks:** the script deletes its build and check instances on every exit (a
-  `trap`). Because the floating-IP policing and the reconciler leave `mc-bake-…`
-  and `mc-bakecheck-…` alone, each run also deletes any such instance older than
-  two days that a crashed run left, and names it in its email. This sweep runs
-  only after the lock check, so it never meets a live run's instance.
+- **Leaks:** `bake-image.sh` and `check-image.sh` delete their instances when
+  they finish, and a failed bake's instance is deleted after its evidence is
+  saved. A run that crashes or is stopped by a signal sends SIGTERM to its bake
+  or check (so the check's own cleanup runs) and deletes the build and check
+  instances it created since it started; so a bake started by hand must not run
+  while the monthly run is going. Because the floating-IP policing and the
+  reconciler leave `mc-bake-…` and `mc-bakecheck-…` alone, each run also deletes
+  any such instance older than two days that a crashed run left, and names it in
+  its email. This sweep runs only after the lock check, so it never meets a live
+  run's instance.
 - **Promotion: by hand** (maintainer, 2026-11-24, "for the time being"). The
   email gives the one command that sets `MORPHOCLOUD_IMAGE_VGPU` and
   `MORPHOCLOUD_IMAGE_REGULAR` on Instances. An image that passed the check but
@@ -765,19 +785,24 @@ switch of the image variables.
 - **Email:** every run ends with one email to the admins, whatever the result,
   through the existing path:
   `gh workflow run admin-alert.yml -f subject=… -f body=…` with runner-1's
-  dispatcher token (no new credential). A `trap` sends it on any exit, including
-  a crash. It gives:
+  dispatcher token (no new credential). It is sent on any exit, including a
+  crash or a SIGTERM. An email that cannot be sent (token expired, GitHub down)
+  is logged in `~/bake/mail-failures.log`, which the overdue email quotes. It
+  gives:
   - the two image names and the MWF and exosphere revisions;
   - the check results;
   - the tries and failures, with the evidence file names;
   - the promotion command.
 - **A bake that never happens:** a second crontab line, every Monday, runs
-  `bake-monthly.sh --overdue`. It emails when the last successful run (both
-  images baked and checked; the script then writes `~/bake/last-success`) is
-  more than 36 days old: the cron line never fired, every run died, or every run
-  failed. A failed run still emails, but does not count as a success. If
-  runner-1 itself is down, the incident store's watchdog already reports the
-  harvester stopped.
+  `bake-monthly.py --overdue`. It emails when the last successful run (both
+  images baked and checked; the script then writes the time in epoch seconds to
+  `~/bake/last-success`, and an unreadable file counts as never) is more than 43
+  days old, unless a run is still going (it emails when it ends). First Tuesdays
+  are 28 to 35 days apart and a run can wait up to 7 days for hosts, so 43 days
+  fires only after a missed or failed month: the cron line never fired, every
+  run died, or every run failed. A failed run still emails, but does not count
+  as a success. If runner-1 itself is down, the incident store's watchdog
+  already reports the harvester stopped.
 - **Retention:** each kind keeps the image the variable names and the one before
   it, so the variable can go back. A run deletes older `morphocloud-share-*`
   images only when all of these hold, read at deletion time:
@@ -788,9 +813,10 @@ switch of the image variables.
   - it is older than the image in use.
 
   An image that is never promoted is never "in use": it stays, and is pruned by
-  a later run once newer images are promoted. Nothing is pruned while promotions
-  are skipped, so images can pile up at 64 GB each; the email lists the image
-  count and total size.
+  a later run once newer images are promoted. So a kind can hold three images
+  for a while: a new unpromoted one, the one in use, and the one before. Nothing
+  is pruned while promotions are skipped, so images can pile up at 64 GB each;
+  the email lists the image count and total size.
 
 - **The other actors on Jetstream2:**
   - **Members' creates and unshelves compete for the same GPU hosts and floating
@@ -805,17 +831,18 @@ switch of the image variables.
 - **The Slicer-release bake** (2026-10-13: a stable Slicer release, 30 days
   quiet, then an exosphere PR bumping Slicer) needs nothing extra: once that PR
   is merged and `main` pins it, the next monthly bake carries it. A maintainer
-  who wants it sooner runs `bake-monthly.sh --now`.
-- **Changes this needs:**
-  - `scripts/bake-monthly.sh`: the retry loop of 2026-11-23, the check, the
-    lock, the traps, the email, `--now`, `--overdue` and retention;
-  - its two crontab lines on runner-1, outside the rendered dispatcher block
-    (which dispatches workflows only), documented in
-    `runner-cron-dispatcher.md`;
-  - this section;
-  - tests in `scripts/` for the parts that decide: the first-Tuesday rule, the
-    lock (alive, dead, skipped), image naming, the retention choice and the
-    overdue rule.
+  who wants it sooner runs `bake-monthly.py --now` on runner-1.
+- **What was built:**
+  - `scripts/bake-monthly.py`: the retry loop of 2026-11-23, the check, the
+    lock, the email on every exit, `--now`, `--overdue`, the leak sweep and
+    retention;
+  - `scripts/check-image.sh`: the check;
+  - its two crontab lines in `scripts/instances-runner.crontab.extra`, rendered
+    into runner-1's managed block; `restore-instances-dispatcher.sh` copies
+    `bake-monthly.py` to `~/bake/`;
+  - `scripts/test_bake_monthly.py`: the first-Tuesday rule (and the 28 to 35 day
+    gaps), the overdue rule, the lock (free, alive, dead, unreadable), names and
+    flavors, retention, the leak sweep and the promotion command.
 
 ## Quota
 

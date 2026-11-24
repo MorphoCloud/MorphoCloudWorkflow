@@ -504,14 +504,14 @@ runs:
             || echo "Could not mark $(basename "$f") as trusted" >&2
         done
         # Where the desktop draws the icons: down the top-left corner, 3D
-        # Slicer, then Home (no Extend Instance Session icon since the
-        # 2026-11-24 decision; one left in MyDrive by an earlier instance is
-        # still placed, after Slicer). Without a saved
-        # place the desktop put all three in the middle of the screen and kept
-        # them there (instance-278, 2026-11-24). Pixels from the screen's top
-        # left; the desktop snaps them to its grid, and the top bar takes the
-        # first ~32 px, so y 40/164/288 are the first three rows at any screen
-        # size. Saved like the trusted mark, before the desktop draws them.
+        # Slicer, then Home. An Extend Instance Session icon left in MyDrive
+        # by an earlier instance (no longer installed since 2026-11-24) is
+        # placed after Slicer. Without a saved place the desktop put the icons
+        # in the middle of the screen and kept them there (instance-278,
+        # 2026-11-24). Pixels from the screen's top left; the desktop snaps
+        # them to its grid, and the top bar takes the first ~32 px, so y
+        # 40/164/288 are the first three rows at any screen size. Saved like
+        # the trusted mark, before the desktop draws them.
         set --
         y=40
         for f in Slicer.desktop ExtendInstanceSession.desktop; do
