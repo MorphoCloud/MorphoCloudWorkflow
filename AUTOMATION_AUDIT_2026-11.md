@@ -251,14 +251,14 @@ not behind ensures; health writes are conditional on the state it read.
 
 ### Class 7 — Share lifecycle vs. instances and the migration (high for 2026-11-23)
 
-| ID  | Finding                                                                                                                                           | Status |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| 7a  | `mc_mounted_by` is written at the end of setup, so a share mounted by a create in progress looks unheld; the daily expiry can delete it.          | P      |
-| 7b  | Expiry ignores a pending Keep my storage press.                                                                                                   | T      |
-| 7c  | The migration calls `ensure` without `ensure_lock`; with a member's Create my storage at the same time, both create a share and both then refuse. | T      |
-| 7d  | The maintenance switch does not close Reset storage; reset and the migration's copy can write the same share.                                     | P      |
-| 7e  | The migration reads the old server's state once; the sweeps keep acting on it during the copy.                                                    | P      |
-| 7f  | A stale `--warned` mark can let a share expire with no warning in the next idle period.                                                           | P      |
+| ID  | Finding                                                                                                                                                                                                                  | Status |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
+| 7a  | `mc_mounted_by` is written at the end of setup, so a share mounted by a create in progress looks unheld; the daily expiry can delete it.                                                                                 | P      |
+| 7b  | Expiry ignores a pending Keep my storage press. Superseded 2026-11-24: Keep my storage and the idle rule are replaced by the storage term (STORAGE_REDESIGN_PLAN.md decision 7).                                         | T      |
+| 7c  | The migration calls `ensure` without `ensure_lock`; with a member's Create my storage at the same time, both create a share and both then refuse.                                                                        | T      |
+| 7d  | The maintenance switch does not close Reset storage; reset and the migration's copy can write the same share.                                                                                                            | P      |
+| 7e  | The migration reads the old server's state once; the sweeps keep acting on it during the copy.                                                                                                                           | P      |
+| 7f  | A stale `--warned` mark can let a share expire with no warning in the next idle period. Superseded 2026-11-24: Keep my storage and the idle rule are replaced by the storage term (STORAGE_REDESIGN_PLAN.md decision 7). | P      |
 
 **Fix:** the holder is recorded before the mount; expiry honors a pending Keep;
 the migration takes `ensure_lock`, the maintenance switch closes reset, and the
