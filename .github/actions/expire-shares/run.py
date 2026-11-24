@@ -1,234 +1,187 @@
-"""The storage expiry sweep (STORAGE_REDESIGN_PLAN.md, "Share expiry").
+"""The daily storage-term sweep (STORAGE_REDESIGN_PLAN.md decision 7,
+"Storage term").
 
-Reads the runner's plan (mc_share_runner.py sweep), then for every share that
-is not simply kept: warns the owner by email and records the warning on the
-share, or deletes the share (mc_share_runner.py expire) and tells the owner.
-Every share is handled on its own; a failure on one is reported and the next
-one is still done. Exit 1 when anything failed, so the workflow alerts the
-admins; the next day's sweep tries again.
+Reads the runner's plan (mc_share_runner.py sweep, which asked the portal
+which requests are waiting) and the portal's requests report, then:
 
-Environment: PLAN_FILE, TEMPLATE_FILE, RUNNER_SCRIPT, EXPIRY_DAYS, WARN_DAYS, LOOKUP_URL,
-LOOKUP_API_KEY, MAIL_USERNAME, MAIL_PASSWORD, PORTAL_URL, GH_TOKEN (gh api),
-DRY_RUN ("true": decide and print, change and send nothing).
+- remind:<N>       emails the member, records the reminder on the share
+- delete-instance  past the end date with an instance: dispatches its
+                   delete; the share is locked by the next day's sweep
+- lock             locks the share (mc_share_runner.py lock), emails the member
+- delete           deletes a share locked for its whole grace
+                   (mc_share_runner.py expire), emails the member
+- hold, locked, keep: nothing (a waiting request holds the lock)
+
+then reminds the admins of requests waiting more than 3 days and emails the
+members the decisions made since the last run. Every item is handled on its
+own; a failure on one is reported and the next is still done. Exit 1 when
+anything failed, so the workflow alerts the admins; the next run tries again.
+
+Environment: PLAN_FILE, REQUESTS_FILE, TEMPLATE_FILE, RUNNER_SCRIPT,
+TERM_DAYS, WARN_DAYS, GRACE_DAYS, INSTANCE_PREFIX, LOOKUP_URL, LOOKUP_API_KEY,
+MAIL_USERNAME, MAIL_PASSWORD, PORTAL_URL, ADMIN_EMAILS, GH_TOKEN (gh api,
+gh workflow run), DRY_RUN.
 """
 
 import json
-import os
-import smtplib
-import subprocess
 import sys
 import time
-import urllib.parse
-import urllib.request
-from email.message import EmailMessage
 from pathlib import Path
 
-MAIL_HOST, MAIL_PORT = "webhost.dynadot.com", 587
-MAIL_FROM = "MorphoCloudPortal <no-reply@morphocloud.org>"
-LOOKUP_ATTEMPTS = 3
-DRY = os.environ.get("DRY_RUN", "").lower() == "true"
+import common as c
 
 
-def say(text: str) -> None:
-    print(text)  # noqa: T201 — the run log is this script's output
+def term_args() -> list[str]:
+    return [
+        "--term-days",
+        c.env("TERM_DAYS"),
+        "--warn",
+        c.env("WARN_DAYS"),
+        "--grace-days",
+        c.env("GRACE_DAYS"),
+    ]
 
 
-def env(name: str) -> str:
-    v = os.environ.get(name, "")
-    if not v:
-        msg = f"{name} is not set"
-        raise RuntimeError(msg)
-    return v
+def subs_for(a: dict, tpl: dict) -> dict:
+    return {
+        "days_left": max(a.get("days_to_end") or 0, 0),
+        "kept_until": c.day(a.get("end_date")),
+        "delete_on": c.day(a.get("delete_on")),
+        "grace_days": c.env("GRACE_DAYS"),
+        "term_days": c.env("TERM_DAYS"),
+        "portal_url": c.env("PORTAL_URL"),
+        "contact_email": tpl["contact_email"],
+        "today": c.day(time.strftime("%Y-%m-%d", time.gmtime())),
+    }
 
 
-def login_for(gid: int, recorded: str | None) -> str:
-    """The owner's current login from the GitHub id: GET /user/{account_id}
-    ("Get a user using their ID"). Logins change, so the login recorded on the
-    share at creation is only the fallback when GitHub cannot be asked."""
-    r = subprocess.run(
-        ["gh", "api", f"user/{gid}", "--jq", "[.id, .login] | @tsv"],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    got_id, _, got_login = (
-        r.stdout.strip().partition("\t") if r.returncode == 0 else ("", "", "")
-    )
-    if got_id == str(gid) and got_login:
-        return got_login
-    if recorded:
-        say(f"  (GitHub did not answer for {gid}; using the recorded login {recorded})")
-        return recorded
-    msg = f"gh api user/{gid}: {r.stderr.strip()[-200:] or 'unexpected answer'}"
-    raise RuntimeError(msg)
-
-
-def email_for(login: str) -> str:
-    """The verified address from the join lookup, as the credentials email uses."""
-    url = (
-        f"{env('LOOKUP_URL')}?action=lookup&github_username={urllib.parse.quote(login)}"
-    )
-    req = urllib.request.Request(url, headers={"X-Api-Key": env("LOOKUP_API_KEY")})
-    data: dict = {}
-    for attempt in range(1, LOOKUP_ATTEMPTS + 1):
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode())
-            break
-        except (OSError, ValueError) as e:
-            if attempt == LOOKUP_ATTEMPTS:
-                msg = f"lookup for {login}: {e}"
-                raise RuntimeError(msg) from e
-            time.sleep(5)
-    email = data.get("email")
-    if not email:
-        msg = f"lookup for {login}: {data.get('error') or 'no address'}"
-        raise RuntimeError(msg)
-    return email
-
-
-def render(template: dict, key: str, subs: dict) -> str:
-    text = template[key]
-    for k, v in subs.items():
-        text = text.replace("{{" + k + "}}", str(v))
-    return text
-
-
-def send(to: str, subject: str, body: str) -> None:
-    msg = EmailMessage()
-    msg["From"], msg["To"], msg["Subject"] = MAIL_FROM, to, subject
-    msg.set_content(body)
-    if DRY:
-        say(f"  would mail {subject!r}")
-        return
-    with smtplib.SMTP(MAIL_HOST, MAIL_PORT, timeout=60) as s:
-        s.starttls()
-        s.login(env("MAIL_USERNAME"), env("MAIL_PASSWORD"))
-        s.send_message(msg)
-
-
-def runner(*args: str) -> dict:
-    """mc_share_runner.py on this host: touch or expire. Its JSON on stdout."""
-    if DRY:
-        say(f"  would run mc_share_runner.py {' '.join(args)}")
-        return {}
-    script = os.environ.get("RUNNER_SCRIPT") or str(
-        Path("~/mc-data/mc_share_runner.py").expanduser()
-    )
-    r = subprocess.run(
-        [sys.executable, script, *args],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=1200,
-    )
-    if r.returncode != 0:
-        msg = f"mc_share_runner.py {args[0]}: {r.stderr.strip()[-400:]}"
-        raise RuntimeError(msg)
-    return json.loads(r.stdout or "{}")
-
-
-def day(iso: str) -> str:
-    t = time.strptime(iso, "%Y-%m-%dT%H:%M:%SZ")
-    return f"{t.tm_mday} {time.strftime('%b %Y', t)}"
-
-
-def handle(a: dict, template: dict) -> str:
+def handle(a: dict, tpl: dict) -> str | None:
+    """One share's verdict. Returns what was done, or None for nothing."""
     gid, verdict = a["github_id"], a["verdict"]
+    if verdict in ("keep", "hold", "locked"):
+        return None
     if verdict == "error":
         msg = f"{a['name']}: {a.get('error')}"
         raise RuntimeError(msg)
-    login = login_for(gid, a.get("login"))
-    subs = {
-        "days_left": max(a["days_left"], 0),
-        "kept_until": day(a["expires_at"]),
-        "idle_days": env("EXPIRY_DAYS"),
-        "portal_url": env("PORTAL_URL"),
-        "contact_email": template["contact_email"],
-    }
-    if verdict in ("warn:first", "warn:last"):
-        kind = verdict.split(":")[1]
-        to = email_for(login)
-        send(
-            to,
-            render(template, f"warning_{kind}_subject", subs),
-            render(template, f"warning_{kind}_body", subs),
+    login = c.login_for(gid, a.get("login"))
+    subs = subs_for(a, tpl)
+    if verdict.startswith("remind:"):
+        days = verdict.split(":", 1)[1]
+        c.mail(tpl, "reminder", c.email_for(login), subs)
+        c.runner(
+            "mark", str(gid), "--reminded", days, "--term-days", c.env("TERM_DAYS")
         )
-        runner("touch", str(gid), "--warned", kind)
-        return f"warned ({kind}) {login}: {a['days_left']} days left"
-    if verdict == "expire":
-        # The same days the sweep judged with: expire judges again with them.
-        out = runner(
-            "expire",
-            str(gid),
-            "--expiry-days",
-            env("EXPIRY_DAYS"),
-            "--warn",
-            env("WARN_DAYS"),
-        )
+        return f"reminded {login} ({days} days before {a['end_date']})"
+    if verdict == "delete-instance":
+        issue = c.issue_of(a.get("mounted_by") or "")
+        if issue is None:
+            msg = f"{a['name']}: past its end date, held by {a.get('mounted_by')!r}, which is no request's instance"
+            raise RuntimeError(msg)
+        c.dispatch_delete(issue)
+        return f"past its end date: deleting {login}'s instance (#{issue}); the lock follows tomorrow"
+    if verdict == "lock":
+        out = c.runner("lock", str(gid), *term_args())
+        subs["delete_on"] = c.day(out.get("delete_on") or a.get("delete_on"))
+        try:
+            c.mail(tpl, "locked", c.email_for(login), subs)
+        except c.FAILURES as e:
+            msg = f"locked the storage of {login}, but the owner was not told: {e}"
+            raise RuntimeError(msg) from e
+        return f"locked the storage of {login} (end date {a['end_date']})"
+    if verdict == "delete":
+        out = c.runner("expire", str(gid), *term_args())
         note = (
             ""
-            if DRY or out.get("portal_recorded")
+            if c.DRY or out.get("portal_recorded")
             else " (the portal did not record it)"
         )
         try:
-            send(
-                email_for(login),
-                render(template, "deleted_subject", subs),
-                render(template, "deleted_body", subs),
-            )
-        except (RuntimeError, smtplib.SMTPException, OSError) as e:
+            c.mail(tpl, "deleted", c.email_for(login), subs)
+        except c.FAILURES as e:
             note += f" (owner not told: {e})"
         if note:
             msg = f"deleted the storage of {login}{note}"
             raise RuntimeError(msg)
-        return f"deleted the storage of {login} (last activity {a['last_activity']})"
+        return f"deleted the storage of {login} (end date {a['end_date']}, locked {a['locked_at']})"
     msg = f"unknown verdict {verdict!r}"
     raise RuntimeError(msg)
 
 
+def note_line(note: str) -> str:
+    return f"\n\nNote from the MorphoCloud team: {note}" if note else ""
+
+
+def remind_admins(r: dict, tpl: dict) -> str:
+    # Needed only when there is someone to remind: an unset list must not
+    # stop the reminders, locks and deletions of every member.
+    to = c.env("ADMIN_EMAILS")
+    asked = c.day(r.get("created_at"))
+    subs = {
+        "login": r["login"],
+        "reason": r["reason"],
+        "asked": asked,
+        "link": f"{c.env('PORTAL_URL').rstrip('/')}/admin/requests/{r['request_id']}",
+        "contact_email": tpl["contact_email"],
+    }
+    c.mail(tpl, "admin_reminder", to, subs)
+    c.runner("portal-mailed", r["request_id"], "admin")
+    return f"reminded the admins of {r['login']}'s request (asked {asked})"
+
+
+def tell_member(r: dict, tpl: dict) -> str:
+    login = c.login_for(r["github_id"], r.get("login"))
+    subs = {
+        "kept_until": c.day(r.get("kept_until")),
+        "note_line": note_line(r.get("note") or ""),
+        "portal_url": c.env("PORTAL_URL"),
+        "contact_email": tpl["contact_email"],
+    }
+    kind = "approved" if r["decision"] == "approved" else "declined"
+    c.mail(tpl, kind, c.email_for(login), subs)
+    c.runner("portal-mailed", r["request_id"], "member")
+    return f"told {login} their request was {kind}"
+
+
 def main() -> int:
-    # Everything an email needs, checked once up front: a missing setting is
-    # one clear failure, not one per share.
     for name in (
-        "EXPIRY_DAYS",
+        "TERM_DAYS",
         "WARN_DAYS",
+        "GRACE_DAYS",
         "PORTAL_URL",
         "LOOKUP_URL",
         "LOOKUP_API_KEY",
-    ) + (() if DRY else ("MAIL_USERNAME", "MAIL_PASSWORD")):
-        env(name)
-    plan = json.loads(Path(env("PLAN_FILE")).read_text())
-    template = json.loads(Path(env("TEMPLATE_FILE")).read_text())
-    kept = [a for a in plan if a["verdict"] == "keep"]
-    todo = [a for a in plan if a["verdict"] != "keep"]
-    say(
-        f"{len(plan)} share(s): {len(kept)} kept, {len(todo)} to act on"
-        + (" (dry run)" if DRY else "")
+    ) + (() if c.DRY else ("MAIL_USERNAME", "MAIL_PASSWORD")):
+        c.env(name)
+    plan = json.loads(Path(c.env("PLAN_FILE")).read_text())
+    requests = json.loads(Path(c.env("REQUESTS_FILE")).read_text())
+    tpl = c.template()
+    todo = [a for a in plan if a["verdict"] not in ("keep", "locked")]
+    c.say(
+        f"{len(plan)} share(s): {len(plan) - len(todo)} kept or locked, {len(todo)} to act on"
+        + (" (dry run)" if c.DRY else "")
     )
-    for a in kept:
-        held = f", held by {a['mounted_by']}" if a.get("held") else ""
-        say(f"  keep {a['name']}: {a['days_left']} days left{held}")
     failures = []
-    for a in todo:
+    for a in plan:
         try:
-            say(f"  {handle(a, template)}")
-        except (
-            RuntimeError,
-            OSError,
-            KeyError,
-            ValueError,
-            subprocess.SubprocessError,
-            smtplib.SMTPException,  # not an OSError: a refused login or recipient
-        ) as e:
-            say(f"::error ::{a.get('name', a.get('github_id'))}: {e}")
+            done = handle(a, tpl)
+            label = a.get("name") or a.get("github_id")
+            c.say(f"  {label}: {done or a['verdict']} (end {a.get('end_date')})")
+        except c.FAILURES as e:
+            c.say(f"::error ::{a.get('name', a.get('github_id'))}: {e}")
             failures.append(str(e))
-    if failures:
-        with Path(os.environ.get("GITHUB_OUTPUT", "/dev/null")).open("a") as out:
-            out.write("failures<<__EOF__\n" + "\n".join(failures) + "\n__EOF__\n")
-        return 1
-    return 0
+    for r in requests.get("stale", []):
+        try:
+            c.say(f"  {remind_admins(r, tpl)}")
+        except c.FAILURES as e:
+            c.say(f"::error ::admin reminder for request {r.get('request_id')}: {e}")
+            failures.append(str(e))
+    for r in requests.get("decided", []):
+        try:
+            c.say(f"  {tell_member(r, tpl)}")
+        except c.FAILURES as e:
+            c.say(f"::error ::decision email for request {r.get('request_id')}: {e}")
+            failures.append(str(e))
+    return c.report_failures(failures)
 
 
 if __name__ == "__main__":

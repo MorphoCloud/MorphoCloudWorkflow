@@ -108,6 +108,18 @@ jobs:
             created_at=$(echo "$issue_json" | jq -r '.createdAt')
             labels=$(echo "$issue_json" | jq -r '.labels[].name')
 
+            # Storage term (STORAGE_REDESIGN_PLAN.md decision 7): in share
+            # mode a member's open request has no expiry of its own. Its
+            # instance follows the storage (expire-shares.yml deletes it after
+            # the storage's expiry date) and long-shelved ones go weekly
+            # (delete-long-shelved.yml). A request its member closed still
+            # goes through the deletion below, as a backstop for
+            # guard-issue-close.yml.
+            if [[ "$STORAGE_MODE" == "share" && "$issue_state" == "OPEN" ]] \
+              && grep -qx "request-creator:user" <<<"$labels"; then
+              continue
+            fi
+
             # Expiration ladder: sorted expiration:* rungs, indexed by
             # renewed:N. (|| true: label-less issues must not kill the loop
             # under pipefail.)

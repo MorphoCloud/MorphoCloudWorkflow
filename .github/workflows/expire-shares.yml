@@ -1,16 +1,19 @@
-name: Expire storage
+name: Storage term
 
-# Share expiry (STORAGE_REDESIGN_PLAN.md, "Share expiry"). A member's storage
-# (their data share) is kept while an instance holds it and for
-# MORPHOCLOUD_SHARE_EXPIRY_DAYS idle days after; the owner is warned by email
-# MORPHOCLOUD_SHARE_WARNING_DAYS days before it is removed. The runner's
-# mc_share_runner.py judges and deletes (it alone holds the OpenStack
-# credentials and the only delete call); this workflow sends the emails and
-# records the warnings. Off unless the repository sets the idle period.
+# The storage term (STORAGE_REDESIGN_PLAN.md decision 7, "Storage term"). A
+# member's storage (their data share) is kept for MORPHOCLOUD_SHARE_TERM_DAYS
+# from its creation; reminders go out MORPHOCLOUD_SHARE_WARNING_DAYS before the
+# end date; after it the member's instance is deleted, the share is locked for
+# MORPHOCLOUD_SHARE_GRACE_DAYS, then deleted. A member asks for more time on
+# the portal and an admin approves or declines there; a waiting request holds
+# the lock. The runner's mc_share_runner.py judges, locks and deletes (it alone
+# holds the OpenStack credentials and the only delete calls); this workflow
+# sends the emails, dispatches instance deletes, reminds the admins of
+# waiting requests and tells the members the decisions. Off unless the
+# repository sets the term.
 #
-# Daily after the instance sweep (close-expired-issues.yml, 12:00 UTC), whose
-# deletions start the idle clock. Any failure emails the admins and leaves the
-# share for the next day's run.
+# Daily after the instance sweep (close-expired-issues.yml, 12:00 UTC). Any
+# failure emails the admins and leaves the share for the next day's run.
 
 on:
   # dispatch: 40 12 * * *
@@ -34,38 +37,50 @@ concurrency:
 
 jobs:
   sweep:
-    if: ${{ vars.MORPHOCLOUD_SHARE_EXPIRY_DAYS != '' }}
+    if: ${{ vars.MORPHOCLOUD_SHARE_TERM_DAYS != '' }}
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     steps:
       - uses: actions/checkout@v6
 
+      # Dispatches the instance deletes (control-instance-from-workflow.yml),
+      # as the instance sweep does.
+      - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        id: app-token
+        with:
+          app-id: ${{ vars.MORPHOCLOUD_WORKFLOW_APP_ID }}
+          private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
+
+      # The sweep asks the portal which requests are waiting; if it cannot,
+      # it fails here and nothing is locked or deleted.
       - name: Judge every share
-        id: plan
         shell: bash
         run: |
           set -euo pipefail
           source ~/venv/bin/activate
           python3 "$HOME/mc-data/mc_share_runner.py" sweep \
-            --expiry-days "$EXPIRY_DAYS" --warn "$WARN_DAYS" > /tmp/share-plan.json
+            --term-days "$TERM_DAYS" --warn "$WARN_DAYS" --grace-days "$GRACE_DAYS" \
+            > /tmp/share-plan.json
+          python3 "$HOME/mc-data/mc_share_runner.py" portal-requests > /tmp/share-requests.json
         env:
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
-          EXPIRY_DAYS: ${{ vars.MORPHOCLOUD_SHARE_EXPIRY_DAYS }}
-          WARN_DAYS: ${{ vars.MORPHOCLOUD_SHARE_WARNING_DAYS || '14,3' }}
+          TERM_DAYS: ${{ vars.MORPHOCLOUD_SHARE_TERM_DAYS }}
+          WARN_DAYS: ${{ vars.MORPHOCLOUD_SHARE_WARNING_DAYS || '14,7,1' }}
+          GRACE_DAYS: ${{ vars.MORPHOCLOUD_SHARE_GRACE_DAYS || '15' }}
 
-      # Email copy lives in MorphoCloudPortalContent (storage-expiry.json);
+      # Email copy lives in MorphoCloudPortalContent (storage-term.json);
       # MORPHOCLOUD_TEMPLATE_REF picks the branch, as the credentials email does.
       - name: Fetch the email copy
         shell: bash
         run: |
           curl -sfL --retry 3 --retry-delay 5 --retry-all-errors \
-            -o /tmp/storage-expiry.json "$TEMPLATE_URL"
+            -o /tmp/storage-term.json "$TEMPLATE_URL"
         env:
           TEMPLATE_URL:
             https://raw.githubusercontent.com/MorphoCloud/MorphoCloudPortalContent/${{
             vars.MORPHOCLOUD_TEMPLATE_REF || 'main'
-            }}/templates/storage-expiry.json
+            }}/templates/storage-term.json
 
-      - name: Warn, delete and record
+      - name: Remind, lock, delete, and send the decisions
         id: act
         shell: bash
         run: |
@@ -74,16 +89,21 @@ jobs:
           python3 .github/actions/expire-shares/run.py
         env:
           PLAN_FILE: /tmp/share-plan.json
-          TEMPLATE_FILE: /tmp/storage-expiry.json
-          EXPIRY_DAYS: ${{ vars.MORPHOCLOUD_SHARE_EXPIRY_DAYS }}
-          WARN_DAYS: ${{ vars.MORPHOCLOUD_SHARE_WARNING_DAYS || '14,3' }}
+          REQUESTS_FILE: /tmp/share-requests.json
+          TEMPLATE_FILE: /tmp/storage-term.json
+          TERM_DAYS: ${{ vars.MORPHOCLOUD_SHARE_TERM_DAYS }}
+          WARN_DAYS: ${{ vars.MORPHOCLOUD_SHARE_WARNING_DAYS || '14,7,1' }}
+          GRACE_DAYS: ${{ vars.MORPHOCLOUD_SHARE_GRACE_DAYS || '15' }}
+          INSTANCE_PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           LOOKUP_URL: ${{ vars.MORPHOCLOUD_EMAIL_LOOKUP_URL }}
           LOOKUP_API_KEY: ${{ secrets.MORPHOCLOUD_LOOKUP_API_KEY }}
           MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
           MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
           PORTAL_URL: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ADMIN_EMAILS: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
           DRY_RUN: ${{ inputs.dry_run }}
 
       - name: Alert the admins
@@ -97,10 +117,10 @@ jobs:
           password: ${{ secrets.MAIL_PASSWORD }}
           from: MorphoCloudPortal <no-reply@morphocloud.org>
           to: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
-          subject: "[${{ github.repository }}] Storage expiry sweep failed"
+          subject: "[${{ github.repository }}] Storage term sweep failed"
           body: |
-            The storage expiry sweep did not finish cleanly. Nothing is retried within a run; the next daily run tries again.
+            The storage term sweep did not finish cleanly. Nothing is retried within a run; the next daily run tries again.
 
-            ${{ steps.act.outputs.failures || 'The sweep itself failed before acting on any share; see the run log.' }}
+            ${{ steps.act.outputs.failures || 'The sweep itself failed before acting on any share (for example, the portal could not be asked which requests are waiting); see the run log.' }}
 
             Run log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
