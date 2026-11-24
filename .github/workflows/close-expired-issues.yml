@@ -108,18 +108,21 @@ jobs:
             created_at=$(echo "$issue_json" | jq -r '.createdAt')
             labels=$(echo "$issue_json" | jq -r '.labels[].name')
 
-            # Expiration ladder: sorted expiration:* rungs, indexed by
-            # renewed:N. (|| true: label-less issues must not kill the loop
-            # under pipefail.)
             # Storage term (STORAGE_REDESIGN_PLAN.md decision 7): in share
-            # mode a member's instance has no expiry of its own. It follows
-            # the storage (expire-shares.yml deletes it after the storage's
-            # end date) and long-shelved ones go weekly
-            # (delete-long-shelved.yml). No warnings, no deletion here.
-            if [[ "$STORAGE_MODE" == "share" ]] && echo "$labels" | grep -qx "request-creator:user"; then
+            # mode a member's open request has no expiry of its own. Its
+            # instance follows the storage (expire-shares.yml deletes it after
+            # the storage's expiry date) and long-shelved ones go weekly
+            # (delete-long-shelved.yml). A request its member closed still
+            # goes through the deletion below, as a backstop for
+            # guard-issue-close.yml.
+            if [[ "$STORAGE_MODE" == "share" && "$issue_state" == "OPEN" ]] \
+              && grep -qx "request-creator:user" <<<"$labels"; then
               continue
             fi
 
+            # Expiration ladder: sorted expiration:* rungs, indexed by
+            # renewed:N. (|| true: label-less issues must not kill the loop
+            # under pipefail.)
             lifespan_list=$(echo "$labels" | grep -oP '(?<=expiration:)\d+(\.\d+)?' | sort -n || true)
             if [[ -z "$lifespan_list" ]]; then
               echo "Skipping issue #${issue_number}: no 'expiration' labels."

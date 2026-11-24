@@ -265,3 +265,19 @@ def test_issue_number_from_an_instance_name(monkeypatch):
     monkeypatch.setenv("INSTANCE_PREFIX", "morpho-cloud-test")
     assert common.issue_of("morpho-cloud-test_instance-9") == TEST_ISSUE
     assert common.issue_of("instance-9") is None
+
+
+def test_no_admin_list_stops_only_the_admin_reminders(world, monkeypatch):
+    monkeypatch.delenv("ADMIN_EMAILS")
+    stale = {
+        "request_id": "4",
+        "github_id": 11,
+        "login": "alice",
+        "reason": "Need it for a paper.",
+        "created_at": "2027-03-10T10:00:00Z",
+    }
+    requests = {"waiting": [11], "stale": [stale], "decided": []}
+    assert sweep(world, [share("remind:7")], requests) == 1
+    assert len(world["mail"]) == 1  # the member's reminder still went out
+    assert "ADMIN_EMAILS is not set" in failures(world)
+    assert sweep(world, [share("remind:7")]) == 0  # nothing to remind: no failure

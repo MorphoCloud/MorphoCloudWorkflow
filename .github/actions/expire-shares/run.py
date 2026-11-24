@@ -112,6 +112,8 @@ def note_line(note: str) -> str:
 
 
 def remind_admins(r: dict, tpl: dict) -> str:
+    # Needed only when there is someone to remind: an unset list must not
+    # stop the reminders, locks and deletions of every member.
     to = c.env("ADMIN_EMAILS")
     asked = c.day(r.get("created_at"))
     subs = {
@@ -148,7 +150,6 @@ def main() -> int:
         "PORTAL_URL",
         "LOOKUP_URL",
         "LOOKUP_API_KEY",
-        "ADMIN_EMAILS",
     ) + (() if c.DRY else ("MAIL_USERNAME", "MAIL_PASSWORD")):
         c.env(name)
     plan = json.loads(Path(c.env("PLAN_FILE")).read_text())
