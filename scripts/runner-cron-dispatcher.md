@@ -60,6 +60,15 @@ backstop is their only clock, which is why it stays in the workflows.
   `~/.config/morphocloud/`. A missing harvester token never blocks the restore:
   the clock is installed without the harvester line and the store's watchdog
   reports it.
+- [`bake-monthly.py`](bake-monthly.py) — the monthly golden-image bake
+  (`STORAGE_REDESIGN_PLAN.md` decision 22), production only. Two lines in
+  `instances-runner.crontab.extra`: every Tuesday 08:00 UTC (the script goes on
+  only on the first Tuesday of the month) and every Monday 09:00 UTC
+  (`--overdue`). The restore script copies it to `~/bake/`; each run clones MWF
+  `main` for `bake-image.sh`, `check-image.sh` and `cloud-config`. Its email
+  goes through `admin-alert.yml` with `dispatch.pat`. Log: `~/bake/cron.log`,
+  and `~/bake/runs/<date>/` for each run. By hand: `bake-monthly.py --now`; stop
+  a run with `touch ~/bake/STOP`.
 - [`check-dispatch-logging.py`](check-dispatch-logging.py) — pre-commit: every
   runner-side `gh workflow run` call site must log a `DISPATCH` line (below),
   which is how the harvester tells this clock's runs from a hand dispatch.

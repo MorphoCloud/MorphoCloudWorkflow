@@ -1,7 +1,7 @@
 name: Process /extend Command
 
-# /extend resets the instance's session timer, exactly as the desktop
-# ExtendInstanceSession icon does, so automatic shelving is pushed back by a
+# /extend resets the instance's session timer, exactly as Yes on the desktop
+# reminder does, so automatic shelving is pushed back by a
 # full session (the request's timeout:<N>hrs, else 4 hours). The data portal's
 # Extend session button posts it (INSTANCE_DASHBOARD_PLAN.md, decision 19).
 

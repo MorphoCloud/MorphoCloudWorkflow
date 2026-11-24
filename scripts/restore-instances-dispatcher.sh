@@ -40,7 +40,7 @@ echo "   crontab: $CRONTAB"
 read -r -p "   Confirm this is the ACQUIRE runner (not control) [yes/no]: " ok
 [[ "$ok" == "yes" ]] || { echo "Aborted."; exit 1; }
 
-for f in "$MWF/scripts/morphocloud-dispatch.sh" "$CRONTAB" "$WF_TOKEN"; do
+for f in "$MWF/scripts/morphocloud-dispatch.sh" "$MWF/scripts/bake-monthly.py" "$CRONTAB" "$WF_TOKEN"; do
   [[ -s "$f" ]] || { echo "ERROR: required file missing: $f"; exit 1; }
 done
 if [[ -n "$AN_TOKEN" ]]; then
@@ -75,6 +75,10 @@ echo ">> Copying scripts, tokens, and crontab (values not printed) ..."
 ssh "$RUNNER" 'mkdir -p ~/.config/morphocloud && chmod 700 ~/.config/morphocloud'
 scp "$MWF/scripts/morphocloud-dispatch.sh" "$RUNNER:morphocloud-dispatch.sh"
 scp "$MWF/scripts/police-floating-ips.py" "$RUNNER:police-floating-ips.py"
+# The monthly golden-image bake (STORAGE_REDESIGN_PLAN.md decision 22): its two
+# crontab lines are in the rendered block; each run clones MWF main for the rest.
+ssh "$RUNNER" 'mkdir -p ~/bake'
+scp "$MWF/scripts/bake-monthly.py" "$RUNNER:bake/bake-monthly.py"
 if (( HARVEST )); then
   scp "$CRONTAB" "$RUNNER:instances-runner.crontab"
 else
@@ -95,7 +99,7 @@ echo ">> Setting permissions and installing the crontab's managed block ..."
 # merge), so it cannot double-fire beside the rendered one.
 ssh "$RUNNER" '
   set -e
-  chmod +x ~/morphocloud-dispatch.sh
+  chmod +x ~/morphocloud-dispatch.sh ~/bake/bake-monthly.py
   [[ -f ~/check-dispatch-tokens.sh ]] && chmod +x ~/check-dispatch-tokens.sh
   chmod 600 ~/.config/morphocloud/*.pat
   kept=$(crontab -l 2>/dev/null \
