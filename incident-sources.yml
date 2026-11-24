@@ -11,6 +11,10 @@ sources:
     short: instances # the store's per-repository file name and incident-id prefix
     instance_prefix: "instance-" # production servers are instance-<issue>
     control_host: null # exouser@<ip> of the second (control) runner, for its _diag logs over SSH
+    # The weekly storage-usage snapshot (INCIDENT_STORE_PLAN.md "Storage usage
+    # (weekly snapshot)"): the portal's `usage` reply through
+    # ~/mc-data/portal_target. Production only; Test-Instances' portal is shelved.
+    storage_usage: true
     # Coverage amendment, class K: other repositories harvested with this
     # source, by explicit list (maintainer, 2026-11-10): the join health
     # monitor only. Course repositories are their own thing and their failure
@@ -197,6 +201,7 @@ workflows:
     - audit-issue-changes.yml
     - close-expired-issues.yml
     - collect-instance-uptime.yml
+    - delete-long-shelved.yml
     - detect-dormant-workflows.yml
     - expire-shares.yml
     - follow-through.yml

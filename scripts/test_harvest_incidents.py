@@ -2369,3 +2369,335 @@ def test_a_harvested_failure_carries_error_detail_and_rederive_agrees(
         (tmp_path / "store/outcomes/2026/11/11/instances.jsonl").read_text()
     )
     assert again["source"]["error_detail"] == line["source"]["error_detail"]
+
+
+# --- storage usage (INCIDENT_STORE_PLAN.md "Storage usage (weekly snapshot)") ------
+
+GIB = 2**30
+MON_1300 = hv.parse_ts("2026-11-23T13:00:00Z")  # Monday of ISO week 2026-W48
+
+
+def _share(gid, used_gb, start="2026-10-01", usage_at="2026-11-23T12:59:00Z", **kw):
+    return {
+        "github_id": gid,
+        "state": "ready",
+        "used_bytes": None if used_gb is None else int(used_gb * GIB),
+        "size_bytes": 100 * GIB,
+        "usage_at": usage_at,
+        "start": start,
+        "end_date": "2027-01-29",
+        "extensions": 0,
+        **kw,
+    }
+
+
+def _usage_h(tmp_path, cfg, monkeypatch, replies):
+    h = _jh(tmp_path, cfg, [])
+    h.src = {"short": "instances", "storage_usage": True}
+    h.dry_run = False
+    calls = []
+
+    def fake(previous=0):
+        calls.append(previous)
+        r = replies.pop(0)
+        return (None, r) if isinstance(r, str) else ({"schema": 1, "shares": r}, None)
+
+    monkeypatch.setattr(hv, "portal_usage", fake)
+    return h, calls
+
+
+def _store_lines(tmp_path, rel):
+    p = tmp_path / "store" / rel
+    return [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []
+
+
+def test_usage_week_is_due_from_monday_1300_utc():
+    assert hv.usage_week(MON_1300 - 1) is None
+    assert hv.usage_week(MON_1300) == "2026-W48"
+    assert hv.usage_week(MON_1300 + 6 * 86400) == "2026-W48"  # Sunday: still this week
+    assert hv.usage_week(MON_1300 + 7 * 86400 - 3600) is None  # next Monday 12:00
+    assert hv.usage_week(hv.parse_ts("2027-01-04T13:00:00Z")) == "2027-W01"
+
+
+@pytest.mark.parametrize(
+    ("text", "why"),
+    [
+        ('{"schema": 1, "shares": [{"github_id": 1', "not JSON"),  # truncated
+        ("", "not JSON"),
+        ('{"schema": 2, "shares": []}', "unknown schema"),
+        ('{"schema": 1}', "no shares list"),
+        (
+            '{"schema": 1, "shares": [{"github_id": true, "start": "2026-11-01"}]}',
+            "bad row",
+        ),
+        (
+            '{"schema": 1, "shares": [{"github_id": 5, "used_bytes": "1", "start": "2026-11-01"}]}',
+            "bad row",
+        ),
+        ('{"schema": 1, "shares": [{"github_id": 5}]}', "bad row"),
+    ],
+)
+def test_a_bad_usage_reply_is_a_failed_attempt(text, why):
+    doc, err = hv.validate_usage(text)
+    assert doc is None
+    assert err.startswith(why)
+
+
+def test_a_good_usage_reply_passes():
+    doc, err = hv.validate_usage(
+        json.dumps({"schema": 1, "at": "x", "shares": [_share(5, 1.5)]})
+    )
+    assert err is None
+    assert doc["shares"][0]["github_id"] == 5  # noqa: PLR2004
+
+
+def test_a_portal_target_that_is_not_user_at_host_is_refused(tmp_path):
+    f = tmp_path / "portal_target"
+    f.write_text("-oProxyCommand=evil host\n")
+    assert hv.portal_usage(f) == (None, "portal target is not user@host")
+    assert hv.portal_usage(tmp_path / "missing")[1].startswith("no portal target")
+
+
+def test_storage_usage_runs_only_where_the_source_asks_for_it(
+    tmp_path, cfg, monkeypatch
+):
+    h, calls = _usage_h(tmp_path, cfg, monkeypatch, [])
+    h.src = {"short": "test-instances"}
+    assert h.storage_usage(MON_1300) is None
+    assert calls == []
+    assert cfg.raw["sources"]["MorphoCloud/Instances"]["storage_usage"] is True
+    assert "storage_usage" not in cfg.raw["sources"]["MorphoCloud/Test-Instances"]
+
+
+def test_storage_usage_takes_each_week_once_and_keeps_the_final_use(
+    tmp_path, cfg, monkeypatch
+):
+    week1 = [_share(1, 40), _share(2, 3), _share(3, None, usage_at=None),
+             _share(4, 90, usage_at="2026-11-21T10:00:00Z")]  # fmt: skip
+    week2 = [_share(1, 45, usage_at="2026-11-30T12:00:00Z"),
+             _share(3, 2, usage_at="2026-11-30T12:00:00Z")]  # fmt: skip
+    h, calls = _usage_h(tmp_path, cfg, monkeypatch, [week1, week2])
+    assert h.storage_usage(MON_1300 - 60) == "not due"
+    assert calls == []
+    assert h.storage_usage(MON_1300 + 120) == "took 2026-W48: 4 shares, 0 gone"
+    assert h.storage_usage(MON_1300 + 420) == "taken 2026-W48"
+    assert len(calls) == 1
+    rows = _store_lines(tmp_path, "storage/2026/11/23.jsonl")
+    assert [(r["github_id"], r["stale"]) for r in rows] == [
+        (1, False),
+        (2, False),
+        (3, True),
+        (4, True),
+    ]
+    assert {r["week"] for r in rows} == {"2026-W48"}
+    assert rows[0]["schema"] == 1
+    assert "login" not in json.dumps(rows)
+    assert h.storage_usage(MON_1300 + 7 * 86400) == "took 2026-W49: 2 shares, 2 gone"
+    final = _store_lines(tmp_path, "storage/final.jsonl")
+    assert [(r["github_id"], r["week"], r["gone_by"]) for r in final] == [
+        (2, "2026-W48", "2026-11-30T13:00:00Z"),
+        (4, "2026-W48", "2026-11-30T13:00:00Z"),
+    ]
+    assert (tmp_path / "store/storage/report.md").exists()
+    assert h.store.read_json("state/storage-usage.json")["week"] == "2026-W49"
+
+
+def test_a_failed_usage_call_leaves_the_week_untaken(tmp_path, cfg, monkeypatch):
+    h, calls = _usage_h(
+        tmp_path, cfg, monkeypatch, ["Connection timed out", [_share(1, 4)]]
+    )
+    with pytest.raises(RuntimeError, match="portal usage: Connection timed out"):
+        h.storage_usage(MON_1300 + 60)
+    assert h.store.read_json("state/storage-usage.json") is None
+    assert not (tmp_path / "store/storage").exists()
+    assert h.storage_usage(MON_1300 + 360).startswith("took 2026-W48")
+
+
+def test_a_snapshot_already_in_the_store_is_not_taken_twice(tmp_path, cfg, monkeypatch):
+    h, calls = _usage_h(tmp_path, cfg, monkeypatch, [[_share(1, 4)]])
+    h.storage_usage(MON_1300)
+    (tmp_path / "store/state/storage-usage.json").unlink()  # the state write was lost
+    assert h.storage_usage(MON_1300 + 86400) == "taken 2026-W48"
+    assert len(calls) == 1
+    assert len(_store_lines(tmp_path, "storage/2026/11/23.jsonl")) == 1
+
+
+def test_usage_figures_leave_stale_and_new_shares_out():
+    taken = "2026-11-23T13:00:00Z"
+    rows = hv.usage_rows(
+        {"shares": [
+            _share(1, 2), _share(2, 8), _share(3, 50), _share(4, 85), _share(5, 99),
+            _share(6, 0.1, start="2026-11-20"),  # new: not in the low counts
+            _share(7, None, usage_at=None, size_bytes=None),  # never measured: not "under 5 GB"
+            _share(8, 1, usage_at="2026-11-20T00:00:00Z"),  # stale
+        ]},
+        "2026-W48",
+        taken,
+    )  # fmt: skip
+    f = hv.usage_figures(rows)
+    assert (f["shares"], f["measured"], f["stale"], f["new"]) == (8, 6, 2, 1)
+    assert (f["over80"], f["at95"], f["under5"], f["under10"]) == (2, 1, 1, 2)
+    assert f["median"] == int(8 * GIB)
+    assert f["p90"] == int(99 * GIB)
+    assert f["size_total"] == 7 * 100 * GIB  # the never-measured share has no size yet
+
+
+def test_the_report_shows_no_figures_for_a_group_under_three():
+    taken = "2026-11-23T13:00:00Z"
+    two = hv.usage_rows({"shares": [_share(1, 40), _share(2, 60)]}, "2026-W48", taken)
+    text = hv.usage_report({"2026-W48": two}, [], taken)
+    week_line = next(x for x in text.splitlines() if x.startswith("| 2026-W48"))
+    assert "fewer than 3" in week_line
+    assert "40.0" not in week_line
+    assert "60.0" not in week_line
+    many = hv.usage_rows(
+        {"shares": [_share(i, 10 * i) for i in range(1, 5)]}, "2026-W48", taken
+    )
+    text = hv.usage_report({"2026-W48": many}, [], taken)
+    week_line = next(x for x in text.splitlines() if x.startswith("| 2026-W48"))
+    assert week_line.startswith("| 2026-W48 | 4 | 20.0 | 40.0 |")
+    assert "| 31-60 | 4 |" in text  # 53 days since 2026-10-01
+
+
+def test_every_workflow_is_listed_in_incident_sources(cfg):
+    """A workflow missing from incident-sources.yml is recorded as kind `other`
+    and puts an error in every cycle (2026-11-24: delete-long-shelved.yml)."""
+    workflows = {p.name for p in (ROOT / ".github" / "workflows").glob("*.yml")}
+    assert workflows - set(cfg.kinds) == set()
+
+
+@pytest.mark.parametrize(
+    ("change", "why"),
+    [
+        ({"start": "2026-13-45"}, "bad row"),
+        ({"end_date": "soon"}, "bad row"),
+        ({"usage_at": "yesterday"}, "bad row"),
+        ({"used_bytes": -1}, "bad row"),
+        ({"state": "expired"}, "bad row"),
+    ],
+)
+def test_a_usage_row_with_a_bad_field_is_refused(change, why):
+    text = json.dumps({"schema": 1, "shares": [_share(5, 1, **change)]})
+    doc, err = hv.validate_usage(text)
+    assert doc is None
+    assert err.startswith(why)
+
+
+def test_duplicate_ids_and_an_empty_list_after_a_full_week_are_refused():
+    dup = json.dumps({"schema": 1, "shares": [_share(5, 1), _share(5, 2)]})
+    assert hv.validate_usage(dup) == (None, "duplicate github_id")
+    empty = json.dumps({"schema": 1, "shares": []})
+    assert hv.validate_usage(empty, previous=40) == (
+        None,
+        "empty shares list after a week of 40",
+    )
+    assert hv.validate_usage(empty)[1] is None  # a portal with no shares yet
+
+
+def test_ssh_words_stay_out_of_the_store(tmp_path, monkeypatch):
+    f = tmp_path / "portal_target"
+    f.write_text("mcrunner@10.9.8.7\n")
+    monkeypatch.setattr(
+        hv.subprocess,
+        "run",
+        lambda *_a, **_k: SimpleNamespace(
+            returncode=255, stdout="", stderr="ssh: connect to host 10.9.8.7 port 22"
+        ),
+    )
+    doc, err = hv.portal_usage(f)
+    assert doc is None
+    assert "10.9.8.7" not in err
+
+
+def test_final_use_is_derived_so_a_crash_between_writes_loses_nothing(
+    tmp_path, cfg, monkeypatch
+):
+    h, calls = _usage_h(tmp_path, cfg, monkeypatch, [[_share(1, 4), _share(2, 9)]])
+    h.storage_usage(MON_1300)
+    # week 2's snapshot is in the store, but the cycle died before the rest
+    day = tmp_path / "store/storage/2026/11/30.jsonl"
+    day.write_text(
+        json.dumps(
+            hv.usage_rows(
+                {"shares": [_share(1, 5)]}, "2026-W49", "2026-11-30T13:00:00Z"
+            )[0]
+        )
+        + "\n"
+    )
+    assert h.storage_usage(MON_1300 + 7 * 86400 + 300) == "taken 2026-W49"
+    assert len(calls) == 1
+    final = _store_lines(tmp_path, "storage/final.jsonl")
+    assert [(r["github_id"], r["gone_by"]) for r in final] == [
+        (2, "2026-11-30T13:00:00Z")
+    ]
+    assert h.store.read_json("state/storage-usage.json")["week"] == "2026-W49"
+    h.storage_usage(MON_1300 + 7 * 86400 + 600)
+    assert len(_store_lines(tmp_path, "storage/final.jsonl")) == 1  # never repeated
+
+
+def test_the_previous_week_count_goes_to_the_portal_call(tmp_path, cfg, monkeypatch):
+    h, calls = _usage_h(
+        tmp_path, cfg, monkeypatch, [[_share(1, 4), _share(2, 9)], [_share(1, 5)]]
+    )
+    h.storage_usage(MON_1300)
+    h.storage_usage(MON_1300 + 7 * 86400)
+    assert calls == [0, 2]
+
+
+def _week(week, taken, shares):
+    return hv.usage_rows({"shares": shares}, week, taken)
+
+
+def test_a_share_that_comes_back_has_no_final_row_and_each_share_has_one():
+    w = {
+        "2026-W48": _week(
+            "2026-W48", "2026-11-23T13:00:00Z", [_share(1, 4), _share(2, 9)]
+        ),
+        "2026-W49": _week(
+            "2026-W49", "2026-11-30T13:00:00Z", [_share(2, 9)]
+        ),  # 1 missing
+        "2026-W50": _week(
+            "2026-W50", "2026-12-07T13:00:00Z", [_share(1, 5), _share(2, 9)]
+        ),
+        "2026-W51": _week("2026-W51", "2026-12-14T13:00:00Z", [_share(1, 6)]),
+    }
+    final = hv.usage_finals(w)
+    assert [(r["github_id"], r["week"], r["gone_by"]) for r in final] == [
+        (2, "2026-W50", "2026-12-14T13:00:00Z")
+    ]  # share 1 is back (alive), share 2 once at its last departure
+
+
+def test_final_figures_use_the_last_known_row_even_if_stale():
+    taken = "2026-11-23T13:00:00Z"
+    stale = [_share(i, 30, usage_at="2026-11-10T00:00:00Z") for i in range(1, 4)]
+    rows = _week("2026-W48", taken, stale)
+    assert hv.usage_figures(rows)["measured"] == 0
+    assert hv.usage_figures(rows, final=True)["measured"] == 3  # noqa: PLR2004
+
+
+def test_a_row_without_a_size_is_not_measured():
+    rows = _week("2026-W48", "2026-11-23T13:00:00Z", [_share(1, 99, size_bytes=None)])
+    f = hv.usage_figures(rows)
+    assert f["measured"] == 0
+    assert f["over80"] == 0
+
+
+def test_a_share_extended_later_is_in_the_extended_table_for_every_bin():
+    early = _week(
+        "2026-W41",
+        "2026-10-05T13:00:00Z",
+        [_share(i, 10, start="2026-09-20") for i in range(1, 4)],
+    )
+    later = _week(
+        "2026-W48",
+        "2026-11-23T13:00:00Z",
+        [_share(i, 20, start="2026-09-20", extensions=1) for i in range(1, 4)],
+    )
+    text = hv.usage_report(
+        {"2026-W41": early, "2026-W48": later}, [], "2026-11-23T13:00:00Z"
+    )
+    plain = text[text.index("### No extension") : text.index("### Extended")]
+    extended = text[text.index("### Extended") : text.index("## Final use")]
+    assert "| 0-30 | 0 |" in plain
+    assert "| 0-30 | 3 |" in extended
+    assert "| 61-90 | 3 |" in extended
