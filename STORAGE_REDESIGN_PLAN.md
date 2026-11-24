@@ -517,8 +517,10 @@ runner's existing SSH path carry the decision.
   of approval, plus 120 days (revised 2026-11-24; was: the current end date plus
   120, which gave a storage approved late in its read-only days up to 15 days
   less). An approval before the end date adds 120 days to it; an approval of an
-  expired storage gives 120 days from the approval. The next runner pickup
-  writes it on the share, and the member gets an email with the new date.
+  expired storage gives 120 days from the approval. "The day of approval" is the
+  day (UTC) the admin pressed Approve, recorded with the decision. The next
+  runner pickup writes it on the share, and the member gets an email with the
+  new date.
 - **Decline** keeps the end date. The member gets an email with the admin's
   note, if there is one.
 - There is no limit on the number of extensions for now.
@@ -532,7 +534,9 @@ runner's existing SSH path carry the decision.
   a share with a waiting request is not deleted until an admin decides. While it
   is held, the portal shows "will be deleted after an admin decides on your
   request" instead of the date; the read-only email says the date holds unless a
-  request is waiting. After a Decline it is deleted at the next sweep.
+  request is waiting. After a Decline it is deleted at the next sweep; if the
+  date in the email has already passed, the decline email says so (deleted at
+  the next daily sweep, noon UTC).
 - **Admins are reminded.** A request waiting more than 3 days is emailed to the
   admins again by every daily sweep until an admin decides, with the same link
   to the admin page, so a waiting request cannot keep a share for ever by being
@@ -546,7 +550,9 @@ portal's file page without asking anyone, and can still ask to keep the storage.
 - **When:** the share is kept through its whole end date; the first sweep after
   that day (noon UTC the next day) turns it read-only, in one run. Right before,
   it asks the portal again: a share with an approval not yet applied is left for
-  the pickup, which applies it within a minute.
+  the pickup, which applies it within a minute. Step 1 then reads the share's
+  end date afresh and writes `mc_read_only_at` only if that date is still past,
+  so an approval applied in between is never overridden.
   1. the runner marks the share read-only (Manila property `mc_read_only_at`,
      ISO-8601 UTC; it replaces `mc_locked_at`); from then on `ensure` refuses
      the share, so no new instance gets a writable mount;
