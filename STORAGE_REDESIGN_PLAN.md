@@ -39,6 +39,7 @@ These are settled. Revisit only with new facts, not preference.
 | 18  | **OS updates arrive through the image.** `/create` from a baked image runs neither `apt-get update` nor `apt-get upgrade` (amended 2026-11-16: setup installs nothing on a baked image); the bake keeps both. A package ansible installs must be in the image. Both images are rebuilt monthly whether or not Slicer changed (issue #430). Added 2026-11-16.                                                                                                                                                                                             |
 | 19  | **Background security updates between rebakes.** `unattended-upgrades` is turned on when an instance's setup completes. Security fixes only: the Ubuntu security pocket is the only allowed source (no `noble-updates`, no feature updates). After each boot the lists are refreshed at 30-40 minutes and the upgrade runs at 45-55 minutes; daily at 06:00/18:00 (refresh) and 06:30 UTC (upgrade), at idle priority. Kernel and NVIDIA packages are excluded; they change only with a rebake. Added 2026-11-16; sources and timing amended 2026-11-17. |
 | 20  | **The desktop does not prompt members to upgrade.** Software Updater does not open on its own, and no new Ubuntu release is offered. Security fixes still install in the background (decision 19). Software Updater stays in the app menu for a member who wants to run it. Added 2026-11-23.                                                                                                                                                                                                                                                            |
+| 21  | **Long-shelved instances are deleted.** Once a week, an instance shelved for more than 28 days is deleted and its request closed; the member's files stay on the storage, and a new instance can be created from the portal at any time (see "Long-shelved instances"). Decided 2026-11-24 by the maintainer.                                                                                                                                                                                                                                            |
 
 ## Why per-user shares, not one big share with folders
 
@@ -517,21 +518,36 @@ runner's existing SSH path carry the decision.
 - **Decline** keeps the end date. The member gets an email with the admin's
   note, if there is one.
 - There is no limit on the number of extensions for now.
-- A member can ask at any time before the share is deleted, including while it
-  is locked.
+- **When a member can ask:** the button appears with the first reminder, 14 days
+  before the end date, and stays while the share is locked, until it is deleted.
+  Asking earlier would let a member stack extensions far ahead.
+- **One request at a time.** While one is waiting, the button says so instead of
+  offering another. After a Decline the member can ask again.
+- **A waiting request postpones the lock.** If the end date passes while a
+  request is waiting, the share stays kept, and its instance stays, until an
+  admin decides. After a Decline the share locks at the next sweep, and the 15
+  locked days start then.
+- **Unlocking order.** After an approval of a locked share, the pickup first
+  creates the access rule again (`ensure`), then writes the new end date. If
+  `ensure` fails, the share stays locked with its old end date, the admins get
+  an alert, and the next pickup tries again.
 
-**At the end date, the share is locked for 15 days.** The sweep deletes the
-member's instance (with the clean shutdown every share-mode delete does) and
-closes its request issue. The portal releases its mount, and the share's access
-rule is revoked, so nothing can reach the files. The portal shows "Your storage
-is locked since <date> and will be deleted on <date>" with **Ask to keep my
+**After the end date, the share is locked for 15 days.** The share is kept
+through its whole end date; the first sweep after that day (noon UTC the next
+day) locks it, unless a request is waiting. The sweep deletes the member's
+instance (with the clean shutdown every share-mode delete does) and closes its
+request issue. The portal releases its mount, and the share's access rule is
+revoked, so nothing can reach the files. The portal shows "Your storage is
+locked since <date> and will be deleted on <date>" with **Ask to keep my
 storage**. An approval while the share is locked unlocks it: the next pickup
 creates the access rule again (`ensure`), the portal mounts the share again, and
 the end date becomes the old end date plus 120 days.
 
 **After 15 days locked, the share is deleted** by `expire`, as before (only the
-sweep calls it), and the member gets a deletion email. They can create a new,
-empty storage from the portal.
+sweep calls it), and the member gets a deletion email. Right before deleting,
+the sweep asks the portal again whether a request is waiting or was just
+approved; if so, it does not delete, so an approval on the last day cannot lose
+to the delete. They can create a new, empty storage from the portal.
 
 **Admin page** on the portal, for `morphocloud-admins` only:
 
@@ -545,7 +561,8 @@ Live usage views come later.
 **Record.** The portal's audit table keeps every request, every decision (who,
 when and the note), every lock and every deletion. The end date and the number
 of extensions are also kept on the share as Manila properties (`mc_kept_until`,
-`mc_extensions`), so the record survives a rebuild of the portal.
+`mc_extensions`), so the record survives a rebuild of the portal. If the two
+ever disagree, the share's Manila properties win.
 
 **Reused from the 2026-10-14 design:**
 
@@ -567,6 +584,28 @@ storage**, which renewed with no review, is removed.
 | `MORPHOCLOUD_SHARE_WARNING_DAYS` | `14,7,1`   |
 | `MORPHOCLOUD_SHARE_GRACE_DAYS`   | `15`       |
 
+### Long-shelved instances (decision 21, 2026-11-24)
+
+An instance must not stay shelved for ever: it holds a place in the allocation's
+instance quota and an image-sized disk on Jetstream2, and nothing in it needs
+keeping, because the member's files are on the storage. Once a week, the runner
+checks every instance of the project:
+
+- **Which:** an instance whose status is `SHELVED_OFFLOADED` and whose latest
+  shelve, from Nova's action history (`openstack server event list`), started
+  more than 28 days ago. Every shelve counts, by the member or automatic, and an
+  unshelve starts the count again. If the history cannot be read, the instance
+  is left for the next week; an unknown age never deletes.
+- **What happens:** the instance is deleted the way every share-mode delete is,
+  and its request issue is closed with a note. Nothing on the storage is
+  touched. The member gets an email: the instance was removed after 4 weeks
+  shelved, their files are safe in their storage, and they can create a new
+  instance from the portal.
+- **When:** weekly, dispatched by the runner crontab (the runner is the clock:
+  INSTANCE_DASHBOARD_PLAN.md decision 21), not by GitHub's schedule.
+- **Setting:** `MORPHOCLOUD_SHELVED_DELETE_DAYS` (production `28`); unset means
+  no scrub.
+
 ## Quota
 
 | Allocation                    | Share space | Used     | Share count | Manila per-share limit |
@@ -580,8 +619,9 @@ allocation total. Each user share is still capped at 100 GB, because that is the
 size it is created with, and CephFS enforces a share's size as a hard limit.
 
 Production as of 2026-11-24: 50 shares and 5,500 GB used, of which 44 are the
-member shares the migration created (4,400 GB). Space binds before the share
-count: the 4,500 GB left is about 45 more member shares, so about 88 in all. The
+member shares the migration created (4,400 GB) and 6 are other shares (1,100
+GB). Space binds, never the share count: the 4,500 GB left is 45 more member
+shares, so 89 member shares in all (8,900 GB / 100 GB), well under 125. The
 quota is soft and can be raised on request; the storage term (decision 7) is
 there to show the turnover of members, not to hold a hard line. Testing fits the
 Test-Instances allocation.
@@ -637,8 +677,9 @@ files are in the storage and where to create the next instance.
 total), set by the repository variable `MORPHOCLOUD_EXPIRATION_LADDER`
 (`90d,180d`). Unset keeps today's 60 + 60. Since 2026-10-14 the prototype runs
 `7d,14d`, and shares expire after 14 idle days (the 2026-10-14 design, since
-replaced by "Storage term"), so the whole lifecycle can be watched within the
-test period.
+replaced by "Storage term"; Test-Instances keeps that rule until the storage
+term is built and tested there), so the whole lifecycle can be watched within
+the test period.
 
 **No Data drop in share mode:** the credentials email has no Data drop line and
 new instances do not install it; the portal's file browser replaces it.
