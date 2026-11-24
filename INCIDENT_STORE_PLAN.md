@@ -933,16 +933,16 @@ from before it went down.
   workflows already read), with the runner's key and `BatchMode`,
   `StrictHostKeyChecking=yes`. No new key or token.
 - **Validation:** the reply must be one JSON document with `schema` 1 and a
-  `shares` list. Every row needs a unique integer `github_id`, a known `state`,
-  byte counts and `extensions` that are null or not negative, a real `start`
-  date, and an `end_date` and `usage_at` that are null or well formed. An empty
-  list after a week that had shares is refused too, because it would record
-  every share as gone. A large drop is accepted, since shares created in the
-  same migration week end in the same week. A failed SSH call, a timeout, or
-  truncated or non-JSON output is a failed attempt, never an empty snapshot. The
-  week stays untaken and the next cycle tries again. The error in the store
-  names the failure only. SSH's own message, which carries the portal's address,
-  goes to the harvester's local log.
+  `shares` list. Every row needs a unique integer (not boolean) `github_id`, a
+  known `state`, byte counts and `extensions` that are null or not negative, a
+  real `start` date, and an `end_date` and `usage_at` that are null or well
+  formed. An empty list after a week that had shares is refused too, because it
+  would record every share as gone. A large drop is accepted, since shares
+  created in the same migration week end in the same week. A failed SSH call, a
+  timeout, or truncated or non-JSON output is a failed attempt, never an empty
+  snapshot. The week stays untaken and the next cycle tries again. The error in
+  the store names the failure only. SSH's own message, which carries the
+  portal's address, goes to the harvester's local log.
 - **Stored:** `storage/YYYY/MM/DD.jsonl` (the snapshot's day). There is one line
   per share: `schema`, `week` (ISO week, `2026-W48`), `taken_at`, plus the
   fields above. A row whose `usage_at` is null or more than 24 hours old gets
