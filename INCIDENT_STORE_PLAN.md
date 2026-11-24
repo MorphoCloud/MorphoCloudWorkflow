@@ -964,8 +964,10 @@ from before it went down.
   `final.jsonl`, the report and the state from the snapshots. A crash between
   writes can therefore neither lose a final row nor repeat one. The analysis
   keeps only the last snapshot of each ISO week. A week taken with a bad
-  snapshot (a bug) is taken again by deleting that week's lines from the store
-  by hand. The next cycle then takes the week afresh.
+  snapshot (a bug) is taken again by hand: delete that snapshot's file
+  (`storage/YYYY/MM/DD.jsonl` for its day) and `state/storage-usage.json` from
+  the store. The step checks the state first, then the store, so both must go.
+  The next cycle then takes the week afresh.
 - **Errors:** as for every step. The error goes into `last_error`, the watchdog
   emails the admins, and the other steps go on.
 - **Size and retention:** about 90 rows (the 89 member shares planned in
@@ -1003,21 +1005,25 @@ standard library only. Rows are counted as follows:
    91–120 and more than 120 days, with the same median, 90th percentile and
    counts for each. Each share is counted once per bin (its latest row in it). A
    share is extended or not by its latest row. One whose latest row has an
-   extension (`extensions` > 0) is only in the separate Extended age table, in
-   every bin, never in the No-extension age table. That table uses the same
-   bins. Its `start` does not move, so it sits in the later bins. This shows
-   whether use keeps growing over a term, or levels off well below 100 GB.
+   extension (`extensions` > 0) is only in the separate Extended age table, with
+   all its rows, including its use before the extension, in the same bins. The
+   No-extension age table therefore describes shares never extended so far, and
+   a share extended later leaves its early bins. This shows whether use keeps
+   growing over a term, or levels off well below 100 GB.
 3. **Final use:** the same figures for the final row of every share in
    `final.jsonl`: what a share held when it left the data-holding states. A
-   final row counts with its last known figures even if it is stale, because a
-   share that went down first has a stale last row.
+   final row is measured if both byte counts are known and the size is above
+   zero, whether or not it is stale, because a share that went down first has a
+   stale last row. A member whose storage ended and who asks again later keeps
+   the same GitHub id, so the first term gets no final row once the new one
+   appears. That is accepted for a weekly admin figure.
 4. **Counts only.** The report never names anyone, and a group of fewer than 3
    measured shares shows "fewer than 3" (when it has 1 or 2 shares) and no
    figures. The floor applies to the figures. The read-only, new and stale count
-   lines are counts only and are always shown. Totals across groups can still
-   narrow a hidden group down. That is accepted, because the report is only in
-   the admins' private store. The GitHub ids are in the data for whoever needs
-   them.
+   lines are counts only and are always shown, for the same admin-only reason as
+   below. Totals across groups can still narrow a hidden group down. That is
+   accepted, because the report is only in the admins' private store. The GitHub
+   ids are in the data for whoever needs them.
 
 **Privacy.** A GitHub id is a stable pseudonymous key, stored next to each
 member's use and term dates. The store (`MorphoCloud/Incidents`) is private.
