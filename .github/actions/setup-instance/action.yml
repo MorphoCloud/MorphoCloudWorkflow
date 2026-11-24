@@ -467,11 +467,14 @@ runs:
         # ends only once its own gvfsd-metadata has exited, or after 5 s.
         # A launcher left untrusted is not fatal: the login-time autostart
         # marks it again.
+        #
+        # The helper takes (path, attribute, value) triples, all set in one
+        # private session.
         cat > /run/mc-trust-launcher.sh <<'TRUSTEOF'
         #!/bin/sh
         dbus-run-session -- sh -c \
-          'gio set "$1" metadata::trusted true && gio set "$2" metadata::trusted true' \
-          sh "$1" "$2" || exit 1
+          'while [ $# -ge 3 ]; do gio set "$1" "$2" "$3" || exit 1; shift 3; done' \
+          sh "$@" || exit 1
         cg=/sys/fs/cgroup$(cut -d: -f3- /proc/self/cgroup)
         i=0
         while [ $i -lt 50 ]; do
@@ -494,16 +497,40 @@ runs:
           systemd-run --quiet --wait --pipe --collect \
             --uid=exouser --setenv=HOME="$H" \
             -p RuntimeMaxSec=20 -p TimeoutStopSec=5 \
-            /bin/sh /run/mc-trust-launcher.sh "$f" "$H/Desktop/$(basename "$f")" \
+            /bin/sh /run/mc-trust-launcher.sh \
+              "$f" metadata::trusted true \
+              "$H/Desktop/$(basename "$f")" metadata::trusted true \
             < /dev/null > /dev/null \
             || echo "Could not mark $(basename "$f") as trusted" >&2
         done
+        # Where the desktop draws the icons: down the top-left corner, 3D
+        # Slicer, then Extend Instance Session, then Home. Without a saved
+        # place the desktop put all three in the middle of the screen and kept
+        # them there (instance-278, 2026-11-24). Pixels from the screen's top
+        # left; the desktop snaps them to its grid, and the top bar takes the
+        # first ~32 px, so y 40/164/288 are the first three rows at any screen
+        # size. Saved like the trusted mark, before the desktop draws them.
+        set --
+        y=40
+        for f in Slicer.desktop ExtendInstanceSession.desktop; do
+          [ -e "$MP/Desktop/$f" ] || continue
+          set -- "$@" "$H/Desktop/$f" metadata::nautilus-icon-position "0,$y"
+          y=$((y + 124))
+        done
+        set -- "$@" "$H" metadata::nautilus-icon-position "0,$y"
+        systemd-run --quiet --wait --pipe --collect \
+          --uid=exouser --setenv=HOME="$H" \
+          -p RuntimeMaxSec=20 -p TimeoutStopSec=5 \
+          /bin/sh /run/mc-trust-launcher.sh "$@" \
+          < /dev/null > /dev/null \
+          || echo "Could not place the desktop icons" >&2
         rm -f /run/mc-trust-launcher.sh
 
         echo "Share mounted at $MP; home folders linked."
         EOF
         # 180 s: the mount unit may take its full TimeoutSec=90, each launcher
-        # its 20 s, and the rest takes seconds (whole step p95 13 s).
+        # its 20 s, the icon placement its 20 s (90 + 2 x 20 + 20 = 150), and
+        # the rest takes seconds (whole step p95 13 s).
         } | mc_ssh 180 "Mount script" "${ssh_opts[@]}" exouser@"$INSTANCE_IP" 'sudo bash -s'
       env:
         INSTANCE_IP:
