@@ -527,6 +527,10 @@ runner's existing SSH path carry the decision.
   request is waiting, the share stays kept, and its instance stays, until an
   admin decides. After a Decline the share locks at the next sweep, and the 15
   locked days start then.
+- **Admins are reminded.** A request waiting more than 3 days is emailed to the
+  admins again by every daily sweep until an admin decides, with the same link
+  to the admin page, so a waiting request cannot keep a share for ever by being
+  forgotten.
 - **Unlocking order.** After an approval of a locked share, the pickup first
   creates the access rule again (`ensure`), then writes the new end date. If
   `ensure` fails, the share stays locked with its old end date, the admins get
