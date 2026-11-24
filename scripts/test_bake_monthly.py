@@ -37,7 +37,7 @@ def test_first_tuesday(day, expected):
     assert bm.first_tuesday(dt.date.fromisoformat(day)) is expected
 
 
-def test_first_tuesdays_are_at_most_35_days_apart_so_36_only_fires_after_a_miss():
+def test_first_tuesdays_are_28_to_35_days_apart():
     days = [dt.date(2026, 1, 1) + dt.timedelta(days=i) for i in range(800)]
     tuesdays = [d for d in days if bm.first_tuesday(d)]
     gaps = {(b - a).days for a, b in zip(tuesdays, tuesdays[1:], strict=False)}

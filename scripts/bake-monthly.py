@@ -684,7 +684,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 — on
         ok = all(s == "done" for s in run.state.values())
         if ok:
             LAST_SUCCESS.write_text(str(time.time()))
-            run.prune()
+            try:
+                run.prune()
+            except Exception as e:
+                run.note(f"pruning failed: {type(e).__name__}: {str(e)[:200]}")
     except BaseException as e:
         crash = f"{type(e).__name__}: {e}\n{traceback.format_exc()[-1500:]}"
         delete_own_leftovers(run)
