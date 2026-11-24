@@ -1627,6 +1627,7 @@ USAGE_TARGET = Path("~/mc-data/portal_target")
 USAGE_FINAL = "storage/final.jsonl"
 USAGE_REPORT = "storage/report.md"
 USAGE_STATE = "state/storage-usage.json"
+USAGE_STATES = ("ready", "unavailable", "read_only")
 USAGE_TARGET_RE = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9.:-]+$")
 USAGE_DAY_RE = re.compile(r"^\d{4}-\d\d-\d\d$")
 GIB = 2**30  # Manila's GB: a 100 GB share is 100 * 2**30 bytes
@@ -1646,44 +1647,80 @@ def usage_week(now: float) -> str | None:
     return f"{year}-W{week:02d}"
 
 
-def _int_or_none(v) -> bool:
-    return v is None or (isinstance(v, int) and not isinstance(v, bool))
+def _count_or_none(v) -> bool:
+    return v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 0)
 
 
-def validate_usage(text: str) -> tuple[dict | None, str | None]:
+def _day(v) -> bool:
+    try:
+        datetime.date.fromisoformat(v)
+    except (TypeError, ValueError):
+        return False
+    return bool(USAGE_DAY_RE.match(v))
+
+
+def _time_or_none(v) -> bool:
+    if v is None:
+        return True
+    try:
+        time.strptime(v, "%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _usage_row_ok(s) -> bool:
+    return (
+        isinstance(s, dict)
+        and isinstance(s.get("github_id"), int)
+        and not isinstance(s.get("github_id"), bool)
+        and s.get("state") in USAGE_STATES
+        and _count_or_none(s.get("used_bytes"))
+        and _count_or_none(s.get("size_bytes"))
+        and _count_or_none(s.get("extensions"))
+        and _day(s.get("start"))
+        and (s.get("end_date") is None or _day(s.get("end_date")))
+        and _time_or_none(s.get("usage_at"))
+    )
+
+
+def validate_usage(  # noqa: PLR0911 — one return per refusal reason
+    text: str, previous: int = 0
+) -> tuple[dict | None, str | None]:
     """The portal's `usage` reply, or why it is refused. Anything but one
     complete document of the known schema is a failed attempt, never an
-    empty snapshot."""
+    empty snapshot. An empty list after a week that had shares is refused
+    too: it would record every share as gone (`previous` = last week's count).
+    A large drop is accepted: shares created in one migration week end in one
+    week."""
     try:
         doc = json.loads(text)
     except ValueError:
         return None, f"not JSON ({len(text)} bytes)"
     if not isinstance(doc, dict) or doc.get("schema") != USAGE_SCHEMA:
-        return (
-            None,
-            f"unknown schema {doc.get('schema') if isinstance(doc, dict) else type(doc).__name__}",
-        )
+        found = doc.get("schema") if isinstance(doc, dict) else type(doc).__name__
+        return None, f"unknown schema {found}"
     shares = doc.get("shares")
     if not isinstance(shares, list):
         return None, "no shares list"
+    if not shares and previous:
+        return None, f"empty shares list after a week of {previous}"
     for s in shares:
-        if not (
-            isinstance(s, dict)
-            and isinstance(s.get("github_id"), int)
-            and not isinstance(s.get("github_id"), bool)
-            and _int_or_none(s.get("used_bytes"))
-            and _int_or_none(s.get("size_bytes"))
-            and _int_or_none(s.get("extensions"))
-            and isinstance(s.get("start"), str)
-            and USAGE_DAY_RE.match(s["start"])
-        ):
+        if not _usage_row_ok(s):
             return None, f"bad row {str(s)[:120]}"
+    ids = [s["github_id"] for s in shares]
+    if len(ids) != len(set(ids)):
+        return None, "duplicate github_id"
     return doc, None
 
 
-def portal_usage(target_file: Path = USAGE_TARGET) -> tuple[dict | None, str | None]:
+def portal_usage(
+    target_file: Path = USAGE_TARGET, previous: int = 0
+) -> tuple[dict | None, str | None]:
     """One `usage` call through the portal's forced-command gate, with the
-    runner's own key (the account the workflows use)."""
+    runner's own key (the account the workflows use). The error that reaches
+    the store names the failure only; ssh's own words (which carry the
+    portal's address) go to the harvester's local log."""
     try:
         target = target_file.expanduser().read_text().strip()
     except OSError as e:
@@ -1700,8 +1737,9 @@ def portal_usage(target_file: Path = USAGE_TARGET) -> tuple[dict | None, str | N
     except (subprocess.TimeoutExpired, OSError) as e:
         return None, type(e).__name__
     if r.returncode != 0:
-        return None, (r.stderr or f"exit {r.returncode}").strip()[-200:]
-    return validate_usage(r.stdout)
+        log(f"portal usage: ssh exit {r.returncode}: {r.stderr.strip()[-300:]}")
+        return None, f"ssh exit {r.returncode} (details in the harvester log)"
+    return validate_usage(r.stdout, previous)
 
 
 def usage_rows(doc: dict, week: str, taken_at: str) -> list[dict]:
@@ -1738,6 +1776,23 @@ def usage_snapshots(root: Path) -> dict[str, list[dict]]:
                     r
                 )
     return {w: snaps[max(snaps)] for w, snaps in sorted(by_week.items())}
+
+
+def usage_finals(snapshots: dict[str, list[dict]]) -> list[dict]:
+    """Each share's last row before it left the data-holding states: in one
+    weekly snapshot and missing from the next. Derived from the snapshots on
+    every run, so a crash between writes can neither lose nor repeat one."""
+    weeks = sorted(snapshots)
+    out = []
+    for before, after in zip(weeks, weeks[1:], strict=False):
+        still = {r["github_id"] for r in snapshots[after]}
+        gone_by = snapshots[after][0]["taken_at"] if snapshots[after] else None
+        out += [
+            {**r, "gone_by": gone_by}
+            for r in snapshots[before]
+            if r["github_id"] not in still
+        ]
+    return out
 
 
 def _age_days(row: dict) -> int:
@@ -1815,7 +1870,9 @@ def usage_report(snapshots: dict[str, list[dict]], finals: list[dict], at: str) 
         " `storage/YYYY/MM/DD.jsonl` (the last snapshot of each ISO week) and"
         f" {len(finals)} final row(s) in `storage/final.jsonl`. Counts only:"
         " no one is named, and a group with fewer than 3 measured shares shows"
-        " no figures. GB = 2^30 bytes (Manila's). Measured = measured by the"
+        " no figures (the store is private to the admins; totals across groups"
+        " can still narrow a hidden one down). GB = 2^30 bytes (Manila's)."
+        " Measured = measured by the"
         " portal in the last 24 hours; new = under 7 days old, left out of the"
         ' <5 GB and <10 GB counts. INCIDENT_STORE_PLAN.md, "Storage usage".',
         "",
@@ -1842,7 +1899,15 @@ def usage_report(snapshots: dict[str, list[dict]], finals: list[dict], at: str) 
             )
             + " |"
         )
-    out += ["", "## By age (days since the storage was asked for)", ""]
+    out += [
+        "",
+        "## By age (days since the storage was asked for)",
+        "",
+        "Each share once per age bin (its latest row in that bin). A share with"
+        " an extension is only in the Extended table; its start does not move,"
+        " so it sits in the later bins.",
+        "",
+    ]
     for title, extended in (("No extension", False), ("Extended", True)):
         latest: dict[tuple[int, int], dict] = {}
         for rows in snapshots.values():
@@ -1871,7 +1936,11 @@ def usage_report(snapshots: dict[str, list[dict]], finals: list[dict], at: str) 
             )
         out.append("")
     out += [
-        "## Final use (shares whose term ended)",
+        "## Final use",
+        "",
+        "Shares that left the data-holding states (their term ended and they"
+        " were deleted): each one's last weekly row, so up to a week before"
+        " the deletion.",
         "",
         "| " + FIGURE_HEAD[2:],
         "|---" * 8 + "|",
@@ -2755,39 +2824,41 @@ class Harvester:
         if state.get("week") == week:
             return f"taken {week}"
         snapshots = usage_snapshots(self.store.root)
-        if week in snapshots:  # written, but the state was not: record it only
-            self.store.write_json(
-                USAGE_STATE, {"week": week, "taken_at": snapshots[week][0]["taken_at"]}
+        if week in snapshots:  # written, but the state was not
+            taken_at = (
+                snapshots[week][0]["taken_at"] if snapshots[week] else to_iso(now)
             )
+            self.usage_outputs(snapshots, week, taken_at)
             return f"taken {week}"
-        doc, err = portal_usage()
+        earlier = [w for w in snapshots if w < week]
+        previous = len(snapshots[max(earlier)]) if earlier else 0
+        doc, err = portal_usage(previous=previous)
         if err:
             msg = f"portal usage: {err}"
             raise RuntimeError(msg)
         taken_at = to_iso(now)
         rows = usage_rows(doc, week, taken_at)
-        for r in rows:
-            self.store.append_jsonl(f"storage/{day_path(taken_at)}.jsonl", r)
-        earlier = [w for w in snapshots if w < week]
-        now_ids = {r["github_id"] for r in rows}
-        gone = [
-            {**r, "gone_by": taken_at}
-            for r in (snapshots[max(earlier)] if earlier else [])
-            if r["github_id"] not in now_ids
-        ]
-        final_file = self.store.rel(USAGE_FINAL)
-        finals = (
-            [json.loads(x) for x in final_file.read_text().splitlines() if x.strip()]
-            if final_file.exists()
-            else []
-        ) + gone
-        for r in gone:
-            self.store.append_jsonl(USAGE_FINAL, r)
-        self.store.write_text(
-            USAGE_REPORT, usage_report({**snapshots, week: rows}, finals, taken_at)
+        # one write: a snapshot is in the store whole or not at all
+        self.store.append_text(
+            f"storage/{day_path(taken_at)}.jsonl",
+            "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows),
         )
-        self.store.write_json(USAGE_STATE, {"week": week, "taken_at": taken_at})
-        return f"took {week}: {len(rows)} shares, {len(gone)} gone"
+        snapshots[week] = rows
+        gone = self.usage_outputs(snapshots, week, taken_at)
+        return f"took {week}: {len(rows)} shares, {gone} gone"
+
+    def usage_outputs(
+        self, snapshots: dict[str, list[dict]], week: str, at: str
+    ) -> int:
+        """final.jsonl and report.md, both derived from the snapshots, then
+        the state; returns how many shares left since the week before."""
+        finals = usage_finals(snapshots)
+        self.store.write_text(
+            USAGE_FINAL, "".join(json.dumps(r, sort_keys=True) + "\n" for r in finals)
+        )
+        self.store.write_text(USAGE_REPORT, usage_report(snapshots, finals, at))
+        self.store.write_json(USAGE_STATE, {"week": week, "taken_at": at})
+        return sum(1 for r in finals if r["gone_by"] == at)
 
     # -- the end of a cycle ---------------------------------------------------
     def finish(

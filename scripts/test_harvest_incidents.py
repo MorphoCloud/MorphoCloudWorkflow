@@ -2397,8 +2397,8 @@ def _usage_h(tmp_path, cfg, monkeypatch, replies):
     h.dry_run = False
     calls = []
 
-    def fake():
-        calls.append(1)
+    def fake(previous=0):
+        calls.append(previous)
         r = replies.pop(0)
         return (None, r) if isinstance(r, str) else ({"schema": 1, "shares": r}, None)
 
@@ -2564,3 +2564,81 @@ def test_every_workflow_is_listed_in_incident_sources(cfg):
     and puts an error in every cycle (2026-11-24: delete-long-shelved.yml)."""
     workflows = {p.name for p in (ROOT / ".github" / "workflows").glob("*.yml")}
     assert workflows - set(cfg.kinds) == set()
+
+
+@pytest.mark.parametrize(
+    ("change", "why"),
+    [
+        ({"start": "2026-13-45"}, "bad row"),
+        ({"end_date": "soon"}, "bad row"),
+        ({"usage_at": "yesterday"}, "bad row"),
+        ({"used_bytes": -1}, "bad row"),
+        ({"state": "expired"}, "bad row"),
+    ],
+)
+def test_a_usage_row_with_a_bad_field_is_refused(change, why):
+    text = json.dumps({"schema": 1, "shares": [_share(5, 1, **change)]})
+    doc, err = hv.validate_usage(text)
+    assert doc is None
+    assert err.startswith(why)
+
+
+def test_duplicate_ids_and_an_empty_list_after_a_full_week_are_refused():
+    dup = json.dumps({"schema": 1, "shares": [_share(5, 1), _share(5, 2)]})
+    assert hv.validate_usage(dup) == (None, "duplicate github_id")
+    empty = json.dumps({"schema": 1, "shares": []})
+    assert hv.validate_usage(empty, previous=40) == (
+        None,
+        "empty shares list after a week of 40",
+    )
+    assert hv.validate_usage(empty)[1] is None  # a portal with no shares yet
+
+
+def test_ssh_words_stay_out_of_the_store(tmp_path, monkeypatch):
+    f = tmp_path / "portal_target"
+    f.write_text("mcrunner@10.9.8.7\n")
+    monkeypatch.setattr(
+        hv.subprocess,
+        "run",
+        lambda *_a, **_k: SimpleNamespace(
+            returncode=255, stdout="", stderr="ssh: connect to host 10.9.8.7 port 22"
+        ),
+    )
+    doc, err = hv.portal_usage(f)
+    assert doc is None
+    assert "10.9.8.7" not in err
+
+
+def test_final_use_is_derived_so_a_crash_between_writes_loses_nothing(
+    tmp_path, cfg, monkeypatch
+):
+    h, calls = _usage_h(tmp_path, cfg, monkeypatch, [[_share(1, 4), _share(2, 9)]])
+    h.storage_usage(MON_1300)
+    # week 2's snapshot is in the store, but the cycle died before the rest
+    day = tmp_path / "store/storage/2026/11/30.jsonl"
+    day.write_text(
+        json.dumps(
+            hv.usage_rows(
+                {"shares": [_share(1, 5)]}, "2026-W49", "2026-11-30T13:00:00Z"
+            )[0]
+        )
+        + "\n"
+    )
+    assert h.storage_usage(MON_1300 + 7 * 86400 + 300) == "taken 2026-W49"
+    assert len(calls) == 1
+    final = _store_lines(tmp_path, "storage/final.jsonl")
+    assert [(r["github_id"], r["gone_by"]) for r in final] == [
+        (2, "2026-11-30T13:00:00Z")
+    ]
+    assert h.store.read_json("state/storage-usage.json")["week"] == "2026-W49"
+    h.storage_usage(MON_1300 + 7 * 86400 + 600)
+    assert len(_store_lines(tmp_path, "storage/final.jsonl")) == 1  # never repeated
+
+
+def test_the_previous_week_count_goes_to_the_portal_call(tmp_path, cfg, monkeypatch):
+    h, calls = _usage_h(
+        tmp_path, cfg, monkeypatch, [[_share(1, 4), _share(2, 9)], [_share(1, 5)]]
+    )
+    h.storage_usage(MON_1300)
+    h.storage_usage(MON_1300 + 7 * 86400)
+    assert calls == [0, 2]
