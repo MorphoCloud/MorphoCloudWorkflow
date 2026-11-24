@@ -2642,3 +2642,62 @@ def test_the_previous_week_count_goes_to_the_portal_call(tmp_path, cfg, monkeypa
     h.storage_usage(MON_1300)
     h.storage_usage(MON_1300 + 7 * 86400)
     assert calls == [0, 2]
+
+
+def _week(week, taken, shares):
+    return hv.usage_rows({"shares": shares}, week, taken)
+
+
+def test_a_share_that_comes_back_has_no_final_row_and_each_share_has_one():
+    w = {
+        "2026-W48": _week(
+            "2026-W48", "2026-11-23T13:00:00Z", [_share(1, 4), _share(2, 9)]
+        ),
+        "2026-W49": _week(
+            "2026-W49", "2026-11-30T13:00:00Z", [_share(2, 9)]
+        ),  # 1 missing
+        "2026-W50": _week(
+            "2026-W50", "2026-12-07T13:00:00Z", [_share(1, 5), _share(2, 9)]
+        ),
+        "2026-W51": _week("2026-W51", "2026-12-14T13:00:00Z", [_share(1, 6)]),
+    }
+    final = hv.usage_finals(w)
+    assert [(r["github_id"], r["week"], r["gone_by"]) for r in final] == [
+        (2, "2026-W50", "2026-12-14T13:00:00Z")
+    ]  # share 1 is back (alive), share 2 once at its last departure
+
+
+def test_final_figures_use_the_last_known_row_even_if_stale():
+    taken = "2026-11-23T13:00:00Z"
+    stale = [_share(i, 30, usage_at="2026-11-10T00:00:00Z") for i in range(1, 4)]
+    rows = _week("2026-W48", taken, stale)
+    assert hv.usage_figures(rows)["measured"] == 0
+    assert hv.usage_figures(rows, final=True)["measured"] == 3  # noqa: PLR2004
+
+
+def test_a_row_without_a_size_is_not_measured():
+    rows = _week("2026-W48", "2026-11-23T13:00:00Z", [_share(1, 99, size_bytes=None)])
+    f = hv.usage_figures(rows)
+    assert f["measured"] == 0
+    assert f["over80"] == 0
+
+
+def test_a_share_extended_later_is_in_the_extended_table_for_every_bin():
+    early = _week(
+        "2026-W41",
+        "2026-10-05T13:00:00Z",
+        [_share(i, 10, start="2026-09-20") for i in range(1, 4)],
+    )
+    later = _week(
+        "2026-W48",
+        "2026-11-23T13:00:00Z",
+        [_share(i, 20, start="2026-09-20", extensions=1) for i in range(1, 4)],
+    )
+    text = hv.usage_report(
+        {"2026-W41": early, "2026-W48": later}, [], "2026-11-23T13:00:00Z"
+    )
+    plain = text[text.index("### No extension") : text.index("### Extended")]
+    extended = text[text.index("### Extended") : text.index("## Final use")]
+    assert "| 0-30 | 0 |" in plain
+    assert "| 0-30 | 3 |" in extended
+    assert "| 61-90 | 3 |" in extended

@@ -1692,7 +1692,8 @@ def validate_usage(  # noqa: PLR0911 — one return per refusal reason
     empty snapshot. An empty list after a week that had shares is refused
     too: it would record every share as gone (`previous` = last week's count).
     A large drop is accepted: shares created in one migration week end in one
-    week."""
+    week. A portal that really holds no share any more is refused every cycle
+    and named in last_error; taking such a week needs a deliberate change."""
     try:
         doc = json.loads(text)
     except ValueError:
@@ -1780,19 +1781,22 @@ def usage_snapshots(root: Path) -> dict[str, list[dict]]:
 
 def usage_finals(snapshots: dict[str, list[dict]]) -> list[dict]:
     """Each share's last row before it left the data-holding states: in one
-    weekly snapshot and missing from the next. Derived from the snapshots on
-    every run, so a crash between writes can neither lose nor repeat one."""
+    stored snapshot and missing from the next one. Only shares absent from the
+    latest snapshot count (one that comes back was not gone), and each share
+    once, at its last departure. Derived from the snapshots on every run, so
+    a crash between writes can neither lose nor repeat one."""
     weeks = sorted(snapshots)
-    out = []
+    if not weeks:
+        return []
+    alive = {r["github_id"] for r in snapshots[weeks[-1]]}
+    last: dict[int, dict] = {}
     for before, after in zip(weeks, weeks[1:], strict=False):
         still = {r["github_id"] for r in snapshots[after]}
         gone_by = snapshots[after][0]["taken_at"] if snapshots[after] else None
-        out += [
-            {**r, "gone_by": gone_by}
-            for r in snapshots[before]
-            if r["github_id"] not in still
-        ]
-    return out
+        for r in snapshots[before]:
+            if r["github_id"] not in still and r["github_id"] not in alive:
+                last[r["github_id"]] = {**r, "gone_by": gone_by}
+    return sorted(last.values(), key=lambda r: (r["gone_by"] or "", r["github_id"]))
 
 
 def _age_days(row: dict) -> int:
@@ -1810,18 +1814,26 @@ def _nearest_rank(values: list[int], q: float) -> int:
     return s[max(0, -(-len(s) * int(q * 100) // 100) - 1)]
 
 
-def usage_figures(rows: list[dict]) -> dict:
-    """Counts and figures for one group. Only measured rows (not stale) enter
-    the median, the 90th percentile and the thresholds; a new share (under
-    USAGE_NEW_DAYS from its start) is left out of the low counts."""
-    measured = [r for r in rows if not r.get("stale")]
+def usage_figures(rows: list[dict], final: bool = False) -> dict:
+    """Counts and figures for one group. Only measured rows (used and size
+    both known, size above zero, and not stale) enter the median, the 90th
+    percentile and the thresholds; a new share (under USAGE_NEW_DAYS from its
+    start) is left out of the low counts. `final`: a share's last row is
+    often stale (it went down first), so the last known figures count."""
+    measured = [
+        r
+        for r in rows
+        if r.get("used_bytes") is not None
+        and r.get("size_bytes")
+        and (final or not r.get("stale"))
+    ]
     used = [r["used_bytes"] for r in measured]
     sized = [r for r in measured if r.get("size_bytes")]
     settled = [r for r in measured if _age_days(r) >= USAGE_NEW_DAYS]
     return {
         "shares": len(rows),
         "measured": len(measured),
-        "stale": len(rows) - len(measured),
+        "stale": len(rows) - len(measured),  # or never measured
         "new": sum(1 for r in rows if _age_days(r) < USAGE_NEW_DAYS),
         "read_only": sum(1 for r in rows if r.get("state") == "read_only"),
         "median": _nearest_rank(used, 0.5) if used else None,
@@ -1903,16 +1915,22 @@ def usage_report(snapshots: dict[str, list[dict]], finals: list[dict], at: str) 
         "",
         "## By age (days since the storage was asked for)",
         "",
-        "Each share once per age bin (its latest row in that bin). A share with"
-        " an extension is only in the Extended table; its start does not move,"
-        " so it sits in the later bins.",
+        "Each share once per age bin (its latest row in that bin). A share"
+        " whose latest row has an extension is only in the Extended table, in"
+        " every bin; its start does not move, so it sits in the later bins.",
         "",
     ]
+    # extended or not by each share's latest row: one extended in week 8 is
+    # in the Extended table for all its bins
+    ext_now: dict[int, bool] = {}
+    for _, rows in sorted(snapshots.items()):
+        for r in rows:
+            ext_now[r["github_id"]] = bool(r.get("extensions"))
     for title, extended in (("No extension", False), ("Extended", True)):
         latest: dict[tuple[int, int], dict] = {}
         for rows in snapshots.values():
             for r in rows:
-                if bool(r.get("extensions")) != extended:
+                if ext_now[r["github_id"]] != extended:
                     continue
                 age = _age_days(r)
                 b = (
@@ -1938,13 +1956,13 @@ def usage_report(snapshots: dict[str, list[dict]], finals: list[dict], at: str) 
     out += [
         "## Final use",
         "",
-        "Shares that left the data-holding states (their term ended and they"
-        " were deleted): each one's last weekly row, so up to a week before"
-        " the deletion.",
+        "Shares that left the data-holding states and are not in the latest"
+        " snapshot: each one's last stored row (its last known figures, even if"
+        " stale), so up to a week before it left.",
         "",
         "| " + FIGURE_HEAD[2:],
         "|---" * 8 + "|",
-        "| " + " | ".join(_figure_cells(usage_figures(finals))) + " |",
+        "| " + " | ".join(_figure_cells(usage_figures(finals, final=True))) + " |",
         "",
     ]
     return "\n".join(out)
