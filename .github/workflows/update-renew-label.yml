@@ -11,11 +11,15 @@ permissions:
   contents: read
 
 jobs:
+  # Not in share mode: instances follow the storage term there
+  # (STORAGE_REDESIGN_PLAN.md decision 7); more time is asked for the storage,
+  # on the portal, and an admin decides.
   update-issue:
     runs-on: ubuntu-latest
     if:
       ${{ !github.event.issue.pull_request && vars.MORPHOCLOUD_MAINTENANCE == ''
-      && contains(github.event.issue.labels.*.name, 'request-type:instance') &&
+      && vars.MORPHOCLOUD_STORAGE_MODE != 'share' &&
+      contains(github.event.issue.labels.*.name, 'request-type:instance') &&
       contains(github.event.comment.body, '/renew')}}
     steps:
       - uses: actions/checkout@v7

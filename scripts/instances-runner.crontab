@@ -6,6 +6,7 @@
 */5 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh automatic-instance-shelving.yml follow-through.yml update-request-status-label.yml
 0 12 * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh close-expired-issues.yml
 */15 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh collect-instance-uptime.yml
+20 13 * * 1 MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh delete-long-shelved.yml
 23 13 * * 1 MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh detect-dormant-workflows.yml
 40 12 * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh expire-shares.yml
 7,37 * * * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/Instances /home/exouser/morphocloud-dispatch.sh reconcile-instances.yml

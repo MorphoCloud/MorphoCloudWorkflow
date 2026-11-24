@@ -111,6 +111,15 @@ jobs:
             # Expiration ladder: sorted expiration:* rungs, indexed by
             # renewed:N. (|| true: label-less issues must not kill the loop
             # under pipefail.)
+            # Storage term (STORAGE_REDESIGN_PLAN.md decision 7): in share
+            # mode a member's instance has no expiry of its own. It follows
+            # the storage (expire-shares.yml deletes it after the storage's
+            # end date) and long-shelved ones go weekly
+            # (delete-long-shelved.yml). No warnings, no deletion here.
+            if [[ "$STORAGE_MODE" == "share" ]] && echo "$labels" | grep -qx "request-creator:user"; then
+              continue
+            fi
+
             lifespan_list=$(echo "$labels" | grep -oP '(?<=expiration:)\d+(\.\d+)?' | sort -n || true)
             if [[ -z "$lifespan_list" ]]; then
               echo "Skipping issue #${issue_number}: no 'expiration' labels."
