@@ -252,6 +252,10 @@ def email(subject: str, body: str) -> bool:
                 "admin-alert.yml",
                 "-R",
                 INSTANCES,
+                # Without --ref gh asks for the default branch, which the
+                # dispatch token may not read (2026-11-24 install test).
+                "--ref",
+                "main",
                 "-f",
                 f"subject={subject}",
                 "-f",
