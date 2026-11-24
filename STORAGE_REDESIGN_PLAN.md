@@ -25,7 +25,7 @@ These are settled. Revisit only with new facts, not preference.
 | 4   | A data portal on its own VM provides browser upload and download to each user's share, with GitHub sign-in (members of MorphoCloudUsers only). It works with or without an instance.                                                                                                                                                                                                                                                                                                                                                                     |
 | 5   | Two golden images, both with the NVIDIA driver: a vGPU (GRID) image for g3.large, and a regular-driver image for every other flavor, including CPU-only.                                                                                                                                                                                                                                                                                                                                                                                                 |
 | 6   | Slicer and the standard extension set are baked into the images. Extensions a user adds are lost when the instance is recreated. Accepted.                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 7   | Storage term: a share is kept for 4 months from its creation. Its member can ask for more time on the portal; an admin approves (4 more months each time, no limit) or declines. Reminders 14, 7 and 1 day before the end date; then the share is locked for 15 days, then deleted. Instances have no expiry of their own: they exist while the storage is kept (see "Storage term"). Revised 2026-11-24 by the maintainer (was: deleted after 180 days without use, renewed by the member with no review; before that, no expiry).                      |
+| 7   | Storage term: a share is kept for 120 days from its creation. Its member can ask for more time on the portal; an admin approves (120 more days each time, no limit) or declines. Reminders 14, 7 and 1 day before the end date; then the share is locked for 15 days, then deleted. Instances have no expiry of their own: they exist while the storage is kept (see "Storage term"). Revised 2026-11-24 by the maintainer (was: deleted after 180 days without use, renewed by the member with no review; before that, no expiry).                      |
 | 8   | No backups. Same as MyData volumes today.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | 9   | No migration path from MyData during testing. Designed only if this is adopted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | 10  | The current per-instance upload page ("Data drop") stays in production until this design is adopted.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -479,10 +479,10 @@ storage** and no review. The aim now is tracking: the admins see who still uses
 MorphoCloud, nobody is renewed without asking, and the share count stays within
 the allocation (10,000 GB, about 88 member shares of 100 GB; see "Quota").
 
-**Term.** A share is kept for 4 calendar months from the day it was created: its
-end date. The 44 shares the migration created on 2026-11-23 end on 2027-03-23.
-The end date is the Manila property `mc_kept_until` (UTC date), written only by
-the runner; a share without it counts from its creation time.
+**Term.** A share is kept for 120 days from the day it was created: its end
+date. The 44 shares the migration created on 2026-11-23 end on 2027-03-23. The
+end date is the Manila property `mc_kept_until` (UTC date), written only by the
+runner; a share without it counts from its creation time.
 
 **Instances follow the storage.** In share mode an instance has no expiry of its
 own: the request-issue ladder (`expiration:*` labels, renewal notices, `/renew`)
@@ -511,7 +511,7 @@ course-intake Approve links), so a link that acted by itself would approve every
 request. No new token or GitHub app is needed: the portal's own sign-in and the
 runner's existing SSH path carry the decision.
 
-- **Approve** adds 4 months to the current end date, not to the day of approval.
+- **Approve** adds 120 days to the current end date, not to the day of approval.
   The next runner pickup writes it on the share, and the member gets an email
   with the new date.
 - **Decline** keeps the end date. The member gets an email with the admin's
@@ -527,7 +527,7 @@ rule is revoked, so nothing can reach the files. The portal shows "Your storage
 is locked since <date> and will be deleted on <date>" with **Ask to keep my
 storage**. An approval while the share is locked unlocks it: the next pickup
 creates the access rule again (`ensure`), the portal mounts the share again, and
-the end date becomes the old end date plus 4 months.
+the end date becomes the old end date plus 120 days.
 
 **After 15 days locked, the share is deleted** by `expire`, as before (only the
 sweep calls it), and the member gets a deletion email. They can create a new,
@@ -563,7 +563,7 @@ storage**, which renewed with no review, is removed.
 
 | Variable                         | Production |
 | -------------------------------- | ---------- |
-| `MORPHOCLOUD_SHARE_TERM_MONTHS`  | `4`        |
+| `MORPHOCLOUD_SHARE_TERM_DAYS`    | `120`      |
 | `MORPHOCLOUD_SHARE_WARNING_DAYS` | `14,7,1`   |
 | `MORPHOCLOUD_SHARE_GRACE_DAYS`   | `15`       |
 
