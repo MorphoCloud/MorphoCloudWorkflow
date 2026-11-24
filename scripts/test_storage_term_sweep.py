@@ -24,6 +24,8 @@ PLACEHOLDERS = " ".join(
         "delete_on",
         "days_left",
         "note_line",
+        "deletion_line",
+        "read_only_until",
         "link",
         "reason",
         "instance_name",
@@ -31,7 +33,7 @@ PLACEHOLDERS = " ".join(
 )
 KINDS = (
     "reminder",
-    "locked",
+    "read_only",
     "deleted",
     "approved",
     "declined",
@@ -97,7 +99,8 @@ def share(verdict, **more):
         "end_date": "2027-03-23",
         "days_to_end": 7,
         "delete_on": None,
-        "locked_at": None,
+        "read_only_at": None,
+        "read_only_until": "2027-04-07",
         "mounted_by": None,
     }
     a.update(more)
@@ -129,32 +132,56 @@ def test_reminder_mails_then_marks(world):
     assert ("mark", "11", "--reminded", "7", "--term-days", "120") in world["runner"]
 
 
-def test_keep_hold_and_locked_do_nothing(world):
-    assert sweep(world, [share("keep"), share("hold"), share("locked")]) == 0
+def test_keep_hold_and_read_only_do_nothing(world):
+    assert sweep(world, [share("keep"), share("hold"), share("read-only")]) == 0
     assert world["mail"] == []
     assert world["runner"] == []
     assert world["delete"] == []
 
 
-def test_past_the_end_the_instance_is_deleted_first(world):
+def test_past_the_end_read_only_then_the_instance_goes_and_the_member_hears(world):
+    world["answers"]["read-only"] = {
+        "read_only_until": "2027-04-07",
+        "delete_on": "2027-04-08",
+        "held": True,
+        "mounted_by": "instance-278",
+    }
+    assert sweep(world, [share("make-read-only", days_to_end=-1)]) == 0
+    assert world["runner"][0][:2] == ("read-only", "11")
+    assert "--grace-days" in world["runner"][0]
+    assert world["delete"] == [ISSUE]
+    to, subject, _body = world["mail"][0]
+    assert to == "alice@example.org"
+    assert subject.startswith("read_only_subject 23 Mar 2027 8 Apr 2027")
+    assert "7 Apr 2027" in subject  # read-only until
+
+
+def test_read_only_without_an_instance_only_mails(world):
+    world["answers"]["read-only"] = {"delete_on": "2027-04-08", "held": False}
+    assert sweep(world, [share("make-read-only", days_to_end=-1)]) == 0
+    assert world["delete"] == []
+    assert len(world["mail"]) == 1
+
+
+def test_read_only_with_an_unknown_holder_is_reported_but_the_member_still_hears(world):
+    world["answers"]["read-only"] = {"held": True, "mounted_by": "legacy-instance-9"}
+    assert sweep(world, [share("make-read-only", days_to_end=-1)]) == 1
+    assert world["delete"] == []
+    assert len(world["mail"]) == 1
+    assert "no request's instance" in failures(world)
+
+
+def test_a_read_only_share_whose_instance_is_still_there_deletes_it_again(world):
     assert sweep(world, [share("delete-instance", mounted_by="instance-278")]) == 0
     assert world["delete"] == [ISSUE]
     assert world["mail"] == []
-    assert not any(c[0] == "lock" for c in world["runner"])
+    assert world["runner"] == []
 
 
 def test_an_unknown_holder_is_a_failure_not_a_guess(world):
     plan = [share("delete-instance", mounted_by="legacy-instance-9")]
     assert sweep(world, plan) == 1
     assert world["delete"] == []
-
-
-def test_lock_then_tell_the_member_the_deletion_date(world):
-    world["answers"]["lock"] = {"delete_on": "2027-04-08"}
-    assert sweep(world, [share("lock", days_to_end=-1)]) == 0
-    assert world["runner"][0][:2] == ("lock", "11")
-    assert "--grace-days" in world["runner"][0]
-    assert world["mail"][0][1].startswith("locked_subject 23 Mar 2027 8 Apr 2027")
 
 
 def test_delete_mails_the_member_and_fails_loudly_if_unrecorded(world):
@@ -211,6 +238,7 @@ def test_admins_are_reminded_and_members_hear_the_decisions(world):
     assert to_bob[1].startswith("approved_subject 21 Jul 2027")
     assert to_carol[0] == "carol@example.org"
     assert "Course is over." in to_carol[2]
+    assert "deleted" not in to_carol[2]  # carol's storage is not read-only
     for rid, who in (("4", "admin"), ("5", "member"), ("6", "member")):
         assert ("portal-mailed", rid, who) in world["runner"]
 
@@ -281,3 +309,39 @@ def test_no_admin_list_stops_only_the_admin_reminders(world, monkeypatch):
     assert len(world["mail"]) == 1  # the member's reminder still went out
     assert "ADMIN_EMAILS is not set" in failures(world)
     assert sweep(world, [share("remind:7")]) == 0  # nothing to remind: no failure
+
+
+def test_a_decline_of_a_read_only_storage_says_when_it_goes(world):
+    declined = {
+        "request_id": "7",
+        "github_id": 13,
+        "login": "carol",
+        "decision": "declined",
+        "note": "",
+        "kept_until": "2027-03-23",
+        "read_only": True,
+        "delete_on": "2099-04-08",
+    }
+    late = {
+        **declined,
+        "request_id": "8",
+        "delete_on": "2020-01-01",
+    }  # held past its date
+    assert (
+        sweep(world, [], {"waiting": [], "stale": [], "decided": [declined, late]}) == 0
+    )
+    assert "stays read-only until 7 Apr 2099, then it is deleted" in world["mail"][0][2]
+    assert "deleted at the next daily check" in world["mail"][1][2]
+
+
+def test_a_failed_instance_delete_still_lets_the_member_hear(world, monkeypatch):
+    world["answers"]["read-only"] = {"held": True, "mounted_by": "instance-278"}
+
+    def broken(_issue):
+        msg = "gh workflow run failed"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(common, "dispatch_delete", broken)
+    assert sweep(world, [share("make-read-only", days_to_end=-1)]) == 1
+    assert len(world["mail"]) == 1
+    assert "was not dispatched" in failures(world)

@@ -3,14 +3,15 @@ name: Storage term
 # The storage term (STORAGE_REDESIGN_PLAN.md decision 7, "Storage term"). A
 # member's storage (their data share) is kept for MORPHOCLOUD_SHARE_TERM_DAYS
 # from its creation; reminders go out MORPHOCLOUD_SHARE_WARNING_DAYS before the
-# end date; after it the member's instance is deleted, the share is locked for
-# MORPHOCLOUD_SHARE_GRACE_DAYS, then deleted. A member asks for more time on
-# the portal and an admin approves or declines there; a waiting request holds
-# the lock. The runner's mc_share_runner.py judges, locks and deletes (it alone
+# end date; after it the member's instance is deleted and the share is
+# read-only (downloads only, on the portal) for MORPHOCLOUD_SHARE_GRACE_DAYS,
+# then deleted. A member asks for more time on the portal and an admin
+# approves or declines there; a waiting request holds the deletion. The
+# runner's mc_share_runner.py judges, marks read-only and deletes (it alone
 # holds the OpenStack credentials and the only delete calls); this workflow
-# sends the emails, dispatches instance deletes, reminds the admins of
-# waiting requests and tells the members the decisions. Off unless the
-# repository sets the term.
+# sends the emails, dispatches instance deletes, reminds the admins of waiting
+# requests and tells the members the decisions. Off unless the repository sets
+# the term.
 #
 # Daily after the instance sweep (close-expired-issues.yml, 12:00 UTC). Any
 # failure emails the admins and leaves the share for the next day's run.
@@ -51,7 +52,7 @@ jobs:
           private-key: ${{ secrets.MORPHOCLOUD_WORKFLOW_APP_PRIVATE_KEY }}
 
       # The sweep asks the portal which requests are waiting; if it cannot,
-      # it fails here and nothing is locked or deleted.
+      # it fails here and nothing is made read-only or deleted.
       - name: Judge every share
         shell: bash
         run: |
@@ -80,7 +81,7 @@ jobs:
             vars.MORPHOCLOUD_TEMPLATE_REF || 'main'
             }}/templates/storage-term.json
 
-      - name: Remind, lock, delete, and send the decisions
+      - name: Remind, make read-only, delete, and send the decisions
         id: act
         shell: bash
         run: |
