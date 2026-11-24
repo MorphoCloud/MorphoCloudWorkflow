@@ -80,8 +80,14 @@ def make_read_only(a: dict, tpl: dict, login: str, subs: dict) -> str:
                 f"its instance {holder!r} is no request's instance; not deleted"
             )
         else:
-            c.dispatch_delete(issue)
-            done.append(f"deleting its instance (#{issue})")
+            # A failed dispatch must not stop the member's email.
+            try:
+                c.dispatch_delete(issue)
+                done.append(f"deleting its instance (#{issue})")
+            except c.FAILURES as e:
+                problems.append(
+                    f"the delete of its instance (#{issue}) was not dispatched: {e}"
+                )
     try:
         c.mail(tpl, "read_only", c.email_for(login), subs)
     except c.FAILURES as e:
@@ -132,7 +138,7 @@ def handle(a: dict, tpl: dict) -> str | None:
         if note:
             msg = f"deleted the storage of {login}{note}"
             raise RuntimeError(msg)
-        return f"deleted the storage of {login} (end date {a['end_date']}, read-only since {a['read_only_at']})"
+        return f"deleted the storage of {login} (end date {a['end_date']}, read-only since {a.get('read_only_at')})"
     msg = f"unknown verdict {verdict!r}"
     raise RuntimeError(msg)
 
@@ -147,13 +153,14 @@ def deletion_line(r: dict) -> str:
     if not r.get("read_only") or not r.get("delete_on"):
         return ""
     today = time.strftime("%Y-%m-%d", time.gmtime())
-    if r["delete_on"] <= today:
+    delete_on = r["delete_on"][:10]
+    if delete_on <= today:
         return (
             "\n\nYour storage is read-only and will be deleted at the next daily check"
             " (normally at noon UTC). Download what you need before then."
         )
     last = (
-        datetime.date.fromisoformat(r["delete_on"]) - datetime.timedelta(days=1)
+        datetime.date.fromisoformat(delete_on) - datetime.timedelta(days=1)
     ).isoformat()
     return (
         f"\n\nYour storage stays read-only until {c.day(last)}, then it is deleted."

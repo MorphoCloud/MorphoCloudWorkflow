@@ -198,9 +198,7 @@ def test_one_failure_does_not_stop_the_rest(world, monkeypatch):
         raise RuntimeError(msg)
 
     monkeypatch.setattr(common, "email_for", broken)
-    second = share(
-        "delete-instance", mounted_by="instance-5", github_id=12
-    )  # no mail needed
+    second = share("delete-instance", mounted_by="instance-5", github_id=12)
     assert sweep(world, [share("remind:14"), second]) == 1
     assert world["delete"] == [OTHER_ISSUE]
     assert "lookup down" in failures(world)
@@ -334,3 +332,16 @@ def test_a_decline_of_a_read_only_storage_says_when_it_goes(world):
     )
     assert "stays read-only until 7 Apr 2099, then it is deleted" in world["mail"][0][2]
     assert "deleted at the next daily check" in world["mail"][1][2]
+
+
+def test_a_failed_instance_delete_still_lets_the_member_hear(world, monkeypatch):
+    world["answers"]["read-only"] = {"held": True, "mounted_by": "instance-278"}
+
+    def broken(_issue):
+        msg = "gh workflow run failed"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(common, "dispatch_delete", broken)
+    assert sweep(world, [share("make-read-only", days_to_end=-1)]) == 1
+    assert len(world["mail"]) == 1
+    assert "was not dispatched" in failures(world)
