@@ -598,9 +598,10 @@ checks every instance of the project:
   is left for the next week; an unknown age never deletes.
 - **What happens:** the instance is deleted the way every share-mode delete is,
   and its request issue is closed with a note. Nothing on the storage is
-  touched. The member gets an email: the instance was removed after 4 weeks
-  shelved, their files are safe in their storage, and they can create a new
-  instance from the portal.
+  touched. The member gets a brief email: the instance was deleted because it
+  was not used (shelved for more than 4 weeks); their files in MyDrive are safe;
+  MyDrive is kept until <end date> (the storage term above); and a new instance
+  can be created from the portal.
 - **When:** weekly, dispatched by the runner crontab (the runner is the clock:
   INSTANCE_DASHBOARD_PLAN.md decision 21), not by GitHub's schedule.
 - **Setting:** `MORPHOCLOUD_SHELVED_DELETE_DAYS` (production `28`); unset means
