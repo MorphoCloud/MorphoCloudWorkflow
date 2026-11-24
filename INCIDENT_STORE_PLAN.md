@@ -886,6 +886,91 @@ files.
   `portal_events` keeps its rows for 400 days, so nothing is lost; the watchdog
   also checks the newest portal record, at one day.
 
+### Storage usage (weekly snapshot)
+
+Asked for by the maintainer on 2026-11-24: is 100 GB per member (decision 1 of
+STORAGE_REDESIGN_PLAN.md) too large or too small? The answer comes from one more
+source of this harvester, not a separate pipeline. The portal serves a small
+read-only report. The harvester owns the schedule, the storage, the retention
+and the analysis. Rows are keyed by GitHub id. No login, name or email is
+stored.
+
+**What the portal serves.** One read-only command through the runner's existing
+forced-command gate (`mcrunner`, `deploy/mc-data-runner-gate`): `usage`, with no
+arguments. It prints one JSON document with a row for each share the portal
+knows in state `ready`, `unavailable` or `read_only`:
+
+| Field        | From the portal's `shares` table                          |
+| ------------ | --------------------------------------------------------- |
+| `github_id`  | the key                                                   |
+| `used_bytes` | measured by the worker (CephFS `rbytes`)                  |
+| `size_bytes` | the share's size (`max_bytes`)                            |
+| `usage_at`   | when the worker last measured it                          |
+| `state`      | `ready`, `unavailable` or `read_only`                     |
+| `start`      | the day the share was requested (start of its first term) |
+| `end_date`   | the storage term's end date                               |
+| `extensions` | approvals applied so far                                  |
+
+The worker already measures every mounted share on each health pass. The command
+only reads the table. Nothing is scheduled or kept on the portal for this.
+
+**What the harvester does.** A new step, `storage_usage`, in the cycle after
+`platform`:
+
+- **When:** the first cycle after Monday 13:00 UTC of each ISO week. The
+  harvester's 5-minute cycle is the clock, so there is no new cron line.
+  `state/storage-usage.json` records the last week taken. A failed attempt
+  leaves the week untaken, and the next cycle tries again.
+- **How:** SSH to the target named in `~/mc-data/portal_target` (the file the
+  pickup and the workflows already read), through `host_call`. No new key or
+  token.
+- **Stored:** `storage/YYYY/MM/DD.jsonl` (the snapshot's day). There is one line
+  per share: `taken_at` plus the fields above. A row whose `usage_at` is more
+  than 24 hours old gets `stale: true`, which means the worker was not measuring
+  it.
+- **Errors:** as for every step. The error goes into `last_error`, the watchdog
+  emails the admins, and the other steps go on.
+- **Size and retention:** about 45 rows × 200 bytes × 52 weeks, roughly 0.5 MB a
+  year. It is kept with the rest of the store, with no pruning.
+- **Test-Instances:** no step, because its portal is shelved.
+
+**What it answers.** The same step rewrites `storage/report.md` from every
+snapshot. It uses Python's standard library only.
+
+1. **Each week:**
+   - the number of shares;
+   - the median and 90th percentile of the GB used;
+   - how many shares use more than 80% of their size;
+   - how many use less than 5 GB, and how many less than 10 GB;
+   - the total used against the allocation's 10,000 GB.
+2. **Across the 120-day term:**
+   - each share's use when it is 0–30, 31–60, 61–90 and 91–120 days into its
+     current term (counted back from `end_date`);
+   - the same median, 90th percentile and counts for each of those four periods.
+     This shows whether use keeps growing over a term, or levels off well below
+     100 GB.
+3. **Counts only.** The report never names anyone. The GitHub ids are in the
+   data for whoever needs them.
+
+**Changes this needs:**
+
+- Portal (morphocloud-data-portal):
+  - the `usage` command in `admin/cli.py`;
+  - its line in the gate and the sudoers rule;
+  - a test (`tests/test_runner_gate.py` already checks that the runner, the gate
+    and sudoers agree).
+- Harvester (MWF):
+  - the step in `harvest-incidents.py`, with tests;
+  - no change to `incident-sources.yml`.
+
+**Out of scope:** a breakdown by folder, which would mean reading members'
+files.
+
+**To confirm:**
+
+- the snapshot time (Monday 13:00 UTC);
+- the thresholds: 80% of the size, 5 GB and 10 GB.
+
 ### Volume
 
 Measured on Instances over 2026-10-09 to 11-07: about 1,100 runs a day, about
