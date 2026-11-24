@@ -324,8 +324,6 @@ def vendorize_course(session: nox.Session) -> None:
             ".github/workflows/test-workshop-deletion.yml",
             ".github/workflows/request-notify-admin.yml",
             ".github/workflows/request-notify-admin-workshop.yml",
-            ".github/workflows/update-renew-label.yml",
-            ".github/workflows/send-renewal-email.yml",
             # Reports label/assignee/close changes by anyone who is not an admin
             # (INSTANCE_DASHBOARD_PLAN.md decision 37). In a course repository
             # the instructor manages the students' issues, so every one of

@@ -672,6 +672,32 @@ checks every instance of the project:
 - **Setting:** `MORPHOCLOUD_SHELVED_DELETE_DAYS` (production `28`); unset means
   no scrub.
 
+### No instance expiry (2026-11-24)
+
+An instance has no expiry date and no renewal. It is deleted when its storage
+term ends (decision 7: read-only for 15 days, then removed) or when it has been
+shelved for more than 28 days (decision 21).
+
+- `request-labeler.yml` adds no `expiration:*` labels in share mode. Workshop
+  and course requests keep the expiration label their creator sets.
+- `close-expired-issues.yml` (the End of Life sweep, still the single owner of
+  closing expired requests) never dates a share-mode member request. An open one
+  is skipped. A closed one is due at once: anything left of it (`instance-N`, by
+  exact name) is deleted at the next daily run, as the backstop for
+  `guard-issue-close.yml`.
+- `/renew` (`update-renew-label.yml`), the renewal email
+  (`send-renewal-email.yml`) and the sweep's renewal warnings are retired, in
+  every mode. Workshop and course requests never had them.
+- Volume mode for individual requests is no longer in use (Instances and
+  Test-Instances are share mode; the one volume-mode repository,
+  MC-PCOM-ONC-101, is a course, whose requests never had warnings or renewal). A
+  volume-mode individual request would now be deleted at its first
+  `expiration:*` rung with no notice, so volume mode must not be used again for
+  individual requests without restoring a warning first.
+- The portal shows no instance expiry date and no Renew.
+- `expiration:*`, `renewed:*` and `renewal-notice:*` labels already on open
+  requests stay and are not read.
+
 ## Quota
 
 | Allocation                    | Share space | Used     | Share count | Manila per-share limit |

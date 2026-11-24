@@ -2,8 +2,13 @@ name: Instance End of Life
 
 # The single owner of the instance-request end-of-life contract (#293):
 #
-#   - Warnings key on ISSUE age, server or no server: renewal-notice at
-#     <=7 days and <=1 day, with /renew as the escape hatch.
+#   - No warnings and no renewal: /renew and the renewal email were retired
+#     on 2026-11-24 (in share mode the storage term governs the instance;
+#     workshop and course requests have a fixed end).
+#   - Share mode, a member's request (request-creator:user): no expiry date.
+#     Open, it is skipped (expire-shares.yml and delete-long-shelved.yml own
+#     its instance). Closed, it is due at once: the deletion below is the
+#     backstop for guard-issue-close.yml, which deletes the instance on close.
 #   - At expiry: delete the server if one exists (in ANY state — active,
 #     shelved, errored, half-built), delete every My-Data volume left for
 #     the issue (attached, in the deletion grace window, or orphaned by a
@@ -108,119 +113,48 @@ jobs:
             created_at=$(echo "$issue_json" | jq -r '.createdAt')
             labels=$(echo "$issue_json" | jq -r '.labels[].name')
 
-            # Storage term (STORAGE_REDESIGN_PLAN.md decision 7): in share
-            # mode a member's open request has no expiry of its own. Its
-            # instance follows the storage (expire-shares.yml deletes it after
-            # the storage's expiry date) and long-shelved ones go weekly
-            # (delete-long-shelved.yml). A request its member closed still
-            # goes through the deletion below, as a backstop for
-            # guard-issue-close.yml.
-            if [[ "$STORAGE_MODE" == "share" && "$issue_state" == "OPEN" ]] \
-              && grep -qx "request-creator:user" <<<"$labels"; then
-              continue
-            fi
-
-            # Expiration ladder: sorted expiration:* rungs, indexed by
-            # renewed:N. (|| true: label-less issues must not kill the loop
-            # under pipefail.)
-            lifespan_list=$(echo "$labels" | grep -oP '(?<=expiration:)\d+(\.\d+)?' | sort -n || true)
-            if [[ -z "$lifespan_list" ]]; then
-              echo "Skipping issue #${issue_number}: no 'expiration' labels."
-              continue
-            fi
-
-            renewed_count=$(echo "$labels" | grep -oP '(?<=renewed:)\d+' | sort -nr | head -n1 || true)
-            renewed_count=${renewed_count:-0}
-
-            expiration_days=$(echo "$lifespan_list" | sed -n "$((renewed_count + 1))p")
-            expiration_days=${expiration_days:-0}
-
-            created_at_epoch=$(date -d "$created_at" +%s)
-            expiration_time_epoch=$(printf "%.0f" $(echo "$created_at_epoch + $expiration_days * 86400" | bc))
-            seconds_until_expiration=$((expiration_time_epoch - current_time_epoch))
-            days_until_expiration=$((seconds_until_expiration / 86400))
-
             instance_name="${instance_prefix}instance-${issue_number}"
 
-            if [[ "$seconds_until_expiration" -gt 0 ]]; then
-              # ---- Still within lifespan: warning window (open issues only).
-              if [[ "$issue_state" != "OPEN" ]]; then
+            # Share mode (STORAGE_REDESIGN_PLAN.md decisions 7 and 21): a
+            # member's request has no expiry date. Open, its instance follows
+            # the storage term (expire-shares.yml) and the long-shelved sweep
+            # (delete-long-shelved.yml). Closed, anything left of it is deleted
+            # now, as the backstop for guard-issue-close.yml. Existing
+            # expiration:* labels on such requests are not read.
+            closed_member_request=false
+            if [[ "$STORAGE_MODE" == "share" ]] \
+              && grep -qx "request-creator:user" <<<"$labels"; then
+              if [[ "$issue_state" == "OPEN" ]]; then
                 continue
               fi
-              if [[ "$days_until_expiration" -le $EXPIRATION_WARNING_DAYS ]]; then
-                # Course instances are not renewable: fixed duration set at
-                # intake. COURSE_TEAM_SLUG is set only in MC-* repos.
-                if [[ -n "$COURSE_TEAM_SLUG" ]]; then
-                  echo "Skipping renewal warning for issue #${issue_number} (course instances are not renewable)"
-                # Workshop instances are temporary and not meant to be
-                # renewed. Recognized by their label (create-workshop.yml
-                # opens them as request-creator:workshop), not by a short
-                # lifetime: a short MORPHOCLOUD_EXPIRATION_LADDER (the
-                # prototype runs 7d,14d to exercise expiry) must still warn
-                # its users.
-                elif echo "$labels" | grep -qx "request-creator:workshop"; then
-                  echo "Skipping renewal warning for issue #${issue_number} (workshop instance)"
-                else
-                  # At most two notices per cycle: one when the window opens,
-                  # one the day before deletion. Labels make each fire once
-                  # and are cleared below when a renewal moves the issue back
-                  # out of the window.
-                  if [[ "$days_until_expiration" -le $FINAL_WARNING_DAYS ]]; then
-                    notice_label="renewal-notice:last"
-                  else
-                    notice_label="renewal-notice:first"
-                  fi
-                  if echo "$labels" | grep -qx "$notice_label"; then
-                    echo "Renewal notice ${notice_label} already sent for issue #${issue_number} (${days_until_expiration} days left); skipping."
-                  else
-                    echo "Issue #${issue_number} expires in ${days_until_expiration} day(s). Sending warning (${notice_label})..."
-                    # Only suggest /renew when a higher rung of the ladder
-                    # actually remains.
-                    expiration_count=$(echo "$lifespan_list" | grep -c . || true)
-                    # Portal mode: members renew from the portal, never by a
-                    # typed command. Share mode: no volume goes with the instance.
-                    if [[ "$expiration_count" -gt $((renewed_count + 1)) ]]; then
-                      if [[ -n "$PORTAL_URL" ]]; then
-                        renew_hint="Renew it from the portal: $PORTAL_URL"
-                      else
-                        renew_hint='Comment `/renew` to extend.'
-                      fi
-                    else
-                      renew_hint='No renewals remain.'
-                    fi
-                    if [[ "$STORAGE_MODE" == "share" ]]; then
-                      what='Instance'
-                    else
-                      what='Instance and volume'
-                    fi
-                    gh issue comment "$issue_number" \
-                      --body "⚠️ $what will be deleted in $days_until_expiration days. $renew_hint" || true
-                    set +e
-                    gh workflow run send-renewal-email.yml \
-                      -f issue_number=$issue_number \
-                      -f days_until_expiration=$days_until_expiration
-                    error_code=$?
-                    set -e
-                    if [[ $error_code -ne 0 ]]; then
-                      echo "::warning ::Failed to dispatch renewal email for issue #${issue_number}"
-                      gh issue comment "$issue_number" \
-                        --body "❌ Failed to send renewal email. See details at ${RUN_URL}" || true
-                      continue
-                    fi
-                    gh issue edit "$issue_number" --add-label "$notice_label" || true
-                  fi
-                fi
-              else
-                # Outside the window (freshly created or renewed back out):
-                # drop notice labels from a previous cycle so the next cycle
-                # warns again.
-                for n in first last; do
-                  if echo "$labels" | grep -qx "renewal-notice:$n"; then
-                    gh issue edit "$issue_number" --remove-label "renewal-notice:$n" || true
-                  fi
-                done
+              closed_member_request=true
+              expiration_days=0
+            else
+              # Expiration ladder: sorted expiration:* rungs, indexed by
+              # renewed:N (renewals granted before /renew was retired still
+              # count). (|| true: label-less issues must not kill the loop
+              # under pipefail.)
+              lifespan_list=$(echo "$labels" | grep -oP '(?<=expiration:)\d+(\.\d+)?' | sort -n || true)
+              if [[ -z "$lifespan_list" ]]; then
+                echo "Skipping issue #${issue_number}: no 'expiration' labels."
+                continue
               fi
-              continue
+
+              renewed_count=$(echo "$labels" | grep -oP '(?<=renewed:)\d+' | sort -nr | head -n1 || true)
+              renewed_count=${renewed_count:-0}
+
+              expiration_days=$(echo "$lifespan_list" | sed -n "$((renewed_count + 1))p")
+              expiration_days=${expiration_days:-0}
+
+              created_at_epoch=$(date -d "$created_at" +%s)
+              expiration_time_epoch=$(printf "%.0f" $(echo "$created_at_epoch + $expiration_days * 86400" | bc))
+              seconds_until_expiration=$((expiration_time_epoch - current_time_epoch))
+
+              # Still within its lifespan: nothing to do (no warnings since
+              # /renew was retired).
+              if [[ "$seconds_until_expiration" -gt 0 ]]; then
+                continue
+              fi
             fi
 
             # ---- Expired: delete whatever exists, in whatever state.
@@ -246,7 +180,9 @@ jobs:
             if [[ "$server_exists" == "true" ]]; then
               # The user reads why before the mechanical deletion comments.
               gh issue comment "$issue_number" \
-                --body "$(if [[ "$STORAGE_MODE" == "share" ]]; then
+                --body "$(if [[ "$closed_member_request" == "true" ]]; then
+                  echo "This request is closed, so instance **${instance_name}** is being deleted. Files in your storage are not affected."
+                elif [[ "$STORAGE_MODE" == "share" ]]; then
                   echo "Instance **${instance_name}** has expired and is being deleted. Files in your storage are not affected."
                 else
                   echo "Instance **${instance_name}** has expired. The instance and its associated volume are being deleted."
@@ -254,7 +190,11 @@ jobs:
             else
               volume_name_list=$(echo "$matching_volumes" | jq -r '[.[].Name] | join(", ")')
               gh issue comment "$issue_number" \
-                --body "This request has expired. Deleting leftover volume(s): **${volume_name_list}**." || true
+                --body "$(if [[ "$closed_member_request" == "true" ]]; then
+                  echo "This request is closed. Deleting leftover volume(s): **${volume_name_list}**."
+                else
+                  echo "This request has expired. Deleting leftover volume(s): **${volume_name_list}**."
+                fi)" || true
             fi
 
             # Volumes first (detaching from the instance when needed), then
@@ -328,11 +268,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           PREFIX: ${{ vars.INSTANCE_NAME_PREFIX }}
-          EXPIRATION_WARNING_DAYS: 7
-          FINAL_WARNING_DAYS: 1
-          COURSE_TEAM_SLUG: ${{ vars.COURSE_TEAM_SLUG }}
-          # Portal and share mode change only the wording of the comments.
-          PORTAL_URL: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
+          # Share mode: a member's request has no expiry date (see the loop).
           STORAGE_MODE: ${{ vars.MORPHOCLOUD_STORAGE_MODE }}
           RUN_URL:
             ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{

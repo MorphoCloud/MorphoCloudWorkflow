@@ -113,12 +113,22 @@ jobs:
 
       - name: Add expiration labels
         run: |
+          # Share mode: an instance has no expiry of its own. It is deleted
+          # when its storage term ends (expire-shares.yml) or after
+          # MORPHOCLOUD_SHELVED_DELETE_DAYS shelved (delete-long-shelved.yml);
+          # STORAGE_REDESIGN_PLAN.md decisions 7 and 21. Workshop and course
+          # requests carry their own expiration label from their creator.
+          if [[ "$STORAGE_MODE" == "share" ]]; then
+            echo "Share mode: no expiration labels (the storage term governs the instance)"
+            exit 0
+          fi
           # Check if issue already has an expiration label (e.g., from workshop creation)
           existing_expiration=$(gh issue view "$NUMBER" --json labels --jq '[.labels[].name | select(test("^expiration:"))] | length')
 
           if [[ "$existing_expiration" -eq 0 ]]; then
-            # Lifetime ladder from MORPHOCLOUD_EXPIRATION_LADDER (e.g. "90d,180d":
-            # 90 days, and /renew moves it to 180); unset keeps 60 + 60.
+            # Lifetime from MORPHOCLOUD_EXPIRATION_LADDER (e.g. "90d"); unset
+            # keeps "60d,120d", whose first rung applies (/renew was retired on
+            # 2026-11-24, so later rungs are never reached).
             LADDER="${LADDER:-60d,120d}"
             if ! [[ "$LADDER" =~ ^[0-9]+d(,[0-9]+d)*$ ]]; then
               echo "::error ::MORPHOCLOUD_EXPIRATION_LADDER must look like 90d,180d (got '$LADDER')"
@@ -127,7 +137,7 @@ jobs:
             LABELS=""
             for rung in ${LADDER//,/ }; do
               gh label create "expiration:$rung" --color "892368" \
-                --description "Instance expires in ${rung%d} days unless extended" \
+                --description "Instance expires ${rung%d} days after the request" \
                 >/dev/null 2>&1 || true
               LABELS="${LABELS:+$LABELS,}expiration:$rung"
             done
@@ -140,4 +150,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           NUMBER: ${{ steps.collect_inputs.outputs.issue_number }}
+          STORAGE_MODE: ${{ vars.MORPHOCLOUD_STORAGE_MODE }}
           LADDER: ${{ vars.MORPHOCLOUD_EXPIRATION_LADDER }}

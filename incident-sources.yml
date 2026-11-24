@@ -166,7 +166,7 @@ workflows:
     - migrate-volume.yml
     - create-workshop.yml
     - approve-workshop.yml
-    - update-renew-label.yml
+    - update-renew-label.yml # retired 2026-11-24; kept for the runs already recorded
     - delete-volume.yml # Instances only (not in MWF)
     - delete-volume-from-workflow.yml # Instances only (not in MWF)
   # An alert: every run is an incident (something asked for the admins).
@@ -207,7 +207,7 @@ workflows:
     - follow-through.yml
     - guard-issue-close.yml
     - reconcile-instances.yml
-    - send-renewal-email.yml
+    - send-renewal-email.yml # retired 2026-11-24; kept for the runs already recorded
     - test-workshop-deletion.yml
     - update-request-status-label.yml
     - update-workshop.yml
