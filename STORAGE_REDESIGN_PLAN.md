@@ -688,6 +688,12 @@ shelved for more than 28 days (decision 21).
 - `/renew` (`update-renew-label.yml`), the renewal email
   (`send-renewal-email.yml`) and the sweep's renewal warnings are retired, in
   every mode. Workshop and course requests never had them.
+- Volume mode for individual requests is no longer in use (Instances and
+  Test-Instances are share mode; the one volume-mode repository,
+  MC-PCOM-ONC-101, is a course, whose requests never had warnings or renewal). A
+  volume-mode individual request would now be deleted at its first
+  `expiration:*` rung with no notice, so volume mode must not be used again for
+  individual requests without restoring a warning first.
 - The portal shows no instance expiry date and no Renew.
 - `expiration:*`, `renewed:*` and `renewal-notice:*` labels already on open
   requests stay and are not read.

@@ -94,8 +94,7 @@ runs:
         # letting an old, since-edited command comment back in. The id, prefix
         # and reaction filters below bound what that can do.
         #
-        # Only commands that take the shared per-issue lock are considered;
-        # /renew just edits a label and cannot delay anything.
+        # Only commands that take the shared per-issue lock are considered.
         #
         # Matched against the comment's FIRST LINE, because that is how
         # github/command decides a comment is a command - a strict prefix match.

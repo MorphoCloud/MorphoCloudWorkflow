@@ -126,8 +126,9 @@ jobs:
           existing_expiration=$(gh issue view "$NUMBER" --json labels --jq '[.labels[].name | select(test("^expiration:"))] | length')
 
           if [[ "$existing_expiration" -eq 0 ]]; then
-            # Lifetime ladder from MORPHOCLOUD_EXPIRATION_LADDER (e.g. "90d,180d":
-            # 90 days, and /renew moves it to 180); unset keeps 60 + 60.
+            # Lifetime from MORPHOCLOUD_EXPIRATION_LADDER (e.g. "90d"); unset
+            # keeps "60d,120d", whose first rung applies (/renew was retired on
+            # 2026-11-24, so later rungs are never reached).
             LADDER="${LADDER:-60d,120d}"
             if ! [[ "$LADDER" =~ ^[0-9]+d(,[0-9]+d)*$ ]]; then
               echo "::error ::MORPHOCLOUD_EXPIRATION_LADDER must look like 90d,180d (got '$LADDER')"
@@ -136,7 +137,7 @@ jobs:
             LABELS=""
             for rung in ${LADDER//,/ }; do
               gh label create "expiration:$rung" --color "892368" \
-                --description "Instance expires in ${rung%d} days unless extended" \
+                --description "Instance expires ${rung%d} days after the request" \
                 >/dev/null 2>&1 || true
               LABELS="${LABELS:+$LABELS,}expiration:$rung"
             done

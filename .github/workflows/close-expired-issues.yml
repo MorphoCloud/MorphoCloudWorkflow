@@ -190,7 +190,11 @@ jobs:
             else
               volume_name_list=$(echo "$matching_volumes" | jq -r '[.[].Name] | join(", ")')
               gh issue comment "$issue_number" \
-                --body "This request has expired. Deleting leftover volume(s): **${volume_name_list}**." || true
+                --body "$(if [[ "$closed_member_request" == "true" ]]; then
+                  echo "This request is closed. Deleting leftover volume(s): **${volume_name_list}**."
+                else
+                  echo "This request has expired. Deleting leftover volume(s): **${volume_name_list}**."
+                fi)" || true
             fi
 
             # Volumes first (detaching from the instance when needed), then
