@@ -143,3 +143,32 @@ def test_promote_command_names_both_variables():
         in cmd
     )
     assert "MORPHOCLOUD_IMAGE_REGULAR" in cmd
+
+
+def test_a_child_that_times_out_gets_sigterm_so_its_own_cleanup_runs(tmp_path):
+    """check-image.sh deletes its instance in an EXIT trap; a SIGKILL would
+    skip it. The whole process group gets SIGTERM first."""
+    marker = tmp_path / "cleaned"
+    script = f"trap 'echo done > {marker}; exit 0' TERM; sleep 30 & wait"
+    r = bm.run_child(["bash", "-c", script], timeout=1)
+    assert marker.read_text().strip() == "done"
+    assert "ended after 1 s" in r.stderr
+
+
+def test_an_unreadable_last_success_still_sends_the_overdue_email(
+    tmp_path, monkeypatch
+):
+    sent = []
+    monkeypatch.setattr(bm, "HOME", tmp_path)
+    monkeypatch.setattr(bm, "LAST_SUCCESS", tmp_path / "last-success")
+    monkeypatch.setattr(bm, "MAIL_FAILURES", tmp_path / "mail-failures.log")
+    monkeypatch.setattr(
+        bm, "email", lambda subject, _body: sent.append(subject) or True
+    )
+    (tmp_path / "last-success").write_text("2026-11-24")  # a date, not epoch seconds
+    assert bm.main(["--overdue"]) == 0
+    assert sent == ["golden-image bake overdue"]
+    sent.clear()
+    (tmp_path / "last-success").write_text(str(__import__("time").time()))
+    assert bm.main(["--overdue"]) == 0
+    assert sent == []

@@ -24,6 +24,7 @@ The parts that decide are plain functions, tested in test_bake_monthly.py.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import json
 import os
@@ -61,6 +62,7 @@ RUN_LIMIT = 48 * 3600
 OVERDUE_DAYS = 36  # first Tuesdays are at most 35 days apart
 LEAK_AGE = 2 * 86400
 NO_HOST = 3  # check-image.sh: Jetstream2 gave no host, nothing was checked
+CHECK_FAILURES = 2  # a check that fails twice is the image's fault
 
 
 # --- the parts that decide ---------------------------------------------------
@@ -88,12 +90,20 @@ def flavor_for(kind: str, tries_done: int) -> str:
 
 
 def pid_alive(pid: int) -> bool:
+    """The process exists and is a bake-monthly run (a dead run's PID can be
+    reused by another program)."""
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
+        pass
+    cmdline = Path(f"/proc/{pid}/cmdline")
+    if cmdline.exists():
+        try:
+            return b"bake-monthly" in cmdline.read_bytes()
+        except OSError:
+            return True
     return True
 
 
@@ -169,6 +179,45 @@ def sh(*args: str, timeout: int = 600, check: bool = True) -> str:
     return r.stdout
 
 
+CHILD: subprocess.Popen | None = None  # the bake or check running now
+
+
+def stop_child(p: subprocess.Popen) -> None:
+    """SIGTERM to the child's whole process group (bash and its openstack
+    calls), so check-image.sh's trap deletes its instance; SIGKILL after 60 s."""
+    if p.poll() is not None:
+        return
+    try:
+        os.killpg(p.pid, signal.SIGTERM)
+        p.wait(timeout=60)
+    except ProcessLookupError:
+        return
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(p.pid, signal.SIGKILL)
+
+
+def run_child(args: list[str], timeout: int) -> subprocess.CompletedProcess:
+    global CHILD  # noqa: PLW0603 — the signal handler must reach the child
+    p = subprocess.Popen(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    CHILD = p
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        stop_child(p)
+        out, err = p.communicate()
+        err += f"\nended after {timeout} s"
+    finally:
+        CHILD = None
+    return subprocess.CompletedProcess(args, p.returncode, out, err)
+
+
 def os_json(*args: str):
     return json.loads(sh("openstack", *args, "-f", "json") or "null")
 
@@ -223,6 +272,8 @@ class Run:
         self.dir = workdir
         self.names = {k: image_name(k, day) for k in KINDS}
         self.tries = dict.fromkeys(KINDS, 0)
+        self.check_failures = dict.fromkeys(KINDS, 0)
+        self.started = time.time()
         self.state = dict.fromkeys(KINDS, "bake")  # bake -> check -> done | failed
         self.notes: list[str] = []
         self.mwf_sha = self.exo_sha = "?"
@@ -244,12 +295,13 @@ class Run:
         self.note(f"MWF main {self.mwf_sha[:7]}, exosphere {self.exo_sha[:8]}")
         return src
 
+    def image_status(self, name: str) -> str | None:
+        """None when there is no such image, else its Glance status."""
+        rows = os_json("image", "list", "--name", name, "--long")
+        return (rows[0].get("Status") or "?").lower() if rows else None
+
     def image_exists(self, name: str) -> bool:
-        return bool(
-            sh(
-                "openstack", "image", "list", "--name", name, "-f", "value", "-c", "ID"
-            ).strip()
-        )
+        return self.image_status(name) == "active"
 
     def evidence(self, out: str, tag: str) -> None:
         """A failed bake keeps its build instance: save what Nova knows, then
@@ -282,7 +334,12 @@ class Run:
         self.tries[kind] += 1
         name = self.names[kind]
         tag = f"bake {name} on {flavor} (try {self.tries[kind]}/{MAX_TRIES})"
-        r = subprocess.run(
+        if self.image_status(name) not in (None, "active"):
+            # A bake that died after Glance created the image leaves it
+            # queued, saving or killed: never checked, never promoted.
+            sh("openstack", "image", "delete", name, check=False)
+            self.note(f"deleted unfinished image {name}")
+        r = run_child(
             [
                 "bash",
                 str(src / "scripts/bake-image.sh"),
@@ -290,10 +347,7 @@ class Run:
                 name,
                 str(src / "cloud-config"),
             ],
-            capture_output=True,
-            text=True,
             timeout=3 * 3600,
-            check=False,
         )
         (self.dir / f"bake-{kind}-{flavor}-try{self.tries[kind]}.log").write_text(
             r.stdout + r.stderr
@@ -324,7 +378,7 @@ class Run:
         self.tries[kind] += 1
         name = self.names[kind]
         tag = f"check {name} on {flavor} (try {self.tries[kind]}/{MAX_TRIES})"
-        r = subprocess.run(
+        r = run_child(
             [
                 "bash",
                 str(src / "scripts/check-image.sh"),
@@ -332,10 +386,7 @@ class Run:
                 name,
                 str(src / "cloud-config"),
             ],
-            capture_output=True,
-            text=True,
             timeout=2 * 3600,
-            check=False,
         )
         (self.dir / f"check-{kind}-{flavor}-try{self.tries[kind]}.log").write_text(
             r.stdout + r.stderr
@@ -354,8 +405,14 @@ class Run:
                 ),
                 f"exit {r.returncode}",
             )
-            self.note(f"{tag}: {why}")
-            self.state[kind] = "failed"
+            self.check_failures[kind] += 1
+            if self.check_failures[kind] >= CHECK_FAILURES:
+                self.note(f"{tag}: {why}")
+                self.state[kind] = "failed"
+            else:
+                # Once more: an SSH or setup timeout on a slow host is not
+                # always the image's fault. Twice is.
+                self.note(f"{tag}: {why}; will check once more")
 
     def loop(self, src: Path) -> None:
         end = time.time() + RUN_LIMIT
@@ -426,14 +483,63 @@ class Run:
         return f"{len(sizes)} golden images in Glance, {total:,.0f} GB in all"
 
 
-def sweep_leaks(run: Run) -> None:
-    servers = []
+def bake_servers() -> list[dict]:
+    """Build and check instances with their creation time; one that vanishes
+    between the list and the show is skipped."""
+    out = []
     for s in os_json("server", "list", "--name", "^mc-bake"):
-        info = os_json("server", "show", s["ID"])
-        servers.append({"name": s["Name"], "created": info.get("created")})
-    for name in leaked(servers, time.time()):
-        sh("openstack", "server", "delete", "--wait", name, timeout=600, check=False)
-        run.note(f"deleted {name}, left by a crashed run")
+        try:
+            info = os_json("server", "show", s["ID"])
+        except RuntimeError:
+            continue
+        out.append({"name": s["Name"], "created": info.get("created")})
+    return out
+
+
+def sweep_leaks(run: Run) -> None:
+    """Best effort: a failure here is noted and never stops the run."""
+    try:
+        for name in leaked(bake_servers(), time.time()):
+            sh(
+                "openstack",
+                "server",
+                "delete",
+                "--wait",
+                name,
+                timeout=600,
+                check=False,
+            )
+            run.note(f"deleted {name}, left by a crashed run")
+    except Exception as e:
+        run.note(f"leak sweep skipped: {type(e).__name__}: {str(e)[:160]}")
+
+
+def delete_own_leftovers(run: Run) -> None:
+    """After a crash or a signal: this run's build and check instances
+    (created since it started; only one run at a time, by the lock)."""
+    try:
+        for s in bake_servers():
+            created = s.get("created")
+            if (
+                created
+                and LEAK_RE.match(s["name"])
+                and dt.datetime.fromisoformat(
+                    created.replace("Z", "+00:00")
+                ).timestamp()
+                >= run.started - 60
+            ):
+                sh(
+                    "openstack",
+                    "server",
+                    "delete",
+                    "--wait",
+                    s["name"],
+                    timeout=600,
+                    check=False,
+                )
+                run.note(f"deleted {s['name']}, left by this run")
+    except Exception as e:
+        run.note(f"could not clean up this run's instances: {type(e).__name__}")
 
 
 def summary(run: Run, ok: bool, crash: str | None) -> tuple[str, str]:
@@ -469,7 +575,7 @@ def summary(run: Run, ok: bool, crash: str | None) -> tuple[str, str]:
     return subject, "\n".join(lines)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 — one run, in order, read top to bottom
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--now", action="store_true", help="run today, whatever the day")
     p.add_argument(
@@ -481,7 +587,10 @@ def main(argv: list[str] | None = None) -> int:
     today = dt.datetime.now(dt.UTC).date()
 
     if a.overdue:
-        last = float(LAST_SUCCESS.read_text()) if LAST_SUCCESS.exists() else None
+        try:
+            last = float(LAST_SUCCESS.read_text()) if LAST_SUCCESS.exists() else None
+        except ValueError:
+            last = None  # unreadable: treated as never, so the email goes out
         if overdue(last, now):
             when = time.strftime("%Y-%m-%d", time.gmtime(last)) if last else "never"
             failures = (
@@ -529,6 +638,8 @@ def main(argv: list[str] | None = None) -> int:
     ok, crash = False, None
 
     def on_signal(signum, _frame):
+        if CHILD is not None:
+            stop_child(CHILD)
         msg = f"signal {signum}"
         raise SystemExit(msg)
 
@@ -548,6 +659,7 @@ def main(argv: list[str] | None = None) -> int:
             run.prune()
     except BaseException as e:
         crash = f"{type(e).__name__}: {e}\n{traceback.format_exc()[-1500:]}"
+        delete_own_leftovers(run)
     finally:
         subject, body = summary(run, ok, crash)
         email(subject, body)

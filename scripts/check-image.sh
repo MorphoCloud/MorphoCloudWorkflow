@@ -28,7 +28,8 @@ CLOUD_CONFIG="${3:-$(cd "$(dirname "$0")/.." && pwd)/cloud-config}"
 [[ -s ~/.ssh/id_ed25519.pub ]] || { echo "runner key ~/.ssh/id_ed25519.pub missing" >&2; exit 2; }
 
 source ~/venv/bin/activate
-[[ -n "$(openstack image list --name "$IMAGE" -f value -c ID)" ]] || { echo "no image named $IMAGE" >&2; exit 2; }
+status=$(openstack image list --name "$IMAGE" --long -f value -c Status | head -1)
+[[ "$status" == "active" ]] || { echo "image $IMAGE is ${status:-missing}, not active" >&2; exit 2; }
 
 NAME="mc-bakecheck-$(date -u +%Y%m%d-%H%M%S)"
 WORK=$(mktemp -d)
@@ -92,6 +93,11 @@ IP=$(openstack server show "$NAME" -f json -c addresses \
   | jq -r '.addresses | to_entries[0].value[] | select(test("^10\\."))' | head -1)
 [[ -n "$IP" ]] || fail "no private address"
 
+# sshd can come up a little after setup reports complete.
+for _ in $(seq 1 30); do
+  ssh "${ssh_opts[@]}" exouser@"$IP" true 2>/dev/null && break
+  sleep 10
+done
 log "checking the GPU, Slicer and the desktop ($IP)"
 cat > "$WORK/check.sh" <<'EOF'
 set -uo pipefail
