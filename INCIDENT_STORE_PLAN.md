@@ -947,12 +947,14 @@ from before it went down.
   per share: `schema`, `week` (ISO week, `2026-W48`), `taken_at`, plus the
   fields above. A row whose `usage_at` is null or more than 24 hours old gets
   `stale: true`.
-- **Final use:** a share in one week's snapshot that is missing from the next
-  week's has left the states that hold data: its term ended and it is being or
-  has been deleted (a reset empties a share but keeps it). Its last row goes in
-  `storage/final.jsonl` with `gone_by` (the next snapshot's time), so it is up
-  to a week older than the deletion. This keeps the use of shares that ended,
-  which the latest weekly file alone would not show.
+- **Final use:** a share in one stored snapshot that is missing from the next
+  stored snapshot, and is not in the latest one, has left the states that hold
+  data (a reset empties a share but keeps it, so it stays). A share that comes
+  back was not gone and gets no final row. Each share has one final row, at its
+  last departure. That row is its last stored row with `gone_by` (the next
+  snapshot's time), so it is up to a week older than the departure. It goes in
+  `storage/final.jsonl`. This keeps the use of shares that left, which the
+  latest weekly file alone would not show.
 - **Order:** the snapshot goes into the store in one write, whole or not at all.
   `final.jsonl` and the report are then rewritten from all the snapshots, so
   they are fully derived, and `state/storage-usage.json` comes last. All of it
@@ -961,7 +963,9 @@ from before it went down.
   state write was lost), the step does not call the portal again. It rewrites
   `final.jsonl`, the report and the state from the snapshots. A crash between
   writes can therefore neither lose a final row nor repeat one. The analysis
-  keeps only the last snapshot of each ISO week.
+  keeps only the last snapshot of each ISO week. A week taken with a bad
+  snapshot (a bug) is taken again by deleting that week's lines from the store
+  by hand. The next cycle then takes the week afresh.
 - **Errors:** as for every step. The error goes into `last_error`, the watchdog
   emails the admins, and the other steps go on.
 - **Size and retention:** about 90 rows (the 89 member shares planned in
@@ -975,9 +979,12 @@ snapshot, so the report is fully derived from the `.jsonl` files and the
 thresholds can change later with the report regenerated. It uses Python's
 standard library only. Rows are counted as follows:
 
-- **Measured:** `used_bytes` not null and not stale. Only measured rows enter
-  the median, the percentiles and the threshold counts. Stale and unmeasured
-  rows are counted on their own line, never as "less than 5 GB".
+- **Measured:** `used_bytes` and `size_bytes` both known, the size above zero,
+  and not stale. Only measured rows enter the median, the percentiles and the
+  threshold counts. Stale and unmeasured rows are counted on their own line,
+  never as "less than 5 GB". The worker's health pass runs every 60 seconds
+  (`HEALTH_EVERY` in the portal's `admin/worker.py`) and measures every mounted
+  share, so 24 hours without a measurement means the share was not mounted.
 - **New:** a share less than 7 days from its `start` is left out of the "less
   than 5 GB" and "less than 10 GB" counts (a new member has not uploaded yet),
   and counted on its own line.
@@ -994,18 +1001,23 @@ standard library only. Rows are counted as follows:
      The total size is what counts against the quota.
 2. **By age:** each share's use by days since `start`, in 0–30, 31–60, 61–90,
    91–120 and more than 120 days, with the same median, 90th percentile and
-   counts for each. Each share is counted once per bin (its latest row in it).
-   Shares with an extension (`extensions` > 0) are only in a separate table,
-   never in the first. Their `start` does not move, so they sit in the later
-   bins. This shows whether use keeps growing over a term, or levels off well
-   below 100 GB.
-3. **Final use:** the same figures for the last row of every share in
-   `final.jsonl`: what a share held when it ended.
+   counts for each. Each share is counted once per bin (its latest row in it). A
+   share is extended or not by its latest row. One whose latest row has an
+   extension (`extensions` > 0) is only in the separate Extended age table, in
+   every bin, never in the No-extension age table. That table uses the same
+   bins. Its `start` does not move, so it sits in the later bins. This shows
+   whether use keeps growing over a term, or levels off well below 100 GB.
+3. **Final use:** the same figures for the final row of every share in
+   `final.jsonl`: what a share held when it left the data-holding states. A
+   final row counts with its last known figures even if it is stale, because a
+   share that went down first has a stale last row.
 4. **Counts only.** The report never names anyone, and a group of fewer than 3
-   shares is shown as "fewer than 3" with no figures. Totals across groups can
-   still narrow a hidden group down. That is accepted, because the report is
-   only in the admins' private store. The GitHub ids are in the data for whoever
-   needs them.
+   measured shares shows "fewer than 3" (when it has 1 or 2 shares) and no
+   figures. The floor applies to the figures. The read-only, new and stale count
+   lines are counts only and are always shown. Totals across groups can still
+   narrow a hidden group down. That is accepted, because the report is only in
+   the admins' private store. The GitHub ids are in the data for whoever needs
+   them.
 
 **Privacy.** A GitHub id is a stable pseudonymous key, stored next to each
 member's use and term dates. The store (`MorphoCloud/Incidents`) is private.
