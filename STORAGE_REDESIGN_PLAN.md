@@ -478,7 +478,7 @@ Replaces the design of 2026-10-14, where a share was kept while it was used,
 deleted after 180 days without use, and renewed by its member with **Keep my
 storage** and no review. The aim now is tracking: the admins see who still uses
 MorphoCloud, nobody is renewed without asking, and the share count stays within
-the allocation (10,000 GB, about 88 member shares of 100 GB; see "Quota").
+the allocation (10,000 GB, 89 member shares of 100 GB; see "Quota").
 
 **Term.** A share is kept for 120 days from the day it was created: its end
 date. The 44 shares the migration created on 2026-11-23 end on 2027-03-23. The
