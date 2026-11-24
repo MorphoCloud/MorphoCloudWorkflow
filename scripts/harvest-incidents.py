@@ -66,6 +66,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import datetime
 import fcntl
 import gzip
 import hashlib
@@ -1605,6 +1606,281 @@ def flavor_of(labels: list[str]) -> str | None:
 # --- the cycle ---------------------------------------------------------------------
 
 
+# --- storage usage (INCIDENT_STORE_PLAN.md "Storage usage (weekly snapshot)") ---
+
+USAGE_SCHEMA = 1
+USAGE_DUE_HOUR = 13  # Monday 13:00 UTC: the first cycle after it takes the week
+USAGE_STALE = 24 * 3600
+USAGE_NEW_DAYS = 7
+USAGE_TIMEOUT = 60
+USAGE_FIELDS = (
+    "github_id",
+    "state",
+    "used_bytes",
+    "size_bytes",
+    "usage_at",
+    "start",
+    "end_date",
+    "extensions",
+)
+USAGE_TARGET = Path("~/mc-data/portal_target")
+USAGE_FINAL = "storage/final.jsonl"
+USAGE_REPORT = "storage/report.md"
+USAGE_STATE = "state/storage-usage.json"
+USAGE_TARGET_RE = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9.:-]+$")
+USAGE_DAY_RE = re.compile(r"^\d{4}-\d\d-\d\d$")
+GIB = 2**30  # Manila's GB: a 100 GB share is 100 * 2**30 bytes
+ALLOCATION_GB = 10_000
+AGE_BINS = ((0, 30), (31, 60), (61, 90), (91, 120), (121, None))
+SMALL_GROUP = 3  # fewer shares than this: counts only, no figures
+
+
+def usage_week(now: float) -> str | None:
+    """The ISO week whose snapshot is due at `now`: this week, once its Monday
+    13:00 UTC has passed; None before that."""
+    t = time.gmtime(now)
+    monday = calendar.timegm((*t[:3], 0, 0, 0)) - t.tm_wday * 86400
+    if now < monday + USAGE_DUE_HOUR * 3600:
+        return None
+    year, week, _ = datetime.date(t.tm_year, t.tm_mon, t.tm_mday).isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def _int_or_none(v) -> bool:
+    return v is None or (isinstance(v, int) and not isinstance(v, bool))
+
+
+def validate_usage(text: str) -> tuple[dict | None, str | None]:
+    """The portal's `usage` reply, or why it is refused. Anything but one
+    complete document of the known schema is a failed attempt, never an
+    empty snapshot."""
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return None, f"not JSON ({len(text)} bytes)"
+    if not isinstance(doc, dict) or doc.get("schema") != USAGE_SCHEMA:
+        return (
+            None,
+            f"unknown schema {doc.get('schema') if isinstance(doc, dict) else type(doc).__name__}",
+        )
+    shares = doc.get("shares")
+    if not isinstance(shares, list):
+        return None, "no shares list"
+    for s in shares:
+        if not (
+            isinstance(s, dict)
+            and isinstance(s.get("github_id"), int)
+            and not isinstance(s.get("github_id"), bool)
+            and _int_or_none(s.get("used_bytes"))
+            and _int_or_none(s.get("size_bytes"))
+            and _int_or_none(s.get("extensions"))
+            and isinstance(s.get("start"), str)
+            and USAGE_DAY_RE.match(s["start"])
+        ):
+            return None, f"bad row {str(s)[:120]}"
+    return doc, None
+
+
+def portal_usage(target_file: Path = USAGE_TARGET) -> tuple[dict | None, str | None]:
+    """One `usage` call through the portal's forced-command gate, with the
+    runner's own key (the account the workflows use)."""
+    try:
+        target = target_file.expanduser().read_text().strip()
+    except OSError as e:
+        return None, f"no portal target ({type(e).__name__})"
+    if not USAGE_TARGET_RE.match(target):
+        return None, "portal target is not user@host"
+    cmd = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+           "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
+           target, "usage"]  # fmt: skip
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=USAGE_TIMEOUT, check=False
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return None, type(e).__name__
+    if r.returncode != 0:
+        return None, (r.stderr or f"exit {r.returncode}").strip()[-200:]
+    return validate_usage(r.stdout)
+
+
+def usage_rows(doc: dict, week: str, taken_at: str) -> list[dict]:
+    now = parse_ts(taken_at)
+    rows = []
+    for s in doc["shares"]:
+        at = s.get("usage_at")
+        stale = (
+            s.get("used_bytes") is None or not at or now - parse_ts(at) > USAGE_STALE
+        )
+        rows.append(
+            {
+                "schema": USAGE_SCHEMA,
+                "week": week,
+                "taken_at": taken_at,
+                **{k: s.get(k) for k in USAGE_FIELDS},
+                "stale": stale,
+            }
+        )
+    return rows
+
+
+def usage_snapshots(root: Path) -> dict[str, list[dict]]:
+    """week -> its rows, the last snapshot of each ISO week only."""
+    by_week: dict[str, dict[str, list[dict]]] = {}
+    for f in sorted(root.glob("storage/[0-9][0-9][0-9][0-9]/*/*.jsonl")):
+        for line in f.read_text().splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(r, dict) and r.get("week") and r.get("taken_at"):
+                by_week.setdefault(r["week"], {}).setdefault(r["taken_at"], []).append(
+                    r
+                )
+    return {w: snaps[max(snaps)] for w, snaps in sorted(by_week.items())}
+
+
+def _age_days(row: dict) -> int:
+    return int(
+        (parse_ts(row["taken_at"]) - parse_ts(row["start"] + "T00:00:00")) // 86400
+    )
+
+
+def _gb(n: float) -> str:
+    return f"{n / GIB:,.1f}"
+
+
+def _nearest_rank(values: list[int], q: float) -> int:
+    s = sorted(values)
+    return s[max(0, -(-len(s) * int(q * 100) // 100) - 1)]
+
+
+def usage_figures(rows: list[dict]) -> dict:
+    """Counts and figures for one group. Only measured rows (not stale) enter
+    the median, the 90th percentile and the thresholds; a new share (under
+    USAGE_NEW_DAYS from its start) is left out of the low counts."""
+    measured = [r for r in rows if not r.get("stale")]
+    used = [r["used_bytes"] for r in measured]
+    sized = [r for r in measured if r.get("size_bytes")]
+    settled = [r for r in measured if _age_days(r) >= USAGE_NEW_DAYS]
+    return {
+        "shares": len(rows),
+        "measured": len(measured),
+        "stale": len(rows) - len(measured),
+        "new": sum(1 for r in rows if _age_days(r) < USAGE_NEW_DAYS),
+        "read_only": sum(1 for r in rows if r.get("state") == "read_only"),
+        "median": _nearest_rank(used, 0.5) if used else None,
+        "p90": _nearest_rank(used, 0.9) if used else None,
+        "over80": sum(1 for r in sized if r["used_bytes"] > 0.8 * r["size_bytes"]),
+        "at95": sum(1 for r in sized if r["used_bytes"] >= 0.95 * r["size_bytes"]),
+        "under5": sum(1 for r in settled if r["used_bytes"] < 5 * GIB),
+        "under10": sum(1 for r in settled if r["used_bytes"] < 10 * GIB),
+        "used_total": sum(r["used_bytes"] or 0 for r in rows),
+        "size_total": sum(r["size_bytes"] or 0 for r in rows),
+    }
+
+
+def _figure_cells(f: dict) -> list[str]:
+    shares = (
+        str(f["shares"])
+        if f["shares"] >= SMALL_GROUP or not f["shares"]
+        else "fewer than 3"
+    )
+    if f["measured"] < SMALL_GROUP:
+        return [shares] + ["—"] * 7
+    return [
+        shares,
+        _gb(f["median"]),
+        _gb(f["p90"]),
+        str(f["over80"]),
+        str(f["at95"]),
+        str(f["under5"]),
+        str(f["under10"]),
+        f"{f['measured']} / {f['stale']} / {f['new']}",
+    ]
+
+
+FIGURE_HEAD = (
+    "| Shares | Median GB | P90 GB | >80% | ≥95% | <5 GB | <10 GB "
+    "| Measured / stale / new |"
+)
+
+
+def usage_report(snapshots: dict[str, list[dict]], finals: list[dict], at: str) -> str:
+    """storage/report.md, fully derived from the snapshots and final.jsonl."""
+    out = [
+        "# Storage usage",
+        "",
+        f"Written {at} from {len(snapshots)} weekly snapshot(s) in"
+        " `storage/YYYY/MM/DD.jsonl` (the last snapshot of each ISO week) and"
+        f" {len(finals)} final row(s) in `storage/final.jsonl`. Counts only:"
+        " no one is named, and a group with fewer than 3 measured shares shows"
+        " no figures. GB = 2^30 bytes (Manila's). Measured = measured by the"
+        " portal in the last 24 hours; new = under 7 days old, left out of the"
+        ' <5 GB and <10 GB counts. INCIDENT_STORE_PLAN.md, "Storage usage".',
+        "",
+        "## Each week",
+        "",
+        "| Week "
+        + FIGURE_HEAD
+        + " Read-only | Used GB of 10,000 | Size GB of 10,000 |",
+        "|---" * 12 + "|",
+    ]
+    for week, rows in sorted(snapshots.items(), reverse=True):
+        f = usage_figures(rows)
+        small = f["shares"] < SMALL_GROUP
+        out.append(
+            "| "
+            + " | ".join(
+                [
+                    week,
+                    *_figure_cells(f),
+                    str(f["read_only"]),
+                    "—" if small else _gb(f["used_total"]),
+                    "—" if small else _gb(f["size_total"]),
+                ]
+            )
+            + " |"
+        )
+    out += ["", "## By age (days since the storage was asked for)", ""]
+    for title, extended in (("No extension", False), ("Extended", True)):
+        latest: dict[tuple[int, int], dict] = {}
+        for rows in snapshots.values():
+            for r in rows:
+                if bool(r.get("extensions")) != extended:
+                    continue
+                age = _age_days(r)
+                b = (
+                    next(
+                        i
+                        for i, (lo, hi) in enumerate(AGE_BINS)
+                        if age >= lo and (hi is None or age <= hi)
+                    )
+                    if age >= 0
+                    else 0
+                )
+                key = (r["github_id"], b)
+                if key not in latest or r["taken_at"] > latest[key]["taken_at"]:
+                    latest[key] = r
+        out += [f"### {title}", "", "| Days " + FIGURE_HEAD, "|---" * 9 + "|"]
+        for i, (lo, hi) in enumerate(AGE_BINS):
+            rows = [r for (_, b), r in latest.items() if b == i]
+            label = f"{lo}-{hi}" if hi is not None else f"over {lo - 1}"
+            out.append(
+                "| " + " | ".join([label, *_figure_cells(usage_figures(rows))]) + " |"
+            )
+        out.append("")
+    out += [
+        "## Final use (shares whose term ended)",
+        "",
+        "| " + FIGURE_HEAD[2:],
+        "|---" * 8 + "|",
+        "| " + " | ".join(_figure_cells(usage_figures(finals))) + " |",
+        "",
+    ]
+    return "\n".join(out)
+
+
 class Harvester:
     def __init__(  # noqa: PLR0913 — one collaborator per argument, built in main()
         self,
@@ -2464,6 +2740,55 @@ class Harvester:
             self.store.write_json("state/platform.json", current)
         return "ok"
 
+    # -- storage usage: the weekly snapshot of the portal's shares ----------
+    def storage_usage(self, now: float) -> str | None:
+        """INCIDENT_STORE_PLAN.md "Storage usage (weekly snapshot)": once an
+        ISO week, after Monday 13:00 UTC, the portal's `usage` reply as one line
+        per share; the last row of each share gone since last week in
+        final.jsonl; the report rewritten. Only a source with storage_usage."""
+        if not self.src.get("storage_usage"):
+            return None
+        week = usage_week(now)
+        if week is None:
+            return "not due"
+        state = self.store.read_json(USAGE_STATE) or {}
+        if state.get("week") == week:
+            return f"taken {week}"
+        snapshots = usage_snapshots(self.store.root)
+        if week in snapshots:  # written, but the state was not: record it only
+            self.store.write_json(
+                USAGE_STATE, {"week": week, "taken_at": snapshots[week][0]["taken_at"]}
+            )
+            return f"taken {week}"
+        doc, err = portal_usage()
+        if err:
+            msg = f"portal usage: {err}"
+            raise RuntimeError(msg)
+        taken_at = to_iso(now)
+        rows = usage_rows(doc, week, taken_at)
+        for r in rows:
+            self.store.append_jsonl(f"storage/{day_path(taken_at)}.jsonl", r)
+        earlier = [w for w in snapshots if w < week]
+        now_ids = {r["github_id"] for r in rows}
+        gone = [
+            {**r, "gone_by": taken_at}
+            for r in (snapshots[max(earlier)] if earlier else [])
+            if r["github_id"] not in now_ids
+        ]
+        final_file = self.store.rel(USAGE_FINAL)
+        finals = (
+            [json.loads(x) for x in final_file.read_text().splitlines() if x.strip()]
+            if final_file.exists()
+            else []
+        ) + gone
+        for r in gone:
+            self.store.append_jsonl(USAGE_FINAL, r)
+        self.store.write_text(
+            USAGE_REPORT, usage_report({**snapshots, week: rows}, finals, taken_at)
+        )
+        self.store.write_json(USAGE_STATE, {"week": week, "taken_at": taken_at})
+        return f"took {week}: {len(rows)} shares, {len(gone)} gone"
+
     # -- the end of a cycle ---------------------------------------------------
     def finish(
         self, now: float, started: float, error: str | None, extra: dict
@@ -2572,6 +2897,9 @@ class Harvester:
         plat = step("platform", lambda: self.platform(now))
         if plat:
             extra["platform"] = plat
+        usage = step("storage_usage", lambda: self.storage_usage(now))
+        if usage:
+            extra["storage_usage"] = usage
         error = "; ".join(errors) or None
         self.finish(now, started, error, extra)
         return 1 if error else 0
