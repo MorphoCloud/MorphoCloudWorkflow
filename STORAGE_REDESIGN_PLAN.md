@@ -17,29 +17,29 @@ allocation. Nothing here is in production. Tracking issue:
 
 These are settled. Revisit only with new facts, not preference.
 
-| #   | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Each user gets their own 100 GB Manila CephFS share. It replaces the per-instance MyData Cinder volume.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 2   | Shares are keyed on the **GitHub numeric user ID**, not the login. Logins can be renamed or reclaimed; the ID never changes.                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 3   | The home directory and all settings stay on the instance's root disk. Only the user-facing folders live on the share.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| 4   | A data portal on its own VM provides browser upload and download to each user's share, with GitHub sign-in (members of MorphoCloudUsers only). It works with or without an instance.                                                                                                                                                                                                                                                                                                                                                                     |
-| 5   | Two golden images, both with the NVIDIA driver: a vGPU (GRID) image for g3.large, and a regular-driver image for every other flavor, including CPU-only.                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 6   | Slicer and the standard extension set are baked into the images. Extensions a user adds are lost when the instance is recreated. Accepted.                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 7   | Storage term: a share is kept for 120 days from its creation. Its member can ask for more time on the portal; an admin approves (120 more days each time, no limit) or declines. Reminders 14, 7 and 1 day before the end date; then the share is locked for 15 days, then deleted. Instances have no expiry of their own: they exist while the storage is kept (see "Storage term"). Revised 2026-11-24 by the maintainer (was: deleted after 180 days without use, renewed by the member with no review; before that, no expiry).                      |
-| 8   | No backups. Same as MyData volumes today.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| 9   | No migration path from MyData during testing. Designed only if this is adopted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 10  | The current per-instance upload page ("Data drop") stays in production until this design is adopted.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| 11  | Workshop instances get no per-attendee share or volume. They use one centralized workshop share.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 12  | R libraries live on the root disk. MorphoCloud no longer installs them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 13  | Slicer's DICOM database moves to local disk. DICOM is not a common use case.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 14  | Shares are created on demand, **only from the data portal** ("Create my storage"). `/create` without a share refuses and points to the portal; it never creates a share. No automatic provisioning of every member. Revised 2026-09-26 (was: `/create` creates it).                                                                                                                                                                                                                                                                                      |
-| 15  | The request issue's lifecycle covers the instance only. Volume commands and `volume:*` labels are removed; the share has its own lifecycle.                                                                                                                                                                                                                                                                                                                                                                                                              |
-| 16  | Reset empties the share (share and key are kept). The only automatic deletion is the storage-term sweep (decision 7), after its reminders and 15 days locked; the member's instance is deleted when the share locks. Revised 2026-10-14 (was: nothing ever deletes a share automatically) and 2026-11-24 (was: never while an instance holds the share).                                                                                                                                                                                                 |
-| 17  | **One instance per user.** Two instances would mount the same share at once. Enforced with the existing per-user limit, `MORPHOCLOUD_MAX_INSTANCES_PER_USER=1` (set on Test-Instances for the prototype). Admins are exempt from that limit, as today.                                                                                                                                                                                                                                                                                                   |
-| 18  | **OS updates arrive through the image.** `/create` from a baked image runs neither `apt-get update` nor `apt-get upgrade` (amended 2026-11-16: setup installs nothing on a baked image); the bake keeps both. A package ansible installs must be in the image. Both images are rebuilt monthly whether or not Slicer changed (issue #430). Added 2026-11-16.                                                                                                                                                                                             |
-| 19  | **Background security updates between rebakes.** `unattended-upgrades` is turned on when an instance's setup completes. Security fixes only: the Ubuntu security pocket is the only allowed source (no `noble-updates`, no feature updates). After each boot the lists are refreshed at 30-40 minutes and the upgrade runs at 45-55 minutes; daily at 06:00/18:00 (refresh) and 06:30 UTC (upgrade), at idle priority. Kernel and NVIDIA packages are excluded; they change only with a rebake. Added 2026-11-16; sources and timing amended 2026-11-17. |
-| 20  | **The desktop does not prompt members to upgrade.** Software Updater does not open on its own, and no new Ubuntu release is offered. Security fixes still install in the background (decision 19). Software Updater stays in the app menu for a member who wants to run it. Added 2026-11-23.                                                                                                                                                                                                                                                            |
-| 21  | **Long-shelved instances are deleted.** Once a week, an instance shelved for more than 28 days is deleted and its request closed; the member's files stay on the storage, and a new instance can be created from the portal at any time (see "Long-shelved instances"). Decided 2026-11-24 by the maintainer.                                                                                                                                                                                                                                            |
+| #   | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Each user gets their own 100 GB Manila CephFS share. It replaces the per-instance MyData Cinder volume.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 2   | Shares are keyed on the **GitHub numeric user ID**, not the login. Logins can be renamed or reclaimed; the ID never changes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 3   | The home directory and all settings stay on the instance's root disk. Only the user-facing folders live on the share.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 4   | A data portal on its own VM provides browser upload and download to each user's share, with GitHub sign-in (members of MorphoCloudUsers only). It works with or without an instance.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 5   | Two golden images, both with the NVIDIA driver: a vGPU (GRID) image for g3.large, and a regular-driver image for every other flavor, including CPU-only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 6   | Slicer and the standard extension set are baked into the images. Extensions a user adds are lost when the instance is recreated. Accepted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 7   | Storage term: a share is kept for 120 days from its creation. Its member can ask for more time on the portal; an admin approves (120 days from the later of the end date and the day of approval, no limit) or declines. Reminders 14, 7 and 1 day before the end date; then the share is read-only for 15 days (downloads only), then deleted. Instances have no expiry of their own: they exist while the storage is kept (see "Storage term"). Revised 2026-11-24 by the maintainer (was: deleted after 180 days without use, renewed by the member with no review; before that, no expiry); the same day, read-only replaced locked for the 15 days. |
+| 8   | No backups. Same as MyData volumes today.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| 9   | No migration path from MyData during testing. Designed only if this is adopted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 10  | The current per-instance upload page ("Data drop") stays in production until this design is adopted.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 11  | Workshop instances get no per-attendee share or volume. They use one centralized workshop share.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 12  | R libraries live on the root disk. MorphoCloud no longer installs them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 13  | Slicer's DICOM database moves to local disk. DICOM is not a common use case.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 14  | Shares are created on demand, **only from the data portal** ("Create my storage"). `/create` without a share refuses and points to the portal; it never creates a share. No automatic provisioning of every member. Revised 2026-09-26 (was: `/create` creates it).                                                                                                                                                                                                                                                                                                                                                                                      |
+| 15  | The request issue's lifecycle covers the instance only. Volume commands and `volume:*` labels are removed; the share has its own lifecycle.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 16  | Reset empties the share (share and key are kept). The only automatic deletion is the storage-term sweep (decision 7), after its reminders and 15 days read-only; the member's instance is deleted when the share turns read-only. Revised 2026-10-14 (was: nothing ever deletes a share automatically) and 2026-11-24 (was: never while an instance holds the share).                                                                                                                                                                                                                                                                                    |
+| 17  | **One instance per user.** Two instances would mount the same share at once. Enforced with the existing per-user limit, `MORPHOCLOUD_MAX_INSTANCES_PER_USER=1` (set on Test-Instances for the prototype). Admins are exempt from that limit, as today.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 18  | **OS updates arrive through the image.** `/create` from a baked image runs neither `apt-get update` nor `apt-get upgrade` (amended 2026-11-16: setup installs nothing on a baked image); the bake keeps both. A package ansible installs must be in the image. Both images are rebuilt monthly whether or not Slicer changed (issue #430). Added 2026-11-16.                                                                                                                                                                                                                                                                                             |
+| 19  | **Background security updates between rebakes.** `unattended-upgrades` is turned on when an instance's setup completes. Security fixes only: the Ubuntu security pocket is the only allowed source (no `noble-updates`, no feature updates). After each boot the lists are refreshed at 30-40 minutes and the upgrade runs at 45-55 minutes; daily at 06:00/18:00 (refresh) and 06:30 UTC (upgrade), at idle priority. Kernel and NVIDIA packages are excluded; they change only with a rebake. Added 2026-11-16; sources and timing amended 2026-11-17.                                                                                                 |
+| 20  | **The desktop does not prompt members to upgrade.** Software Updater does not open on its own, and no new Ubuntu release is offered. Security fixes still install in the background (decision 19). Software Updater stays in the app menu for a member who wants to run it. Added 2026-11-23.                                                                                                                                                                                                                                                                                                                                                            |
+| 21  | **Long-shelved instances are deleted.** Once a week, an instance shelved for more than 28 days is deleted and its request closed; the member's files stay on the storage, and a new instance can be created from the portal at any time (see "Long-shelved instances"). Decided 2026-11-24 by the maintainer.                                                                                                                                                                                                                                                                                                                                            |
 
 ## Why per-user shares, not one big share with folders
 
@@ -437,7 +437,8 @@ Known bake pitfalls, from the first test image (2026-08-08):
 - **`/migrate` (#305) becomes trivial:** the new instance mounts the same share.
   No detach or attach.
 - **Instance expiry** no longer exists in share mode: an instance is deleted
-  when its owner's storage locks, and deleting an instance never deletes files.
+  when its owner's storage turns read-only, and deleting an instance never
+  deletes files.
 - **Issue commands and labels:**
   - The request issue tracks the instance only. In share mode a successful
     delete closes it (see "Delete in share mode" in the Phase 2 prototype).
@@ -488,8 +489,8 @@ runner; a share without it counts from its creation time.
 **Instances follow the storage.** In share mode an instance has no expiry of its
 own: the request-issue ladder (`expiration:*` labels, renewal notices, `/renew`)
 is turned off. An instance can be created only while its owner's storage is
-kept, and it is deleted when the storage locks. The 4-hour session and automatic
-shelving do not change.
+kept, and it is deleted when the storage turns read-only. The 4-hour session and
+automatic shelving do not change.
 
 **Reminders.** An email to the member 14 days, 7 days and 1 day before the end
 date. The sweep runs daily at noon UTC, so "1 day" is its last run before the
@@ -512,61 +513,121 @@ course-intake Approve links), so a link that acted by itself would approve every
 request. No new token or GitHub app is needed: the portal's own sign-in and the
 runner's existing SSH path carry the decision.
 
-- **Approve** adds 120 days to the current end date, not to the day of approval.
-  The next runner pickup writes it on the share, and the member gets an email
-  with the new date.
+- **Approve** sets the end date to the later of the current end date and the day
+  of approval, plus 120 days (revised 2026-11-24; was: the current end date plus
+  120, which gave a storage approved late in its read-only days up to 15 days
+  less). An approval before the end date adds 120 days to it; an approval of an
+  expired storage gives 120 days from the approval. "The day of approval" is the
+  day (UTC) the admin pressed Approve, recorded with the decision. The next
+  runner pickup writes it on the share, and the member gets an email with the
+  new date.
 - **Decline** keeps the end date. The member gets an email with the admin's
   note, if there is one.
 - There is no limit on the number of extensions for now.
 - **When a member can ask:** the button appears with the first reminder, 14 days
-  before the end date, and stays while the share is locked, until it is deleted.
-  Asking earlier would let a member stack extensions far ahead.
+  before the end date, and stays while the share is read-only, until it is
+  deleted. Asking earlier would let a member stack extensions far ahead.
 - **One request at a time.** While one is waiting, the button says so instead of
   offering another. After a Decline the member can ask again.
-- **A waiting request postpones the lock.** If the end date passes while a
-  request is waiting, the share stays kept, and its instance stays, until an
-  admin decides. After a Decline the share locks at the next sweep, and the 15
-  locked days start then.
+- **A waiting request does not stop read-only**, because downloads keep working.
+  **It holds the deletion:** on the deletion day the sweep asks the portal, and
+  a share with a waiting request is not deleted until an admin decides. While it
+  is held, the portal shows "will be deleted after an admin decides on your
+  request" instead of the date; the read-only email says the date holds unless a
+  request is waiting. After a Decline it is deleted at the next sweep; if the
+  date in the email has already passed, the decline email says so (deleted at
+  the next daily sweep, noon UTC).
 - **Admins are reminded.** A request waiting more than 3 days is emailed to the
   admins again by every daily sweep until an admin decides, with the same link
   to the admin page, so a waiting request cannot keep a share for ever by being
   forgotten.
-- **Unlocking order.** After an approval of a locked share, the pickup first
-  creates the access rule again (`ensure`), then writes the new end date. If
-  `ensure` fails, the share stays locked with its old end date, the admins get
-  an alert, and the next pickup tries again.
 
-**After the end date, the share is locked for 15 days.** The share is kept
-through its whole end date; the first sweep after that day (noon UTC the next
-day) locks it, unless a request is waiting. The sweep deletes the member's
-instance (with the clean shutdown every share-mode delete does) and closes its
-request issue. The portal releases its mount, and the share's access rule is
-revoked, so nothing can reach the files. The portal shows "Your storage is
-locked since <date> and will be deleted on <date>" with **Ask to keep my
-storage**. An approval while the share is locked unlocks it: the next pickup
-creates the access rule again (`ensure`), the portal mounts the share again, and
-the end date becomes the old end date plus 120 days.
+**After the end date, the share is read-only for 15 days** (revised 2026-11-24;
+was: locked, with its access rule revoked, so a member could get files back only
+through an admin's approval). The member downloads what they need from the
+portal's file page without asking anyone, and can still ask to keep the storage.
 
-**After 15 days locked, the share is deleted** by `expire`, as before (only the
+- **When:** the share is kept through its whole end date; the first sweep after
+  that day (noon UTC the next day) turns it read-only, in one run. Right before,
+  it asks the portal again: a share with an approval not yet applied is left for
+  the pickup, which applies it within a minute. Step 1 then reads the share's
+  end date afresh and writes `mc_read_only_at` only if that date is still past,
+  so an approval applied in between is never overridden.
+  1. the runner marks the share read-only (Manila property `mc_read_only_at`,
+     ISO-8601 UTC; it replaces `mc_locked_at`); from then on `ensure` refuses
+     the share, so no new instance gets a writable mount;
+  2. the portal is told (`share-read-only`): it re-mounts the share with `ro`,
+     its file page offers downloads only, and Reset, MorphoSource transfers and
+     new instances are refused;
+  3. the sweep deletes the member's instance (with the clean shutdown every
+     share-mode delete does) and closes its request issue;
+  4. the member gets one email: the storage expired on <end date>, it is
+     read-only until <deletion date>, download what you need, or ask to keep it.
+- **The deletion date is fixed by the end date:** the share stays read-only
+  through the end date plus 15 days, and the first sweep after that day deletes
+  it. A missed sweep therefore never moves the date in the member's email.
+- **Enforced by the portal only** (the maintainer's choice): the share's access
+  rule stays read-write in Manila. The portal holds the storage's key, and the
+  instance that held it is deleted in step 3. **Accepted risk:** a member has
+  root on their own instance, so one who copied the key earlier could still
+  write to their own storage from elsewhere during the 15 days. Only their own
+  files are at stake (these are personal shares, one per member), and nobody
+  outside gets the key. If real enforcement is wanted later, Manila can switch
+  the rule to read-only (`access_level=ro`) instead.
+- **The portal shows** "Your storage expired on <date>. It is read-only until
+  <date>: download what you need. After that it is deleted." with **Open my
+  files** and **Ask to keep my storage**.
+- **An approval during the 15 days** makes it writable again: the next pickup
+  writes the new end date (the Approve rule above: here, an expired storage, the
+  approval day plus 120) and removes `mc_read_only_at`, then tells the portal
+  (`extended`), which re-mounts the share read-write. Nothing is re-created: the
+  access rule never left. The instance was deleted when the share turned
+  read-only, so the member creates a new one from the portal; `ensure` accepts
+  the share again once `mc_read_only_at` is gone. An approval that lands while
+  the sweep is still deleting the instance (between steps 1 and 3) is harmless
+  for the same reason: the share turns writable, the instance goes, and the
+  member creates a new one.
+
+**After the 15 days, the share is deleted** by `expire`, as before (only the
 sweep calls it), and the member gets a deletion email. Right before deleting,
 the sweep asks the portal again whether a request is waiting or was just
 approved; if so, it does not delete, so an approval on the last day cannot lose
 to the delete. They can create a new, empty storage from the portal.
 
+**Who acts on a share, and what happens when two act at once:**
+
+| Actor                         | What it does to the share                                             | When it meets read-only                                                                                                           |
+| ----------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Storage-term sweep (runner)   | reminds, turns read-only, deletes                                     | the only one that sets read-only or deletes                                                                                       |
+| Pickup (runner, every minute) | creates or reuses the share (`ensure`), applies approvals, reconciles | `ensure` refuses a read-only share; an approval clears read-only                                                                  |
+| Instance (member's, own key)  | mounts the share read-write                                           | deleted in the same sweep run; a create already in flight fails at `ensure`                                                       |
+| Portal file page (copyparty)  | uploads, renames, deletes, downloads                                  | downloads only, by group, and the mount is `ro` underneath                                                                        |
+| Portal reset worker           | empties the share on request                                          | refused while read-only; a reset already running when the share turns read-only fails on the `ro` mount and is reported as failed |
+| Portal MorphoSource transfer  | writes downloads into the share                                       | refused while read-only; a transfer already running fails on the `ro` mount and is reported to the member                         |
+| Portal mount health check     | re-mounts a share whose mount went away                               | re-mounts with the options the portal recorded (`ro` while read-only)                                                             |
+| Admin (portal admin page)     | approves or declines                                                  | an approval clears read-only (as above); a decline leaves it, and the deletion follows on its day                                 |
+
+**Recovering the test share** (amm554, locked on 2026-11-24 under the old
+design): when this ships, a one-off script run by hand on the runner (not code
+left in the runner) re-creates its access rule, moves `mc_locked_at` to
+`mc_read_only_at`, and has the portal mount it read-only. It acts only on that
+share and only while `mc_locked_at` is present, so running it twice changes
+nothing. No other share has passed its end date.
+
 **Admin page** on the portal, for `morphocloud-admins` only:
 
 - every share, with its owner, start and end dates, extensions (and who approved
-  each), state (kept, locked or deleted), last instance use, last file change,
-  space used, and whether an instance is running;
+  each), state (kept, read-only or deleted), last instance use, last file
+  change, space used, and whether an instance is running;
 - the pending requests, with Approve and Decline.
 
 Live usage views come later.
 
 **Record.** The portal's audit table keeps every request, every decision (who,
-when and the note), every lock and every deletion. The end date and the number
-of extensions are also kept on the share as Manila properties (`mc_kept_until`,
-`mc_extensions`), so the record survives a rebuild of the portal. If the two
-ever disagree, the share's Manila properties win.
+when and the note), every change to read-only and every deletion. The end date
+and the number of extensions are also kept on the share as Manila properties
+(`mc_kept_until`, `mc_extensions`), so the record survives a rebuild of the
+portal. If the two ever disagree, the share's Manila properties win.
 
 **Reused from the 2026-10-14 design:**
 
