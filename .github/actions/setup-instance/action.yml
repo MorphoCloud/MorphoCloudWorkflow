@@ -504,7 +504,9 @@ runs:
             || echo "Could not mark $(basename "$f") as trusted" >&2
         done
         # Where the desktop draws the icons: down the top-left corner, 3D
-        # Slicer, then Extend Instance Session, then Home. Without a saved
+        # Slicer, then Home (no Extend Instance Session icon since the
+        # 2026-11-24 decision; one left in MyDrive by an earlier instance is
+        # still placed, after Slicer). Without a saved
         # place the desktop put all three in the middle of the screen and kept
         # them there (instance-278, 2026-11-24). Pixels from the screen's top
         # left; the desktop snaps them to its grid, and the top bar takes the
