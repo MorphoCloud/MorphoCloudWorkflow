@@ -48,8 +48,8 @@ def test_first_tuesdays_are_at_most_35_days_apart_so_36_only_fires_after_a_miss(
 def test_overdue():
     now = 1_800_000_000
     assert bm.overdue(None, now)
-    assert not bm.overdue(now - 35 * DAY, now)
-    assert bm.overdue(now - 37 * DAY, now)
+    assert not bm.overdue(now - 42 * DAY, now)  # 35-day gap + a 7-day wait for hosts
+    assert bm.overdue(now - 44 * DAY, now)
 
 
 def test_image_name_and_flavors_in_turn():
@@ -186,3 +186,18 @@ def test_a_bake_that_found_no_host_is_not_a_failure():
     assert not bm.no_host("BAKE FAILED: setup reported an error")
     assert not bm.no_host("")
     assert bm.RUN_LIMIT == 7 * 86400
+
+
+def test_no_overdue_email_while_a_run_is_still_going(tmp_path, monkeypatch):
+    sent = []
+    monkeypatch.setattr(bm, "HOME", tmp_path)
+    monkeypatch.setattr(bm, "LAST_SUCCESS", tmp_path / "last-success")
+    monkeypatch.setattr(bm, "MAIL_FAILURES", tmp_path / "mail-failures.log")
+    monkeypatch.setattr(bm, "LOCK", tmp_path / "lock")
+    monkeypatch.setattr(
+        bm, "email", lambda subject, _body: sent.append(subject) or True
+    )
+    (tmp_path / "lock").write_text(json.dumps({"pid": 1, "started": "x"}))
+    monkeypatch.setattr(bm, "pid_alive", lambda _p: True)
+    assert bm.main(["--overdue"]) == 0  # never succeeded, but a run holds the lock
+    assert sent == []

@@ -2,6 +2,6 @@
 0 0 1 * * MORPHOCLOUD_DISPATCH_REPO=MorphoCloud/MorphoCloudAnalytics MORPHOCLOUD_DISPATCH_TOKEN_FILE=/home/exouser/.config/morphocloud/analytics-dispatch.pat /home/exouser/morphocloud-dispatch.sh monthly-usage.yml
 # Weekly: email GH_ADMIN_EMAILS if a runner dispatch token is within 4 weeks of expiry
 0 8 * * 1 /home/exouser/check-dispatch-tokens.sh >> /home/exouser/token-expiry.log 2>&1
-# Monthly golden-image bake (STORAGE_REDESIGN_PLAN.md decision 22). Every Tuesday 08:00 UTC; the script goes on only on the first Tuesday of the month (cron cannot say that). Mondays 09:00 UTC: an email when no bake has succeeded for 36 days.
+# Monthly golden-image bake (STORAGE_REDESIGN_PLAN.md decision 22). Every Tuesday 08:00 UTC; the script goes on only on the first Tuesday of the month (cron cannot say that). Mondays 09:00 UTC: an email when no bake has succeeded for 43 days.
 0 8 * * 2 PATH=/home/exouser/venv/bin:/usr/local/bin:/usr/bin:/bin OS_CLOUD=BIO180006_IU /home/exouser/venv/bin/python /home/exouser/bake/bake-monthly.py >> /home/exouser/bake/cron.log 2>&1
 0 9 * * 1 PATH=/home/exouser/venv/bin:/usr/local/bin:/usr/bin:/bin OS_CLOUD=BIO180006_IU /home/exouser/venv/bin/python /home/exouser/bake/bake-monthly.py --overdue >> /home/exouser/bake/cron.log 2>&1

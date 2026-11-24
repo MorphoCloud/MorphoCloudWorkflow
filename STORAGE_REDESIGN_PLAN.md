@@ -796,12 +796,13 @@ switch of the image variables.
 - **A bake that never happens:** a second crontab line, every Monday, runs
   `bake-monthly.py --overdue`. It emails when the last successful run (both
   images baked and checked; the script then writes the time in epoch seconds to
-  `~/bake/last-success`, and an unreadable file counts as never) is more than 36
-  days old: the cron line never fired, every run died, or every run failed. A
-  failed run still emails, but does not count as a success. First Tuesdays are
-  28 to 35 days apart, so 36 days fires only after a missed or failed month. If
-  runner-1 itself is down, the incident store's watchdog already reports the
-  harvester stopped.
+  `~/bake/last-success`, and an unreadable file counts as never) is more than 43
+  days old, unless a run is still going (it emails when it ends). First Tuesdays
+  are 28 to 35 days apart and a run can wait up to 7 days for hosts, so 43 days
+  fires only after a missed or failed month: the cron line never fired, every
+  run died, or every run failed. A failed run still emails, but does not count
+  as a success. If runner-1 itself is down, the incident store's watchdog
+  already reports the harvester stopped.
 - **Retention:** each kind keeps the image the variable names and the one before
   it, so the variable can go back. A run deletes older `morphocloud-share-*`
   images only when all of these hold, read at deletion time:

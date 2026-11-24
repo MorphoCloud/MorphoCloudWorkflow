@@ -66,7 +66,9 @@ MAX_TRIES = 9  # real bake failures per image
 NO_HOST_RE = re.compile(r"Exhausted all hosts|No valid host")
 ROUND_PAUSE = 20 * 60
 RUN_LIMIT = 7 * 86400  # first Tuesdays are at least 28 days apart
-OVERDUE_DAYS = 36  # first Tuesdays are at most 35 days apart
+# First Tuesdays are at most 35 days apart, and a run can wait up to 7 days
+# for hosts before it succeeds: 35 + 7 + 1.
+OVERDUE_DAYS = 43
 LEAK_AGE = 2 * 86400
 NO_HOST = 3  # check-image.sh: Jetstream2 gave no host, nothing was checked
 CHECK_FAILURES = 2  # a check that fails twice is the image's fault
@@ -120,7 +122,7 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def lock_state(lock: Path, alive=pid_alive) -> tuple[str, dict]:
+def lock_state(lock: Path, alive=None) -> tuple[str, dict]:
     """("free", {}), ("alive", info) or ("dead", info): a lock whose process
     is gone was left by a run that died."""
     try:
@@ -130,6 +132,7 @@ def lock_state(lock: Path, alive=pid_alive) -> tuple[str, dict]:
         return "free", {}
     except (ValueError, KeyError, TypeError):
         return "dead", {"pid": None, "started": None}
+    alive = alive or pid_alive
     return ("alive" if alive(pid) else "dead"), info
 
 
@@ -387,7 +390,7 @@ class Run:
             f"exit {r.returncode}",
         )
         saved = self.evidence(r.stdout + r.stderr, tag)
-        if no_host(saved):
+        if no_host(saved + r.stdout + r.stderr):
             self.note(f"{tag}: no host for {flavor}; not counted, will try again")
         else:
             self.tries[kind] += 1
@@ -615,7 +618,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0912, PLR0915 — on
             last = float(LAST_SUCCESS.read_text()) if LAST_SUCCESS.exists() else None
         except ValueError:
             last = None  # unreadable: treated as never, so the email goes out
-        if overdue(last, now):
+        if overdue(last, now) and lock_state(LOCK)[0] != "alive":
+            # A run still waiting for hosts is not overdue; it emails when it ends.
             when = time.strftime("%Y-%m-%d", time.gmtime(last)) if last else "never"
             failures = (
                 MAIL_FAILURES.read_text()[-1500:] if MAIL_FAILURES.exists() else "none"
