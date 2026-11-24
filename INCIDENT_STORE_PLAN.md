@@ -933,24 +933,35 @@ from before it went down.
   workflows already read), with the runner's key and `BatchMode`,
   `StrictHostKeyChecking=yes`. No new key or token.
 - **Validation:** the reply must be one JSON document with `schema` 1 and a
-  `shares` list whose rows have an integer `github_id`. A failed SSH call, a
-  timeout, or truncated or non-JSON output is a failed attempt, never an empty
-  snapshot. The week stays untaken and the next cycle tries again.
+  `shares` list. Every row needs a unique integer `github_id`, a known `state`,
+  byte counts and `extensions` that are null or not negative, a real `start`
+  date, and an `end_date` and `usage_at` that are null or well formed. An empty
+  list after a week that had shares is refused too, because it would record
+  every share as gone. A large drop is accepted, since shares created in the
+  same migration week end in the same week. A failed SSH call, a timeout, or
+  truncated or non-JSON output is a failed attempt, never an empty snapshot. The
+  week stays untaken and the next cycle tries again. The error in the store
+  names the failure only. SSH's own message, which carries the portal's address,
+  goes to the harvester's local log.
 - **Stored:** `storage/YYYY/MM/DD.jsonl` (the snapshot's day). There is one line
   per share: `schema`, `week` (ISO week, `2026-W48`), `taken_at`, plus the
   fields above. A row whose `usage_at` is null or more than 24 hours old gets
   `stale: true`.
-- **Final use:** a share in last week's snapshot that is missing from this
+- **Final use:** a share in one week's snapshot that is missing from the next
   week's has left the states that hold data: its term ended and it is being or
-  has been deleted (a reset empties a share but keeps it). Its last row is
-  appended to `storage/final.jsonl` with `gone_by` (this snapshot's time). This
-  keeps the use of shares that ended their term, which the weekly files alone
-  would lose.
-- **Order:** the snapshot lines, `final.jsonl`, the report and then
-  `state/storage-usage.json` are written in the same cycle and go out in that
-  cycle's one store commit. If the push fails, the next cycle's commit carries
-  them. If a snapshot for the week is already in the store, the step skips it.
-  The analysis also keeps only the last snapshot of each ISO week.
+  has been deleted (a reset empties a share but keeps it). Its last row goes in
+  `storage/final.jsonl` with `gone_by` (the next snapshot's time), so it is up
+  to a week older than the deletion. This keeps the use of shares that ended,
+  which the latest weekly file alone would not show.
+- **Order:** the snapshot goes into the store in one write, whole or not at all.
+  `final.jsonl` and the report are then rewritten from all the snapshots, so
+  they are fully derived, and `state/storage-usage.json` comes last. All of it
+  goes out in that cycle's one store commit; if the push fails, the next cycle's
+  commit carries it. If a snapshot for the week is already in the store (its
+  state write was lost), the step does not call the portal again. It rewrites
+  `final.jsonl`, the report and the state from the snapshots. A crash between
+  writes can therefore neither lose a final row nor repeat one. The analysis
+  keeps only the last snapshot of each ISO week.
 - **Errors:** as for every step. The error goes into `last_error`, the watchdog
   emails the admins, and the other steps go on.
 - **Size and retention:** about 90 rows (the 89 member shares planned in
@@ -983,13 +994,17 @@ standard library only. Rows are counted as follows:
      The total size is what counts against the quota.
 2. **By age:** each share's use by days since `start`, in 0–30, 31–60, 61–90,
    91–120 and more than 120 days, with the same median, 90th percentile and
-   counts for each. Shares with an extension (`extensions` > 0) are a separate
-   group. This shows whether use keeps growing over a term, or levels off well
+   counts for each. Each share is counted once per bin (its latest row in it).
+   Shares with an extension (`extensions` > 0) are only in a separate table,
+   never in the first. Their `start` does not move, so they sit in the later
+   bins. This shows whether use keeps growing over a term, or levels off well
    below 100 GB.
 3. **Final use:** the same figures for the last row of every share in
    `final.jsonl`: what a share held when it ended.
 4. **Counts only.** The report never names anyone, and a group of fewer than 3
-   shares is shown as "fewer than 3". The GitHub ids are in the data for whoever
+   shares is shown as "fewer than 3" with no figures. Totals across groups can
+   still narrow a hidden group down. That is accepted, because the report is
+   only in the admins' private store. The GitHub ids are in the data for whoever
    needs them.
 
 **Privacy.** A GitHub id is a stable pseudonymous key, stored next to each
@@ -1009,10 +1024,12 @@ Only the MorphoCloud admins and the harvester's store token can read it.
 
 **Testing.** Unit tests run the step on fixture `usage` documents: the week
 rule, validation of bad replies, staleness, final use, the report and its
-counts. Test-Instances' portal is shelved, so the live test is on production,
-where this is being built: the gate's `usage` command is run once by hand from
-runner-1, then one harvester cycle runs with the week forced, and the store's
-new files are read back.
+counts, and a crash between the writes. Test-Instances' portal is shelved, so
+the live test is on production, where this is being built. The gate's `usage`
+command is run once by hand from runner-1. The harvester is then reinstalled
+from main, and nothing is forced: the build lands after Monday 13:00 UTC of
+2026-W48, so the first cycle takes that week's real snapshot. The store's new
+files are read back.
 
 **Out of scope:** a breakdown by folder, which would mean reading members'
 files.
