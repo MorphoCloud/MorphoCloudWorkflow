@@ -713,11 +713,12 @@ switch of the image variables.
   the 2026-11-23 bake did: it waits up to hours for a GPU host, and an Actions
   job would hold the runner that long.
 - **When:** a crontab line `0 8 * * 2` (every Tuesday 08:00 UTC, night in the
-  US) whose script goes on only when the day of the month is 7 or less: the
-  first Tuesday. (A cron line with both a day of the month and a weekday fires
-  on either, so the rule is in the script.) A run started by hand (`--now`)
-  skips that rule. The runner is the clock (INSTANCE_DASHBOARD_PLAN.md decision
-  21), not GitHub's schedule.
+  US; runner-1 runs on UTC, and the script counts the day in UTC) whose script
+  goes on only when the day of the month is 7 or less: the first Tuesday. (A
+  cron line with both a day of the month and a weekday fires on either, so the
+  rule is in the script.) A run started by hand (`--now`) skips that rule. The
+  runner is the clock (INSTANCE_DASHBOARD_PLAN.md decision 21), not GitHub's
+  schedule.
 - **One run at a time:** the lock file holds the run's PID and start time. The
   lock is checked before the day rule, so a Tuesday that finds a run still going
   (one waiting out its 48 hours) emails that it skipped. A lock whose PID is
@@ -755,15 +756,20 @@ switch of the image variables.
   - the Desktop has the Slicer launcher and no Extend Instance Session one.
 
   The instance (`mc-bakecheck-…`) is deleted on every exit. A check that gets no
-  host is tried again in the next round; a failed check keeps the image
-  unpromoted and says why.
+  host is tried again in the next round. A failed check is tried once more (an
+  SSH or setup timeout on a slow host is not always the image's fault); a second
+  failure keeps the image unpromoted and says why.
 
 - **Leaks:** `bake-image.sh` and `check-image.sh` delete their instances when
   they finish, and a failed bake's instance is deleted after its evidence is
-  saved. Because the floating-IP policing and the reconciler leave `mc-bake-…`
-  and `mc-bakecheck-…` alone, each run also deletes any such instance older than
-  two days that a crashed run left, and names it in its email. This sweep runs
-  only after the lock check, so it never meets a live run's instance.
+  saved. A run that crashes or is stopped by a signal sends SIGTERM to its bake
+  or check (so the check's own cleanup runs) and deletes the build and check
+  instances it created since it started; so a bake started by hand must not run
+  while the monthly run is going. Because the floating-IP policing and the
+  reconciler leave `mc-bake-…` and `mc-bakecheck-…` alone, each run also deletes
+  any such instance older than two days that a crashed run left, and names it in
+  its email. This sweep runs only after the lock check, so it never meets a live
+  run's instance.
 - **Promotion: by hand** (maintainer, 2026-11-24, "for the time being"). The
   email gives the one command that sets `MORPHOCLOUD_IMAGE_VGPU` and
   `MORPHOCLOUD_IMAGE_REGULAR` on Instances. An image that passed the check but
@@ -783,12 +789,13 @@ switch of the image variables.
   - the promotion command.
 - **A bake that never happens:** a second crontab line, every Monday, runs
   `bake-monthly.py --overdue`. It emails when the last successful run (both
-  images baked and checked; the script then writes `~/bake/last-success`) is
-  more than 36 days old: the cron line never fired, every run died, or every run
-  failed. A failed run still emails, but does not count as a success. First
-  Tuesdays are 28 to 35 days apart, so 36 days fires only after a missed or
-  failed month. If runner-1 itself is down, the incident store's watchdog
-  already reports the harvester stopped.
+  images baked and checked; the script then writes the time in epoch seconds to
+  `~/bake/last-success`, and an unreadable file counts as never) is more than 36
+  days old: the cron line never fired, every run died, or every run failed. A
+  failed run still emails, but does not count as a success. First Tuesdays are
+  28 to 35 days apart, so 36 days fires only after a missed or failed month. If
+  runner-1 itself is down, the incident store's watchdog already reports the
+  harvester stopped.
 - **Retention:** each kind keeps the image the variable names and the one before
   it, so the variable can go back. A run deletes older `morphocloud-share-*`
   images only when all of these hold, read at deletion time:

@@ -68,7 +68,9 @@ backstop is their only clock, which is why it stays in the workflows.
   `main` for `bake-image.sh`, `check-image.sh` and `cloud-config`. Its email
   goes through `admin-alert.yml` with `dispatch.pat`. Log: `~/bake/cron.log`,
   and `~/bake/runs/<date>/` for each run. By hand: `bake-monthly.py --now`; stop
-  a run with `touch ~/bake/STOP`.
+  a run with `touch ~/bake/STOP`. `~/bake/last-success` holds epoch seconds
+  (`date +%s`). Never start `bake-image.sh` by hand while a monthly run is
+  going.
 - [`check-dispatch-logging.py`](check-dispatch-logging.py) — pre-commit: every
   runner-side `gh workflow run` call site must log a `DISPATCH` line (below),
   which is how the harvester tells this clock's runs from a hand dispatch.
