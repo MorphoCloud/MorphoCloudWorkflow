@@ -113,6 +113,15 @@ jobs:
 
       - name: Add expiration labels
         run: |
+          # Share mode: an instance has no expiry of its own. It is deleted
+          # when its storage term ends (expire-shares.yml) or after
+          # MORPHOCLOUD_SHELVED_DELETE_DAYS shelved (delete-long-shelved.yml);
+          # STORAGE_REDESIGN_PLAN.md decisions 7 and 21. Workshop and course
+          # requests carry their own expiration label from their creator.
+          if [[ "$STORAGE_MODE" == "share" ]]; then
+            echo "Share mode: no expiration labels (the storage term governs the instance)"
+            exit 0
+          fi
           # Check if issue already has an expiration label (e.g., from workshop creation)
           existing_expiration=$(gh issue view "$NUMBER" --json labels --jq '[.labels[].name | select(test("^expiration:"))] | length')
 
@@ -140,4 +149,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           NUMBER: ${{ steps.collect_inputs.outputs.issue_number }}
+          STORAGE_MODE: ${{ vars.MORPHOCLOUD_STORAGE_MODE }}
           LADDER: ${{ vars.MORPHOCLOUD_EXPIRATION_LADDER }}

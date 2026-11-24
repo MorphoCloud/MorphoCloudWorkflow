@@ -11,7 +11,6 @@ per comment._
 | `/shelve`          | Shelve (shut down) the instance.                                                                          | Issue creator, Admin |
 | `/unshelve`        | Unshelve (restart) the instance.                                                                          | Issue creator, Admin |
 | `/email`           | Send email to _Issue creator_ with connection URL.                                                        | Issue creator, Admin |
-| `/renew`           | Extend the instance lifespan, while a renewal is left.                                                    | Issue creator, Admin |
 | `/extend`          | Restart the session timer, so the running instance is not shelved automatically for another full session. | Issue creator, Admin |
 | `/create`          | Create the instance.                                                                                      | Issue creator, Admin |
 | `/delete_instance` | Delete the instance.                                                                                      | Issue creator, Admin |
