@@ -886,6 +886,176 @@ files.
   `portal_events` keeps its rows for 400 days, so nothing is lost; the watchdog
   also checks the newest portal record, at one day.
 
+### Storage usage (weekly snapshot)
+
+Asked for by the maintainer on 2026-11-24: is 100 GB per member (decision 1 of
+STORAGE_REDESIGN_PLAN.md) too large or too small? The answer comes from one more
+source of this harvester, not a separate pipeline. The portal serves a small
+read-only report. The harvester owns the schedule, the storage, the retention
+and the analysis. Rows are keyed by GitHub id. No login, name or email is
+stored. Approved by the maintainer on 2026-11-24, with the review of #455 folded
+in.
+
+**What the portal serves.** One read-only command through the runner's existing
+forced-command gate (`mcrunner`, `deploy/mc-data-runner-gate`): `usage`. The
+gate passes it only with no arguments, and the command only reads the `shares`
+table. It prints one JSON document,
+`{"schema": 1, "at": <time>, "shares": [...]}`, with a row for each share in
+state `ready`, `unavailable` or `read_only` (the states that hold data):
+
+| Field        | From the portal's `shares` table                                 |
+| ------------ | ---------------------------------------------------------------- |
+| `github_id`  | the key                                                          |
+| `used_bytes` | measured by the worker (CephFS `rbytes`); null if never measured |
+| `size_bytes` | the share's size (`max_bytes`); null if never measured           |
+| `usage_at`   | when the worker last measured it; null if never                  |
+| `state`      | `ready`, `unavailable` or `read_only`                            |
+| `start`      | the day the member asked for the storage (`requested_at`, UTC)   |
+| `end_date`   | the storage term's end date                                      |
+| `extensions` | approvals applied so far                                         |
+
+`start` is the day the member asked for the storage. The share is created within
+a minute of that, so it is also the day the 120-day term starts
+(STORAGE_REDESIGN_PLAN.md says "from the day it was created": the same day).
+
+The worker measures every mounted share (`ready` and `read_only`) on its health
+pass, once a minute. An `unavailable` share is not mounted, so its figures are
+from before it went down.
+
+**What the harvester does.** A new step, `storage_usage`, in the cycle after
+`platform`, for a source that sets `storage_usage: true` in
+`incident-sources.yml` (production only):
+
+- **When:** the first cycle after Monday 13:00 UTC of each ISO week. The
+  harvester's 5-minute cycle is the clock, so there is no new cron line.
+  `state/storage-usage.json` records the last week taken.
+- **How:** SSH to the target named in `~/mc-data/portal_target` (the file the
+  workflows already read), with the runner's key and `BatchMode`,
+  `StrictHostKeyChecking=yes`. No new key or token.
+- **Validation:** the reply must be one JSON document with `schema` 1 and a
+  `shares` list. Every row needs a unique integer (not boolean) `github_id`, a
+  known `state`, byte counts and `extensions` that are null or not negative, a
+  real `start` date, and an `end_date` and `usage_at` that are null or well
+  formed. An empty list after a week that had shares is refused too, because it
+  would record every share as gone. A large drop is accepted, since shares
+  created in the same migration week end in the same week. A failed SSH call, a
+  timeout, or truncated or non-JSON output is a failed attempt, never an empty
+  snapshot. The week stays untaken and the next cycle tries again. The error in
+  the store names the failure only. SSH's own message, which carries the
+  portal's address, goes to the harvester's local log.
+- **Stored:** `storage/YYYY/MM/DD.jsonl` (the snapshot's day). There is one line
+  per share: `schema`, `week` (ISO week, `2026-W48`), `taken_at`, plus the
+  fields above. A row whose `usage_at` is null or more than 24 hours old gets
+  `stale: true`.
+- **Final use:** a share in one stored snapshot that is missing from the next
+  stored snapshot, and is not in the latest one, has left the states that hold
+  data (a reset empties a share but keeps it, so it stays). A share that comes
+  back was not gone and gets no final row. Each share has one final row, at its
+  last departure. That row is its last stored row with `gone_by` (the next
+  snapshot's time), so it is up to a week older than the departure. It goes in
+  `storage/final.jsonl`. This keeps the use of shares that left, which the
+  latest weekly file alone would not show.
+- **Order:** the snapshot goes into the store in one write, whole or not at all.
+  `final.jsonl` and the report are then rewritten from all the snapshots, so
+  they are fully derived, and `state/storage-usage.json` comes last. All of it
+  goes out in that cycle's one store commit; if the push fails, the next cycle's
+  commit carries it. If a snapshot for the week is already in the store (its
+  state write was lost), the step does not call the portal again. It rewrites
+  `final.jsonl`, the report and the state from the snapshots. A crash between
+  writes can therefore neither lose a final row nor repeat one. The analysis
+  keeps only the last snapshot of each ISO week. A week taken with a bad
+  snapshot (a bug) is taken again by hand: delete that snapshot's file
+  (`storage/YYYY/MM/DD.jsonl` for its day) and `state/storage-usage.json` from
+  the store. The step checks the state first, then the store, so both must go.
+  The next cycle then takes the week afresh.
+- **Errors:** as for every step. The error goes into `last_error`, the watchdog
+  emails the admins, and the other steps go on.
+- **Size and retention:** about 90 rows (the 89 member shares planned in
+  STORAGE_REDESIGN_PLAN.md) × 250 bytes × 52 weeks, about 1 MB a year. It is
+  kept with the rest of the store, with no pruning.
+- **Test-Instances:** no step (`storage_usage` is not set), because its portal
+  is shelved. See "Testing" below.
+
+**What it answers.** The same step rewrites `storage/report.md` from every
+snapshot, so the report is fully derived from the `.jsonl` files and the
+thresholds can change later with the report regenerated. It uses Python's
+standard library only. Rows are counted as follows:
+
+- **Measured:** `used_bytes` and `size_bytes` both known, the size above zero,
+  and not stale. Only measured rows enter the median, the percentiles and the
+  threshold counts. Stale and unmeasured rows are counted on their own line,
+  never as "less than 5 GB". The worker's health pass runs every 60 seconds
+  (`HEALTH_EVERY` in the portal's `admin/worker.py`) and measures every mounted
+  share, so 24 hours without a measurement means the share was not mounted.
+- **New:** a share less than 7 days from its `start` is left out of the "less
+  than 5 GB" and "less than 10 GB" counts (a new member has not uploaded yet),
+  and counted on its own line.
+- **Read-only:** a share in its 15 read-only days is in the weekly figures and
+  counted on its own line.
+
+1. **Each week:**
+   - the number of shares, and how many are measured, stale, new and read-only;
+   - the median and 90th percentile of the GB used;
+   - how many shares use more than 80% of their size, and how many 95% or more
+     (at the cap: use alone cannot show how much more those members wanted);
+   - how many use less than 5 GB, and how many less than 10 GB;
+   - the total used and the total size, each against the allocation's 10,000 GB.
+     The total size is what counts against the quota.
+2. **By age:** each share's use by days since `start`, in 0–30, 31–60, 61–90,
+   91–120 and more than 120 days, with the same median, 90th percentile and
+   counts for each. Each share is counted once per bin (its latest row in it). A
+   share is extended or not by its latest row. One whose latest row has an
+   extension (`extensions` > 0) is only in the separate Extended age table, with
+   all its rows, including its use before the extension, in the same bins. The
+   No-extension age table therefore describes shares never extended so far, and
+   a share extended later leaves its early bins. This shows whether use keeps
+   growing over a term, or levels off well below 100 GB.
+3. **Final use:** the same figures for the final row of every share in
+   `final.jsonl`: what a share held when it left the data-holding states. A
+   final row is measured if both byte counts are known and the size is above
+   zero, whether or not it is stale, because a share that went down first has a
+   stale last row. A member whose storage ended and who asks again later keeps
+   the same GitHub id, so the first term gets no final row once the new one
+   appears. That is accepted for a weekly admin figure.
+4. **Counts only.** The report never names anyone, and a group of fewer than 3
+   measured shares shows "fewer than 3" (when it has 1 or 2 shares) and no
+   figures. The floor applies to the figures. The read-only, new and stale count
+   lines are counts only and are always shown, for the same admin-only reason as
+   below. Totals across groups can still narrow a hidden group down. That is
+   accepted, because the report is only in the admins' private store. The GitHub
+   ids are in the data for whoever needs them.
+
+**Privacy.** A GitHub id is a stable pseudonymous key, stored next to each
+member's use and term dates. The store (`MorphoCloud/Incidents`) is private.
+Only the MorphoCloud admins and the harvester's store token can read it.
+
+**Changes this needs:**
+
+- Portal (morphocloud-data-portal):
+  - the `usage` command in `admin/cli.py`;
+  - its line in the gate and the sudoers rule;
+  - tests (`tests/test_runner_gate.py` already checks that the gate and sudoers
+    agree, and a new test checks that the command only reads).
+- Harvester (MWF):
+  - the step in `harvest-incidents.py`, with tests;
+  - `storage_usage: true` on the production source in `incident-sources.yml`.
+
+**Testing.** Unit tests run the step on fixture `usage` documents: the week
+rule, validation of bad replies, staleness, final use, the report and its
+counts, and a crash between the writes. Test-Instances' portal is shelved, so
+the live test is on production, where this is being built. The gate's `usage`
+command is run once by hand from runner-1. The harvester is then reinstalled
+from main, and nothing is forced: the build lands after Monday 13:00 UTC of
+2026-W48, so the first cycle takes that week's real snapshot. The store's new
+files are read back.
+
+**Out of scope:** a breakdown by folder, which would mean reading members'
+files.
+
+**Confirmed by the maintainer:** the snapshot time (Monday 13:00 UTC) and the
+thresholds (80% of the size, 5 GB and 10 GB). The 95% count was added from the
+review.
+
 ### Volume
 
 Measured on Instances over 2026-10-09 to 11-07: about 1,100 runs a day, about
