@@ -201,3 +201,28 @@ def test_no_overdue_email_while_a_run_is_still_going(tmp_path, monkeypatch):
     monkeypatch.setattr(bm, "pid_alive", lambda _p: True)
     assert bm.main(["--overdue"]) == 0  # never succeeded, but a run holds the lock
     assert sent == []
+
+
+def test_the_email_names_the_branch(tmp_path, monkeypatch):
+    """gh workflow run without --ref asks for the default branch, which the
+    dispatch token cannot read: the install test's email failed that way."""
+    calls = []
+    token = tmp_path / "dispatch.pat"
+    token.write_text("x")
+    monkeypatch.setattr(bm, "TOKEN_FILE", token)
+    monkeypatch.setattr(
+        bm.subprocess,
+        "run",
+        lambda args, **_k: calls.append(args)
+        or bm.subprocess.CompletedProcess(args, 0, "", ""),
+    )
+    assert bm.email("subject", "body")
+    assert calls[0][:6] == [
+        "gh",
+        "workflow",
+        "run",
+        "admin-alert.yml",
+        "-R",
+        "MorphoCloud/Instances",
+    ]
+    assert calls[0][6:8] == ["--ref", "main"]
