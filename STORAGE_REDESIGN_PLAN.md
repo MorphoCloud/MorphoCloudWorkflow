@@ -513,10 +513,12 @@ course-intake Approve links), so a link that acted by itself would approve every
 request. No new token or GitHub app is needed: the portal's own sign-in and the
 runner's existing SSH path carry the decision.
 
-- **Approve** sets the end date to the day of approval plus 120 days (revised
-  2026-11-24; was: the old end date plus 120, which gave a late request up to 15
-  days less). The next runner pickup writes it on the share, and the member gets
-  an email with the new date.
+- **Approve** sets the end date to the later of the current end date and the day
+  of approval, plus 120 days (revised 2026-11-24; was: the current end date plus
+  120, which gave a storage approved late in its read-only days up to 15 days
+  less). An approval before the end date adds 120 days to it; an approval of an
+  expired storage gives 120 days from the approval. The next runner pickup
+  writes it on the share, and the member gets an email with the new date.
 - **Decline** keeps the end date. The member gets an email with the admin's
   note, if there is one.
 - There is no limit on the number of extensions for now.
@@ -532,14 +534,17 @@ runner's existing SSH path carry the decision.
 - **Admins are reminded.** A request waiting more than 3 days is emailed to the
   admins again by every daily sweep until an admin decides, with the same link
   to the admin page, so a waiting request cannot keep a share for ever by being
-  forgotten. **After the end date, the share is read-only for 15 days** (revised
-  2026-11-24; was: locked, with its access rule revoked, so a member could get
-  files back only through an admin's approval). The member downloads what they
-  need from the portal's file page without asking anyone, and can still ask to
-  keep the storage.
+  forgotten.
+
+**After the end date, the share is read-only for 15 days** (revised 2026-11-24;
+was: locked, with its access rule revoked, so a member could get files back only
+through an admin's approval). The member downloads what they need from the
+portal's file page without asking anyone, and can still ask to keep the storage.
 
 - **When:** the share is kept through its whole end date; the first sweep after
-  that day (noon UTC the next day) turns it read-only, in one run:
+  that day (noon UTC the next day) turns it read-only, in one run. Right before,
+  it asks the portal again: a share with an approval not yet applied is left for
+  the pickup, which applies it within a minute.
   1. the runner marks the share read-only (Manila property `mc_read_only_at`,
      ISO-8601 UTC; it replaces `mc_locked_at`); from then on `ensure` refuses
      the share, so no new instance gets a writable mount;
@@ -550,22 +555,32 @@ runner's existing SSH path carry the decision.
      share-mode delete does) and closes its request issue;
   4. the member gets one email: the storage expired on <end date>, it is
      read-only until <deletion date>, download what you need, or ask to keep it.
+- **The deletion date is fixed by the end date:** the share stays read-only
+  through the end date plus 15 days, and the first sweep after that day deletes
+  it. A missed sweep therefore never moves the date in the member's email.
 - **Enforced by the portal only** (the maintainer's choice): the share's access
-  rule stays as it is. Members never see the storage's credentials; the portal
-  holds them, and the instance that held them is deleted in step 3.
+  rule stays read-write in Manila. The portal holds the storage's key, and the
+  instance that held it is deleted in step 3. **Accepted risk:** a member has
+  root on their own instance, so one who copied the key earlier could still
+  write to their own storage from elsewhere during the 15 days. Only their own
+  files are at stake, and nobody outside gets the key. If real enforcement is
+  wanted later, Manila can switch the rule to read-only (`access_level=ro`)
+  instead.
 - **The portal shows** "Your storage expired on <date>. It is read-only until
   <date>: download what you need. After that it is deleted." with **Open my
   files** and **Ask to keep my storage**.
 - **An approval during the 15 days** makes it writable again: the next pickup
   writes the new end date (approval day plus 120) and removes `mc_read_only_at`,
   then tells the portal (`extended`), which re-mounts the share read-write.
-  Nothing is re-created: the access rule never left.
+  Nothing is re-created: the access rule never left. The instance was deleted
+  when the share turned read-only, so the member creates a new one from the
+  portal; `ensure` accepts the share again once `mc_read_only_at` is gone.
 
-**After 15 days read-only, the share is deleted** by `expire`, as before (only
-the sweep calls it), and the member gets a deletion email. Right before
-deleting, the sweep asks the portal again whether a request is waiting or was
-just approved; if so, it does not delete, so an approval on the last day cannot
-lose to the delete. They can create a new, empty storage from the portal.
+**After the 15 days, the share is deleted** by `expire`, as before (only the
+sweep calls it), and the member gets a deletion email. Right before deleting,
+the sweep asks the portal again whether a request is waiting or was just
+approved; if so, it does not delete, so an approval on the last day cannot lose
+to the delete. They can create a new, empty storage from the portal.
 
 **Who acts on a share, and what happens when two act at once:**
 
@@ -581,9 +596,11 @@ lose to the delete. They can create a new, empty storage from the portal.
 | Admin (portal admin page)     | approves or declines                                                  | an approval clears read-only (as above); a decline leaves it, and the deletion follows on its day                                 |
 
 **Recovering the test share** (amm554, locked on 2026-11-24 under the old
-design): when this ships, the runner re-creates its access rule once, moves
-`mc_locked_at` to `mc_read_only_at`, and the portal mounts it read-only. No
-other share has passed its end date.
+design): when this ships, a one-off script run by hand on the runner (not code
+left in the runner) re-creates its access rule, moves `mc_locked_at` to
+`mc_read_only_at`, and has the portal mount it read-only. It acts only on that
+share and only while `mc_locked_at` is present, so running it twice changes
+nothing. No other share has passed its end date.
 
 **Admin page** on the portal, for `morphocloud-admins` only:
 
