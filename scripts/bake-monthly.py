@@ -51,14 +51,21 @@ TOKEN_FILE = Path(
 ).expanduser()
 
 KINDS = ("vgpu", "regular")
-FLAVORS = {"vgpu": ("g3.large", "g3.medium"), "regular": ("g3.xl", "g4.xl")}
+# First choice, then the fallback, in turn (maintainer, 2026-11-24: g3.medium
+# first, it is the easiest vGPU flavor to get). The regular image needs a
+# passthrough GPU for its driver.
+FLAVORS = {"vgpu": ("g3.medium", "g3.large"), "regular": ("g3.xl", "g4.xl")}
 VARIABLE = {"vgpu": "MORPHOCLOUD_IMAGE_VGPU", "regular": "MORPHOCLOUD_IMAGE_REGULAR"}
 IMAGE_RE = re.compile(r"^morphocloud-share-(vgpu|regular)-(\d{8})$")
 LEAK_RE = re.compile(r"^mc-bake(check)?-\d{8}-\d{6}$")
 
-MAX_TRIES = 9  # per image, bake and check together
+# A bake that fails for lack of a host is not counted: Jetstream2's GPU
+# shortage must not fail a month's bake (maintainer, 2026-11-24). Only real
+# failures count, and the run keeps trying for up to RUN_LIMIT.
+MAX_TRIES = 9  # real bake failures per image
+NO_HOST_RE = re.compile(r"Exhausted all hosts|No valid host")
 ROUND_PAUSE = 20 * 60
-RUN_LIMIT = 48 * 3600
+RUN_LIMIT = 7 * 86400  # first Tuesdays are at least 28 days apart
 OVERDUE_DAYS = 36  # first Tuesdays are at most 35 days apart
 LEAK_AGE = 2 * 86400
 NO_HOST = 3  # check-image.sh: Jetstream2 gave no host, nothing was checked
@@ -83,10 +90,16 @@ def image_name(kind: str, day: dt.date) -> str:
     return f"morphocloud-share-{kind}-{day:%Y%m%d}"
 
 
-def flavor_for(kind: str, tries_done: int) -> str:
-    """The flavors of a kind in turn, one per try."""
+def flavor_for(kind: str, attempts_done: int) -> str:
+    """The flavors of a kind in turn, one per attempt."""
     pair = FLAVORS[kind]
-    return pair[tries_done % len(pair)]
+    return pair[attempts_done % len(pair)]
+
+
+def no_host(evidence: str) -> bool:
+    """A bake that failed because Jetstream2 had no host for the flavor (the
+    build instance's fault message), not because of the bake."""
+    return bool(NO_HOST_RE.search(evidence))
 
 
 def pid_alive(pid: int) -> bool:
@@ -271,7 +284,8 @@ class Run:
         self.day = day
         self.dir = workdir
         self.names = {k: image_name(k, day) for k in KINDS}
-        self.tries = dict.fromkeys(KINDS, 0)
+        self.attempts = dict.fromkeys(KINDS, 0)  # bakes and checks started
+        self.tries = dict.fromkeys(KINDS, 0)  # real bake failures
         self.check_failures = dict.fromkeys(KINDS, 0)
         self.started = time.time()
         self.state = dict.fromkeys(KINDS, "bake")  # bake -> check -> done | failed
@@ -303,12 +317,12 @@ class Run:
     def image_exists(self, name: str) -> bool:
         return self.image_status(name) == "active"
 
-    def evidence(self, out: str, tag: str) -> None:
+    def evidence(self, out: str, tag: str) -> str:
         """A failed bake keeps its build instance: save what Nova knows, then
-        delete it."""
+        delete it. Returns what was saved."""
         m = re.findall(r"^Build instance kept for diagnosis: (\S+)$", out, re.M)
         if not m:
-            return
+            return ""
         name = m[-1]
         path = self.dir / f"evidence-{name}.txt"
         parts = []
@@ -325,15 +339,17 @@ class Run:
                 check=False,
             )
             parts.append(f"== {' '.join(args)}\n{r.stdout}{r.stderr}")
-        path.write_text("\n".join(parts))
+        text = "\n".join(parts)
+        path.write_text(text)
         sh("openstack", "server", "delete", "--wait", name, timeout=600, check=False)
         self.note(f"{tag}: evidence in {path.name}; {name} deleted")
+        return text
 
     def bake(self, kind: str, src: Path) -> None:
-        flavor = flavor_for(kind, self.tries[kind])
-        self.tries[kind] += 1
+        flavor = flavor_for(kind, self.attempts[kind])
+        self.attempts[kind] += 1
         name = self.names[kind]
-        tag = f"bake {name} on {flavor} (try {self.tries[kind]}/{MAX_TRIES})"
+        tag = f"bake {name} on {flavor} (attempt {self.attempts[kind]})"
         if self.image_status(name) not in (None, "active"):
             # A bake that died after Glance created the image leaves it
             # queued, saving or killed: never checked, never promoted.
@@ -349,7 +365,7 @@ class Run:
             ],
             timeout=3 * 3600,
         )
-        (self.dir / f"bake-{kind}-{flavor}-try{self.tries[kind]}.log").write_text(
+        (self.dir / f"bake-{kind}-{flavor}-{self.attempts[kind]}.log").write_text(
             r.stdout + r.stderr
         )
         if r.returncode == 0 and self.image_exists(name):
@@ -370,14 +386,18 @@ class Run:
             (x for x in r.stderr.splitlines() if x.startswith("BAKE FAILED")),
             f"exit {r.returncode}",
         )
-        self.note(f"{tag}: {why}")
-        self.evidence(r.stdout + r.stderr, tag)
+        saved = self.evidence(r.stdout + r.stderr, tag)
+        if no_host(saved):
+            self.note(f"{tag}: no host for {flavor}; not counted, will try again")
+        else:
+            self.tries[kind] += 1
+            self.note(f"{tag}: {why} (failure {self.tries[kind]}/{MAX_TRIES})")
 
     def check(self, kind: str, src: Path) -> None:
-        flavor = flavor_for(kind, self.tries[kind])
-        self.tries[kind] += 1
+        flavor = flavor_for(kind, self.attempts[kind])
+        self.attempts[kind] += 1
         name = self.names[kind]
-        tag = f"check {name} on {flavor} (try {self.tries[kind]}/{MAX_TRIES})"
+        tag = f"check {name} on {flavor} (attempt {self.attempts[kind]})"
         r = run_child(
             [
                 "bash",
@@ -388,14 +408,14 @@ class Run:
             ],
             timeout=2 * 3600,
         )
-        (self.dir / f"check-{kind}-{flavor}-try{self.tries[kind]}.log").write_text(
+        (self.dir / f"check-{kind}-{flavor}-{self.attempts[kind]}.log").write_text(
             r.stdout + r.stderr
         )
         if r.returncode == 0:
             self.note(f"{tag}: passed")
             self.state[kind] = "done"
         elif r.returncode == NO_HOST:
-            self.note(f"{tag}: no host, will try again")
+            self.note(f"{tag}: no host for {flavor}; not counted, will try again")
         else:
             why = next(
                 (
@@ -424,7 +444,7 @@ class Run:
                 if self.state[kind] in ("done", "failed"):
                     continue
                 if self.tries[kind] >= MAX_TRIES:
-                    self.note(f"{self.names[kind]}: {MAX_TRIES} tries used")
+                    self.note(f"{self.names[kind]}: {MAX_TRIES} real bake failures")
                     self.state[kind] = "failed"
                     continue
                 if self.state[kind] == "bake":
@@ -434,7 +454,7 @@ class Run:
             if all(s in ("done", "failed") for s in self.state.values()):
                 return
             if time.time() + ROUND_PAUSE > end:
-                self.note("48 hours used")
+                self.note("7 days used")
                 return
             time.sleep(ROUND_PAUSE)
 
@@ -555,7 +575,11 @@ def summary(run: Run, ok: bool, crash: str | None) -> tuple[str, str]:
     lines = [
         f"Run of {run.day} on {os.uname().nodename}. MWF main {run.mwf_sha[:7]}, exosphere {run.exo_sha[:8]}.",
         "",
-        *(f"{names[k]}: {run.state[k]} ({run.tries[k]} tries)" for k in KINDS),
+        *(
+            f"{names[k]}: {run.state[k]} ({run.attempts[k]} attempts, "
+            f"{run.tries[k]} real bake failures)"
+            for k in KINDS
+        ),
         "",
     ]
     if ok:

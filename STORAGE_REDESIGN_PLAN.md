@@ -721,7 +721,7 @@ switch of the image variables.
   schedule.
 - **One run at a time:** the lock file holds the run's PID and start time. The
   lock is checked before the day rule, so a Tuesday that finds a run still going
-  (one waiting out its 48 hours) emails that it skipped. A lock whose PID is
+  (one still waiting for a host) emails that it skipped. A lock whose PID is
   gone is a run that died: it is reported by email and cleared, and the run that
   found it goes on. `touch ~/bake/STOP` ends a run.
 - **What it bakes:** both images, from MWF `main` at that moment. The script
@@ -734,19 +734,25 @@ switch of the image variables.
   created the script adds `mc_mwf_sha` and `mc_exosphere_sha` as Glance
   properties (`bake-image.sh` already sets `mc_baked_on_flavor` and
   `mc_baked_at`).
-- **Flavors and retries,** as on 2026-11-23:
-  - vGPU image: g3.large and g3.medium on alternate tries;
-  - regular image: g3.xl, then g4.xl on alternate tries.
+- **Flavors and retries:** the first choice, then the fallback, on alternate
+  attempts (maintainer, 2026-11-24: g3.medium first, the easiest vGPU flavor to
+  get):
+  - vGPU image: g3.medium, then g3.large;
+  - regular image: g3.xl, then g4.xl (it needs a passthrough GPU for its
+    driver).
 
-  A failed try saves the evidence (server, events, console) and deletes the
-  build instance. The next try is 20 minutes later. The run stops when both
-  images are checked, after 9 tries per image (bake and check together), or
-  after 48 hours.
+  A failed bake saves the evidence (server, events, console) and deletes the
+  build instance. The next attempt is 20 minutes later. **Jetstream2's GPU
+  shortage must not fail a month's bake** (maintainer, 2026-11-24): a bake or a
+  check that finds no host ("Exhausted all hosts", "No valid host") is not
+  counted, and the run keeps trying. Only real failures count: 9 failed bakes,
+  or 2 failed checks, end an image. The run stops when both images are checked,
+  or after 7 days (first Tuesdays are at least 28 days apart).
 
 - **Check before anyone uses it** (`scripts/check-image.sh`): for each new
   image, one instance is created from it with the cloud-config `/create` uses
   for a baked image (package refresh and upgrade off), on a flavor of its kind
-  (vGPU image: g3.large or g3.medium; regular image: g3.xl or g4.xl). It passes
+  (vGPU image: g3.medium or g3.large; regular image: g3.xl or g4.xl). It passes
   when:
   - setup completes, with no failed Slicer extension;
   - `nvidia-smi` lists the GPU;

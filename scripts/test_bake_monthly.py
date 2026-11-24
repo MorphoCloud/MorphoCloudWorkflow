@@ -57,9 +57,9 @@ def test_image_name_and_flavors_in_turn():
         bm.image_name("vgpu", dt.date(2026, 12, 1)) == "morphocloud-share-vgpu-20261201"
     )
     assert [bm.flavor_for("vgpu", i) for i in range(3)] == [
-        "g3.large",
         "g3.medium",
         "g3.large",
+        "g3.medium",
     ]
     assert [bm.flavor_for("regular", i) for i in range(3)] == [
         "g3.xl",
@@ -172,3 +172,17 @@ def test_an_unreadable_last_success_still_sends_the_overdue_email(
     (tmp_path / "last-success").write_text(str(__import__("time").time()))
     assert bm.main(["--overdue"]) == 0
     assert sent == []
+
+
+def test_a_bake_that_found_no_host_is_not_a_failure():
+    """Jetstream2's GPU shortage must not fail a month's bake: only real
+    failures use up MAX_TRIES (maintainer, 2026-11-24)."""
+    fault = (
+        '"fault": {"message": "Exceeded maximum number of retries. Exhausted all '
+        'hosts available for retrying build failures for instance d44e"}'
+    )
+    assert bm.no_host(fault)
+    assert bm.no_host("No valid host was found. There are not enough hosts available.")
+    assert not bm.no_host("BAKE FAILED: setup reported an error")
+    assert not bm.no_host("")
+    assert bm.RUN_LIMIT == 7 * 86400
