@@ -127,7 +127,13 @@ def parse_rule(r: dict) -> tuple[str, Rule]:
         a, _, b = ports.partition(":")
         pmin, pmax = int(a), int(b or a)
     ether = r.get("Ethertype") or "IPv4"
-    remote = r.get("IP Range") or (ANY6 if ether == "IPv6" else ANY4)
+    # A rule whose source is another security group (or an address group) has
+    # no IP range; it must never compare equal to an "anywhere" rule.
+    other = r.get("Remote Security Group") or r.get("Remote Address Group")
+    if other:
+        remote = f"group:{other}"
+    else:
+        remote = r.get("IP Range") or (ANY6 if ether == "IPv6" else ANY4)
     proto = r.get("IP Protocol") or None
     return r["ID"], Rule(r["Direction"], ether, proto, pmin, pmax, remote)
 
@@ -203,7 +209,9 @@ def follow(
     for a in list(missing):
         if a in resolved or a in remove or a not in current:
             missing.pop(a)
-    return add, remove, State(missing, 0, state.last_alert)
+    # A good run ends any problem episode: the next one alerts at its own
+    # FAIL_RUNS-th run, not a day after the last alert.
+    return add, remove, State(missing, 0, 0.0)
 
 
 def problem_alert_due(state: State, now: float) -> bool:
@@ -407,12 +415,41 @@ def cmd_groups(apply: bool) -> int:
         return 0
 
 
+def proxy_rules_now(
+    rules: list[tuple[str, Rule]],
+) -> tuple[dict[str, str], list[tuple[str, Rule]]]:
+    """Split mc-instance's port-49528 ingress rules into the proxy's own (one
+    IPv4 /32 rule per address: address -> rule id) and strays (duplicates, a
+    wider range, IPv6, a remote group), which only the proxy may not need."""
+    mine: dict[str, str] = {}
+    strays: list[tuple[str, Rule]] = []
+    for rid, r in rules:
+        if r.direction != "ingress" or r.port_min != PROXY_PORT:
+            continue
+        addr = r.remote.removesuffix("/32")
+        proxy_form = (
+            r.protocol == "tcp"
+            and r.port_max == PROXY_PORT
+            and r.ethertype == "IPv4"
+            and r.remote.endswith("/32")
+            and addr not in mine
+        )
+        if proxy_form:
+            mine[addr] = rid
+        else:
+            strays.append((rid, r))
+    return mine, strays
+
+
 def cmd_proxy_check() -> int:
     with locked(wait=False) as ok:
         if not ok:
             return 0  # a groups run is writing; the next hour checks again
         state = State.load(STATE)
         now = time.time()
+        done: list[str] = []  # every rule change made this run, for the email
+        resolved: set[str] = set()
+        problem: str | None = None
         try:
             gid = group_id(INSTANCE_GROUP)
             if gid is None:
@@ -420,42 +457,47 @@ def cmd_proxy_check() -> int:
             resolved = resolve()
             problem = validate(resolved)
             if problem is None:
-                rules = group_rules(gid)
-                current = {
-                    r.remote.removesuffix("/32"): rid
-                    for rid, r in rules
-                    if r.direction == "ingress"
-                    and r.protocol == "tcp"
-                    and r.port_min == PROXY_PORT
-                }
-                add, remove, new = follow(resolved, set(current), state)
-                for a in sorted(add):
+                current, strays = proxy_rules_now(group_rules(gid))
+                add, remove, state = follow(resolved, set(current), state)
+                for a in sorted(add):  # add first: no moment without the proxy
                     create_rule(gid, tcp_in(PROXY_PORT, f"{a}/32"))
+                    done.append(f"added {a}")
                 for a in sorted(remove):
                     delete_rule(current[a])
-                new.save(STATE)
-                if add or remove:
-                    after = sorted((set(current) | add) - remove)
-                    msg = (
-                        f"proxy {PROXY_HOST} moved: rules for port {PROXY_PORT} in {INSTANCE_GROUP} "
-                        f"were {sorted(current)}, added {sorted(add)}, removed {sorted(remove)}, now {after}"
+                    done.append(
+                        f"removed {a} (missing from {PROXY_HOST} for {MISSING_RUNS} runs)"
                     )
-                    log(msg)
-                    email(
-                        "MorphoCloud: Exosphere's proxy address changed; the web-desktop rule was updated",
-                        msg + "\n\nNothing to do: the rule was updated automatically "
-                        "(NETWORK_SECURITY_PLAN.md). Members' web desktops work through the new address.",
+                for rid, r in strays:  # only the proxy may reach 49528
+                    delete_rule(rid)
+                    done.append(
+                        f"removed a rule that is not the proxy's: {r.describe()}"
                     )
-                return 0
         except Exception as e:
             problem = f"{type(e).__name__}: {e}"
+        if done:
+            # Sent even when a later call failed, so no change goes unreported.
+            msg = (
+                f"{PROXY_HOST} resolves to {sorted(resolved)}; port {PROXY_PORT} rules in {INSTANCE_GROUP}: "
+                + "; ".join(done)
+            )
+            log(msg)
+            email(
+                "MorphoCloud: Exosphere's proxy address changed; the web-desktop rule was updated",
+                msg
+                + "\n\nNothing to do: the rule was updated automatically (NETWORK_SECURITY_PLAN.md)."
+                + (f"\n\nThe run then failed: {problem}" if problem else ""),
+            )
+        if problem is None:
+            state.save(STATE)
+            return 0
         state.failures += 1
-        log(f"problem (run {state.failures} in a row), nothing changed: {problem}")
+        log(
+            f"problem (run {state.failures} in a row){'' if done else ', nothing changed'}: {problem}"
+        )
         if problem_alert_due(state, now) and email(
             "MorphoCloud: the hourly check of Exosphere's proxy address cannot update the rule",
-            f"{problem}\n\n{state.failures} consecutive hourly runs on runner-1 found this; "
-            f"the 49528 rules of {INSTANCE_GROUP} were left as they are. Log: ~/netsec/proxy-check.log "
-            "(NETWORK_SECURITY_PLAN.md).",
+            f"{problem}\n\n{state.failures} consecutive hourly runs on runner-1 found this. "
+            f"Log: ~/netsec/proxy-check.log (NETWORK_SECURITY_PLAN.md).",
         ):
             state.last_alert = now
         state.save(STATE)

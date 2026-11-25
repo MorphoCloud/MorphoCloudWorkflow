@@ -209,3 +209,79 @@ def test_proxy_check_updates_rules_and_emails(tmp_path, monkeypatch):
         assert ns.tcp_in(49528, "149.165.1.9/32") in created
         assert deleted == ([] if run < ns.MISSING_RUNS else ["old"])
     assert len(sent) == ns.MISSING_RUNS
+
+
+def test_a_rule_from_another_group_is_not_an_anywhere_rule():
+    r = row("g", "ingress", "IPv4", "tcp", "22:22", None)
+    r["Remote Security Group"] = "abc123"
+    _, rule = ns.parse_rule(r)
+    assert rule != ns.tcp_in(22)
+    add, delete = ns.plan_group([("g", rule)], [ns.tcp_in(22)])
+    assert add == [ns.tcp_in(22)]
+    assert [rid for rid, _ in delete] == ["g"]
+
+
+def test_proxy_rules_now_separates_strays():
+    rules = [
+        ("p", ns.tcp_in(49528, f"{PROXY}/32")),
+        ("dup", ns.tcp_in(49528, f"{PROXY}/32")),
+        ("wide", ns.tcp_in(49528, "0.0.0.0/0")),
+        ("v6", ns.Rule("ingress", "IPv6", "tcp", 49528, 49528, "::/0")),
+        ("ssh", ns.tcp_in(22)),
+    ]
+    mine, strays = ns.proxy_rules_now(rules)
+    assert mine == {PROXY: "p"}
+    assert sorted(rid for rid, _ in strays) == ["dup", "v6", "wide"]
+
+
+def _fake_world(monkeypatch, tmp_path, rules, delete_fails=False):
+    monkeypatch.setattr(ns, "HOME", tmp_path)
+    monkeypatch.setattr(ns, "LOCK", tmp_path / "lock")
+    monkeypatch.setattr(ns, "STATE", tmp_path / "state.json")
+    monkeypatch.setattr(ns, "group_id", lambda *_: "gid")
+    monkeypatch.setattr(ns, "resolve", lambda *_: {PROXY})
+    monkeypatch.setattr(ns, "group_rules", lambda *_: rules)
+    log = {"created": [], "deleted": [], "sent": []}
+
+    def delete(rid):
+        if delete_fails:
+            msg = "api down"
+            raise RuntimeError(msg)
+        log["deleted"].append(rid)
+
+    monkeypatch.setattr(ns, "create_rule", lambda _gid, r: log["created"].append(r))
+    monkeypatch.setattr(ns, "delete_rule", delete)
+    monkeypatch.setattr(ns, "email", lambda s, b: log["sent"].append((s, b)) or True)
+    return log
+
+
+def test_proxy_check_removes_a_stray_rule_and_emails(tmp_path, monkeypatch):
+    log = _fake_world(
+        monkeypatch,
+        tmp_path,
+        [("p", ns.tcp_in(49528, f"{PROXY}/32")), ("w", ns.tcp_in(49528))],
+    )
+    ns.cmd_proxy_check()
+    assert log["deleted"] == ["w"]
+    assert len(log["sent"]) == 1
+    assert "not the proxy's" in log["sent"][0][1]
+
+
+def test_a_change_is_emailed_even_when_a_later_call_fails(tmp_path, monkeypatch):
+    # The new address is added, then removing the stray fails: the addition
+    # must still be reported, and the run counts as a problem run.
+    log = _fake_world(
+        monkeypatch, tmp_path, [("w", ns.tcp_in(49528))], delete_fails=True
+    )
+    ns.cmd_proxy_check()
+    assert log["created"] == [ns.tcp_in(49528, f"{PROXY}/32")]
+    assert len(log["sent"]) == 1
+    assert f"added {PROXY}" in log["sent"][0][1]
+    assert "api down" in log["sent"][0][1]
+    assert ns.State.load(tmp_path / "state.json").failures == 1
+
+
+def test_a_good_run_ends_the_problem_episode():
+    _, _, state = ns.follow({PROXY}, {PROXY}, ns.State(failures=5, last_alert=123.0))
+    assert state.failures == 0
+    assert state.last_alert == 0.0

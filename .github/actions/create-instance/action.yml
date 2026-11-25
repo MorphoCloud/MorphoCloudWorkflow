@@ -459,7 +459,7 @@ runs:
         # exosphere). A missing group stops here, before anything is created.
         SECURITY_GROUP="${SECURITY_GROUP:-exosphere}"
         if ! openstack security group show "$SECURITY_GROUP" -f value -c id >/dev/null; then
-          echo "::error ::security group '$SECURITY_GROUP' does not exist in this project; nothing was created (MORPHOCLOUD_SECURITY_GROUP, NETWORK_SECURITY_PLAN.md)"
+          echo "::error ::security group '$SECURITY_GROUP' could not be found or checked in this project (see the error above); nothing was created (MORPHOCLOUD_SECURITY_GROUP, NETWORK_SECURITY_PLAN.md)"
           exit 1
         fi
         echo "Security group: $SECURITY_GROUP"
