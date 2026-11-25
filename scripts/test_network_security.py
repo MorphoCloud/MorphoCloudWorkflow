@@ -61,7 +61,7 @@ def test_new_group_keeps_ipv4_egress_and_drops_ipv6_egress():
 
 
 def test_plan_group_removes_rules_added_by_hand_and_duplicates():
-    want = ns.GROUPS["mc-runner"][1]
+    want = ns.GROUPS["mc-join"][1]
     current = [("1", r) for r in want] + [
         ("x", ns.tcp_in(8888)),
         ("dup", ns.tcp_in(22)),
