@@ -127,8 +127,12 @@ EXTRA_FIRST_SIGHT = 7 * 86400
 JOURNAL_TIMEOUT = 180
 JOURNAL_READER = HERE / "mc-journal-read.py"
 # A host's _diag offsets are forgotten when the reader has not named the file
-# for a week (it names only files changed in the last two days).
-DIAG_KEEP = 7 * 86400
+# for 30 days (it names only files changed in the last two days). The request
+# says so (`forget_before`), and the reader starts a file it finds again
+# without an offset at its end when the file's name dates it before then, so a
+# forgotten file's lines are never shipped twice. 30 days of runner-2's
+# Worker logs keep the request near 250 KB.
+DIAG_KEEP = 30 * 86400
 # A host's _diag that cannot be read for this long is named in last_error (the
 # watchdog's two-hour rule for an unreadable server).
 DIAG_DOWN = 2 * 3600
@@ -2532,8 +2536,10 @@ class Harvester:
         `diag: true`, through the reader's `diag` request as the read-only
         mcjournal account (INCIDENT_STORE_PLAN.md, "Reconcile with production
         after the migration"). Offsets are kept here per file with the time the
-        reader last named it, and forgotten after DIAG_KEEP; they advance only
-        for the files the reader names, so an unreachable host or a capped
+        reader last named it, and forgotten after DIAG_KEEP (the reader then
+        starts that file at its end if it changes again); they advance only
+        for the files the reader names, and a call that reached its cap names
+        the rest with their old offsets, so an unreachable host or a capped
         call loses nothing. No offsets yet = first sight: every file's end is
         recorded and nothing is shipped, as diag_new_lines() does. Returns the
         error, or None."""
@@ -2541,7 +2547,11 @@ class Harvester:
         prime = kept is None
         kept = dict(kept or {})
         request = json.dumps(
-            {"prime": prime, "offsets": {n: int(v[0]) for n, v in kept.items()}}
+            {
+                "prime": prime,
+                "offsets": {n: int(v[0]) for n, v in kept.items()},
+                "forget_before": int(now - DIAG_KEEP),
+            }
         )
         lines, _, err = self.host_call(host, "diag", "##DIAG ", stdin=request)
         if err:

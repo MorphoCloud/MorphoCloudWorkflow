@@ -1164,15 +1164,21 @@ finds it.
 
 **Rollout, in order.** Each step on production needs the maintainer's OK.
 
-1. Both PRs merged after the Claude review.
+1. Both PRs merged after the Claude review. Merging changes nothing on a host:
+   runner-1 keeps running its installed copy until step 4.
 2. `install-journal-reader.sh` on `mc-portal` (as `ubuntu`, through runner-1 as
-   jump host), with no `files`.
+   jump host), with no `files`. Its last check logs in from runner-1 as
+   `exouser` with `StrictHostKeyChecking=accept-new`, which records
+   `10.0.16.108`'s host key in the `known_hosts` the harvester uses (it runs as
+   `exouser` with `BatchMode=yes`). Steps 2 and 3 come before step 4, so the new
+   config never meets a host it cannot read.
 3. `install-journal-reader.sh --diag /home/exouser/actions-runner/_diag` on
    runner-2.
 4. `install-harvester.sh exouser@149.165.152.104` (files and tokens only; no
    crontab change).
-5. Copy the portal's `runner/mc_share_runner.py` to runner-1's `~/mc-data/`
-   after a diff against the copy there (they match `main` today).
+5. Only after the portal PR has merged: copy the portal's
+   `runner/mc_share_runner.py` to runner-1's `~/mc-data/` after a diff against
+   the copy there (it matches portal `main` before that PR).
 6. `gh workflow disable watchdog.yml -R MorphoCloud/Incidents-sandbox`. The
    emails about `mc-data-portal` stop here.
 7. Check: the next cycle's `state/harvester.json` shows `mc-portal` and runner-2
@@ -1192,10 +1198,22 @@ runner-1's.
 **As built.**
 
 - The harvester keeps runner-2's `_diag` offsets in its runner-side state, each
-  with the time the reader last named the file, and forgets one after 7 days. A
-  file the reader leaves out (its output cap or time budget reached) keeps its
-  offset. A file that comes back after more than 7 unnamed days is read from its
-  start once.
+  with the time the reader last named the file, and forgets one after 30 days
+  (the request stays near 250 KB). It sends that limit as `forget_before`. A
+  file the reader finds without an offset starts at its end when its name
+  (`Worker_YYYYMMDD-HHMMSS-utc.log`) dates it before that limit, so a forgotten
+  file's lines never ship twice; a newer file, or one without a date in its
+  name, is read from its start (a new file).
+- The reader caps its output at `CAP` from the first file on. When the cap or
+  its time budget is reached, it names every remaining file the harvester knows
+  with the harvester's own offset, so those offsets and their "last seen" stay
+  current and the rest is read next cycle. A single error line longer than the
+  cap is cut to it, and a run of 64 MB without a newline is skipped, so no file
+  can stop the reader.
+- A first sight starts each file after its last whole line, never in the middle
+  of a line.
+- Known limit: a `_diag` file rewritten to a size larger than its old offset is
+  not seen as rewritten. The runner only appends to these files.
 - A `_diag` read that fails is logged every cycle. After 2 hours it is named in
   `last_error`, so the store's watchdog emails about it. A host whose journal
   answers is not marked "unreachable" for this.
@@ -1203,6 +1221,21 @@ runner-1's.
   so a link placed in `_diag` cannot expose another file to `mcjournal`.
 - The rendered production crontab is byte-identical before and after (checked
   with `check-workflow-clock.py render`).
+- `install-journal-reader.sh --diag` stops with a clear message when `setfacl`
+  (package `acl`) is missing. Runner-2 has it.
+- Everything new reaches the store through the harvester's redactor
+  (`redact.sed`): `diag.log` through `ship_capped`, `bake.log` through the
+  runner log step. The portal's `DISPATCH` line carries only the workflow,
+  repository, issue and a one-line reason, never the token.
+- `bake.log` is read from its start the first time (it began on 2026-11-24 and
+  is a few KB). The incident of the bake's install-test email,
+  `instances-45513468666`, stays `admin`: `--rederive` does not recompute
+  `actor_kind`, and one record is not worth a rewrite.
+- Left alone on purpose: `Test-Instances` in `noxfile.py` (a vendorize target
+  for its later use), `morphocloud-dispatch.sh`, `police-floating-ips.py` and
+  the composite actions (repository-name checks that do nothing while Test has
+  no runs). The `Incidents-sandbox` store and its data are kept; its watchdog
+  stays disabled until Test's new purpose is designed.
 
 ### Volume
 

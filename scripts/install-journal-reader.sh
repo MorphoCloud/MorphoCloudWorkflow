@@ -96,6 +96,8 @@ ssh ${JUMP[@]+"${JUMP[@]}"} "$ADMIN" "
   if [ -n '$DIAG' ]; then
     # traverse only (x) on each parent mcjournal cannot pass, then check it
     # can list the directory itself; nothing is granted on the directory.
+    command -v setfacl >/dev/null \\
+      || { echo '  ERROR: setfacl is missing on this host (package acl); nothing granted for --diag'; exit 1; }
     d=''
     for part in \$(echo '$DIAG' | tr '/' ' '); do
       d=\"\$d/\$part\"

@@ -42,18 +42,26 @@ migration"):
 
     diag
 
-with a JSON object on standard input, {"prime": bool, "offsets": {file: n}}.
+with a JSON object on standard input,
+{"prime": bool, "offsets": {file: n}, "forget_before": epoch seconds}.
 The directory is the `diag-dir` line of the same allowlist; without that line
 the request is refused. Only regular files (never a link) changed in the last
 DIAG_WINDOW are looked at, and only lines matching DIAG_MATCH, the runner's
-own ERR level, are returned. For each file read: `==FILE <name> <new offset>`
-and then its matching lines; with `prime`, only the `==FILE` lines (the
-directory's history is not evidence). Last line: `##DIAG ok`. A file left out
-(the CAP or the time budget was reached) keeps the caller's offset.
+own ERR level, are returned, at most CAP bytes of them per call. For each file:
+`==FILE <name> <new offset>` and then its matching lines. A file starts at its
+end (the last whole line), shipping nothing, when the call is `prime` (the
+directory's history is not evidence) or when the caller has no offset for it
+and its name (`..._YYYYMMDD-HHMMSS...`, the runner's own) says it was created
+before `forget_before`: the caller forgot that offset, so its earlier lines
+were already shipped. A file without a date in its name and no offset is read
+from 0 (new). Once the CAP or the time budget is reached, every remaining
+file the caller knows is named with the caller's own offset and nothing else
+is read, so the caller keeps it. Last line: `##DIAG ok`.
 """
 
 from __future__ import annotations
 
+import calendar
 import fnmatch
 import grp
 import json
@@ -83,7 +91,9 @@ ALLOWLIST = "/etc/morphocloud/mc-journal-files"
 DIAG_DIR = "diag-dir"  # the allowlist name of the runner's _diag directory
 DIAG_MATCH = re.compile(r"^\[\S+ \S+ ERR ")
 DIAG_WINDOW = 48 * 3600  # files changed in the last two days
-DIAG_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+DIAG_NAME_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$")  # never . or ..
+DIAG_NAME_DATE_RE = re.compile(r"(\d{8})-(\d{6})")  # Worker_20261125-002110-utc.log
+DIAG_TAIL = 65_536  # bytes read back from a file's end to find its last whole line
 DIAG_REQUEST_MAX = 2_000_000  # bytes of JSON on standard input
 DIAG_READ_MAX = 64_000_000  # bytes read from one file per call
 
@@ -216,8 +226,9 @@ def read_file(name: str, offset_text: str, out, allowlist: str = ALLOWLIST) -> i
     return 0
 
 
-def diag_request(raw: str) -> tuple[bool, dict[str, int]] | None:
-    """(prime, offsets) from the caller's JSON, or None when it is malformed."""
+def diag_request(raw: str) -> tuple[bool, dict[str, int], float] | None:  # noqa: PLR0911 — one return per malformation
+    """(prime, offsets, forget_before) from the caller's JSON, or None when it
+    is malformed."""
     try:
         req = json.loads(raw)
     except ValueError:
@@ -225,7 +236,10 @@ def diag_request(raw: str) -> tuple[bool, dict[str, int]] | None:
     if not isinstance(req, dict) or not isinstance(req.get("prime"), bool):
         return None
     offsets = req.get("offsets") or {}
-    if not isinstance(offsets, dict):
+    forget = req.get("forget_before", 0)
+    if not isinstance(offsets, dict) or isinstance(forget, bool):
+        return None
+    if not isinstance(forget, (int, float)) or forget < 0:
         return None
     clean: dict[str, int] = {}
     for name, off in offsets.items():
@@ -234,31 +248,91 @@ def diag_request(raw: str) -> tuple[bool, dict[str, int]] | None:
         if not isinstance(off, int) or isinstance(off, bool) or off < 0:
             return None
         clean[name] = off
-    return req["prime"], clean
+    return req["prime"], clean, float(forget)
 
 
-def diag_hits(path: Path, offset: int) -> tuple[int, list[str]] | None:
-    """(new offset, matching lines) of one regular file read from `offset`,
-    never through a link; None when it cannot be read as one."""
+def created_by_name(name: str) -> float | None:
+    """The creation time the runner writes into a _diag file name, or None."""
+    m = DIAG_NAME_DATE_RE.search(name)
+    if not m:
+        return None
+    try:
+        return float(
+            calendar.timegm(time.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S"))
+        )
+    except ValueError:
+        return None
+
+
+def open_regular(path: Path):
+    """The file opened for reading, never through a link, or None when it is
+    not a regular file."""
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     except OSError:
         return None
-    with os.fdopen(fd, "rb") as fh:
-        st = os.fstat(fh.fileno())
-        if not stat.S_ISREG(st.st_mode):
-            return None
-        if st.st_size < offset:  # rewritten: from the start
+    fh = os.fdopen(fd, "rb")
+    if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+        fh.close()
+        return None
+    return fh
+
+
+def line_end(path: Path) -> int | None:
+    """The offset just after the file's last whole line: where a first sight
+    starts, so the next read never begins in the middle of a line. A tail of
+    DIAG_TAIL bytes without a newline counts as one line: its end."""
+    fh = open_regular(path)
+    if fh is None:
+        return None
+    with fh:
+        size = os.fstat(fh.fileno()).st_size
+        fh.seek(max(0, size - DIAG_TAIL))
+        tail = fh.read()
+    nl = tail.rfind(b"\n")
+    if nl < 0:
+        return size if len(tail) == DIAG_TAIL else size - len(tail)
+    return size - len(tail) + nl + 1
+
+
+def diag_hits(
+    path: Path, offset: int, budget: int
+) -> tuple[int, list[str], bool] | None:
+    """(new offset, matching lines, budget reached) of one regular file read
+    from `offset`, never through a link, with at most `budget` bytes of lines;
+    None when it cannot be read as one. When the budget is reached, the new
+    offset is just before the first line left out, which comes next call. A
+    single matching line longer than the whole budget is cut to it rather
+    than stopping the file forever, and so is a run of DIAG_READ_MAX bytes
+    without a newline (skipped)."""
+    fh = open_regular(path)
+    if fh is None:
+        return None
+    with fh:
+        size = os.fstat(fh.fileno()).st_size
+        if size < offset:  # rewritten shorter: from the start
             offset = 0
         fh.seek(offset)
-        chunk = fh.read(min(st.st_size - offset, DIAG_READ_MAX))
+        chunk = fh.read(min(size - offset, DIAG_READ_MAX))
     cut = chunk.rfind(b"\n") + 1  # a partial last line waits for the next call
-    hits = [
-        line + "\n"
-        for line in chunk[:cut].decode("utf-8", "replace").splitlines()
-        if DIAG_MATCH.search(line)
-    ]
-    return offset + cut, hits
+    if cut == 0:
+        # no newline in a full read: one line longer than DIAG_READ_MAX, skipped
+        return offset + (len(chunk) if len(chunk) == DIAG_READ_MAX else 0), [], False
+    hits: list[str] = []
+    used = pos = 0
+    for raw in chunk[:cut].split(b"\n")[:-1]:
+        line = raw.decode("utf-8", "replace") + "\n"
+        if DIAG_MATCH.search(line):
+            if used + len(line) > budget:
+                if hits:
+                    return offset + pos, hits, True
+                line = line[: max(budget - 1, 0)] + "\n"  # never stuck on one line
+                hits.append(line)
+                return offset + pos + len(raw) + 1, hits, True
+            hits.append(line)
+            used += len(line)
+        pos += len(raw) + 1
+    return offset + pos, hits, False
 
 
 def read_diag(stdin, out, allowlist: str = ALLOWLIST, now: float | None = None) -> int:
@@ -267,8 +341,11 @@ def read_diag(stdin, out, allowlist: str = ALLOWLIST, now: float | None = None) 
         return deny(f"no '{DIAG_DIR}' line in {allowlist}")
     req = diag_request(stdin.read(DIAG_REQUEST_MAX + 1)[:DIAG_REQUEST_MAX])
     if req is None:
-        return deny('expected {"prime": true|false, "offsets": {file: n}} on stdin')
-    prime, offsets = req
+        return deny(
+            'expected {"prime": true|false, "offsets": {file: n},'
+            ' "forget_before": seconds} on stdin'
+        )
+    prime, offsets, forget_before = req
     now = time.time() if now is None else now
     deadline = time.monotonic() + BUDGET
     try:
@@ -276,9 +353,9 @@ def read_diag(stdin, out, allowlist: str = ALLOWLIST, now: float | None = None) 
     except OSError as e:
         return deny(f"cannot list {DIAG_DIR}: {type(e).__name__}")
     written = 0
+    deferred = False  # the CAP or the time budget is reached: name, never read
     for entry in entries:
-        if time.monotonic() > deadline:
-            break  # the rest keep their offsets: next call
+        deferred = deferred or time.monotonic() > deadline
         try:
             st = entry.stat(follow_symlinks=False)
         except OSError:
@@ -289,19 +366,25 @@ def read_diag(stdin, out, allowlist: str = ALLOWLIST, now: float | None = None) 
             or now - st.st_mtime > DIAG_WINDOW
         ):
             continue
-        if prime:
-            out.write(f"==FILE {entry.name} {st.st_size}\n")
+        known = entry.name in offsets
+        if deferred:
+            if known:  # the caller keeps its offset and its "last seen"
+                out.write(f"==FILE {entry.name} {offsets[entry.name]}\n")
             continue
-        got = diag_hits(Path(entry.path), offsets.get(entry.name, 0))
+        born = created_by_name(entry.name)
+        if prime or (not known and born is not None and born < forget_before):
+            end = line_end(Path(entry.path))
+            if end is not None:
+                out.write(f"==FILE {entry.name} {end}\n")
+            continue
+        got = diag_hits(Path(entry.path), offsets.get(entry.name, 0), CAP - written)
         if got is None:
             continue
-        new, hits = got
-        size = sum(len(h) for h in hits)
-        if written and written + size > CAP:
-            break  # this file and the rest keep their offsets: next call
+        new, hits, full = got
         out.write(f"==FILE {entry.name} {new}\n")
         out.writelines(hits)
-        written += size
+        written += sum(len(h) for h in hits)
+        deferred = full or written >= CAP
     out.write("##DIAG ok\n")
     return 0
 

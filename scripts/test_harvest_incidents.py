@@ -3,6 +3,7 @@ Run: python -m pytest scripts/test_harvest_incidents.py"""
 
 from __future__ import annotations
 
+import calendar
 import importlib.util
 import io
 import json
@@ -958,7 +959,12 @@ def test_host_diag_first_sight_primes_without_shipping(tmp_path):
     st: dict = {}
     assert h.host_diag(RUNNER2, st, NOW, "2026/11/25") is None
     assert sent == [
-        ("mcjournal@10.0.16.66", "diag", "##DIAG ", {"prime": True, "offsets": {}})
+        (
+            "mcjournal@10.0.16.66",
+            "diag",
+            "##DIAG ",
+            {"prime": True, "offsets": {}, "forget_before": int(NOW - hv.DIAG_KEEP)},
+        )
     ]
     assert st["diag"] == {"Runner_1.log": [900, int(NOW)]}
     assert not (tmp_path / "store/runner").exists()
@@ -987,6 +993,7 @@ def test_host_diag_ships_named_files_and_keeps_the_others(tmp_path):
     assert sent[0][3] == {
         "prime": False,
         "offsets": {"Worker_1.log": 10, "Runner_capped.log": 500, "Runner_gone.log": 5},
+        "forget_before": int(NOW - hv.DIAG_KEEP),
     }
     assert st["diag"] == {
         "Worker_1.log": [40, int(NOW)],
@@ -1223,7 +1230,7 @@ def test_reader_diag_first_sight_names_recent_files_only(tmp_path):
     assert jr.read_diag(stdin, out, str(allow), now) == 0
     assert out.getvalue().splitlines() == [
         f"==FILE Runner_1.log {len(INFO_LINE) * 3}",
-        f"==FILE Worker_new.log {len((INFO_LINE + ERR_LINE + '[2026-11-25 01:02:05Z ERR  partial').encode())}",
+        f"==FILE Worker_new.log {len(INFO_LINE) + len(ERR_LINE)}",  # never mid-line
         "##DIAG ok",
     ]
 
@@ -1251,6 +1258,10 @@ def test_reader_diag_ships_only_err_lines_from_each_offset(tmp_path):
         '{"prime": false, "offsets": {"../etc/passwd": 0}}',
         '{"prime": false, "offsets": {"a.log": -1}}',
         '{"prime": false, "offsets": {"a.log": true}}',
+        '{"prime": false, "offsets": {"..": 0}}',
+        '{"prime": false, "offsets": {".hidden": 0}}',
+        '{"prime": false, "offsets": {}, "forget_before": "x"}',
+        '{"prime": false, "offsets": {}, "forget_before": -1}',
     ],
 )
 def test_reader_diag_refuses_a_bad_request(tmp_path, stdin):
@@ -1266,6 +1277,93 @@ def test_reader_diag_needs_the_allowlist_line_and_is_not_a_file(tmp_path):
     assert jr.read_diag(io.StringIO(req), io.StringIO(), str(empty)) == 2  # noqa: PLR2004
     # the directory's allowlist name never opens it through the file form
     assert jr.read_file("diag-dir", "0", io.StringIO(), str(allow)) == 2  # noqa: PLR2004
+
+
+def _diag_req(offsets, forget_before=0):
+    return io.StringIO(
+        json.dumps({"prime": False, "offsets": offsets, "forget_before": forget_before})
+    )
+
+
+def test_reader_diag_caps_the_first_file_too_and_names_the_rest(tmp_path, monkeypatch):
+    """Review of #464: the cap applies from the first file; a capped call
+    names every remaining known file with the caller's own offset."""
+    now = time.time()
+    d = tmp_path / "_diag"
+    d.mkdir()
+    (d / "A_crash.log").write_text(ERR_LINE * 10)
+    (d / "B_known.log").write_text(ERR_LINE * 2)
+    (d / "C_new.log").write_text(ERR_LINE)
+    allow = tmp_path / "allow"
+    allow.write_text(f"diag-dir {d}\n")
+    monkeypatch.setattr(jr, "CAP", len(ERR_LINE) * 3)
+    out = io.StringIO()
+    assert jr.read_diag(_diag_req({"B_known.log": 0}), out, str(allow), now) == 0
+    assert out.getvalue() == (
+        f"==FILE A_crash.log {len(ERR_LINE) * 3}\n"
+        + ERR_LINE * 3
+        + "==FILE B_known.log 0\n"  # kept, not read; C_new is read next call
+        + "##DIAG ok\n"
+    )
+
+
+def test_reader_diag_one_line_longer_than_the_cap_is_cut_not_stuck(
+    tmp_path, monkeypatch
+):
+    now = time.time()
+    d = tmp_path / "_diag"
+    d.mkdir()
+    long_line = "[2026-11-25 01:02:03Z ERR  X] " + "y" * 100 + "\n"
+    (d / "A.log").write_text(long_line)
+    allow = tmp_path / "allow"
+    allow.write_text(f"diag-dir {d}\n")
+    monkeypatch.setattr(jr, "CAP", 40)
+    out = io.StringIO()
+    assert jr.read_diag(_diag_req({}), out, str(allow), now) == 0
+    lines = out.getvalue().splitlines()
+    assert lines[0] == f"==FILE A.log {len(long_line)}"  # moved past it
+    assert len(lines[1]) == 39  # noqa: PLR2004 — cut to the cap
+
+
+def test_reader_diag_skips_a_run_without_newline_longer_than_a_read(
+    tmp_path, monkeypatch
+):
+    now = time.time()
+    d = tmp_path / "_diag"
+    d.mkdir()
+    (d / "A.log").write_text("x" * 50)
+    allow = tmp_path / "allow"
+    allow.write_text(f"diag-dir {d}\n")
+    monkeypatch.setattr(jr, "DIAG_READ_MAX", 20)
+    out = io.StringIO()
+    jr.read_diag(_diag_req({}), out, str(allow), now)
+    assert out.getvalue().startswith("==FILE A.log 20\n")  # never stuck at 0
+
+
+def test_reader_diag_a_forgotten_old_file_starts_at_its_end(tmp_path):
+    """Review of #464: an offset the harvester forgot (DIAG_KEEP) must not
+    make the file's old lines ship again. A file the caller does not know
+    starts at its end when its name dates it before forget_before, and is
+    read from 0 when it is newer or carries no date (a new file)."""
+    now = time.time()
+    d = tmp_path / "_diag"
+    d.mkdir()
+    (d / "Worker_20260101-000000-utc.log").write_text(ERR_LINE)  # old, touched again
+    (d / "Worker_20261124-000000-utc.log").write_text(
+        ERR_LINE
+    )  # newer than forget_before
+    (d / "nodate.log").write_text(ERR_LINE)
+    allow = tmp_path / "allow"
+    allow.write_text(f"diag-dir {d}\n")
+    forget = calendar.timegm((2026, 10, 25, 0, 0, 0))
+    out = io.StringIO()
+    assert jr.read_diag(_diag_req({}, forget), out, str(allow), now) == 0
+    assert out.getvalue() == (
+        f"==FILE Worker_20260101-000000-utc.log {len(ERR_LINE)}\n"
+        f"==FILE Worker_20261124-000000-utc.log {len(ERR_LINE)}\n{ERR_LINE}"
+        f"==FILE nodate.log {len(ERR_LINE)}\n{ERR_LINE}"
+        "##DIAG ok\n"
+    )
 
 
 def test_reader_diag_pattern_is_the_configs(cfg):
