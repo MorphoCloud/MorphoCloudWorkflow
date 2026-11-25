@@ -1108,14 +1108,14 @@ with a reason.
 
 ### Found while sweeping (not part of this change)
 
-- **A help request can be emailed twice when the mail server fails.**
+- **Fixed 2026-11-25 in portal #66** (see "As built" below). **A help request
+  could be emailed twice when the mail server failed.**
   `chatbot_queue.send_pending` passes `alerts.send` as its sender. `alerts.send`
   puts a failed email into `alert_outbox` and returns False. `send_pending` then
   keeps the request and retries it 5 minutes later, and the outbox also delivers
   its copy once mail works. The outbox copy also holds the member's text past
   decision 9's limit until it is delivered. The fix is to pass `alerts.deliver`
-  instead, which sends once and keeps nothing. This is a one-line portal fix. I
-  will raise it as its own item and not fold it in here.
+  instead, which sends once and keeps nothing.
 
 ### As built (2026-11-25)
 
@@ -1166,7 +1166,24 @@ Where the build departs from the text above, and why.
   `assistant-refused` (too long, busy, rate limit) and `assistant-unavailable`
   (the model call failed). A refusal before the sign-in is known is not
   recorded.
-- **Help requests and alerts.** The worker passes
-  `functools.partial(alerts.send, record_body=False)` to the help queue, so a
-  help request's alert row has the subject only. The duplicate-email bug above
-  is still open, as its own item.
+- **Help requests and alerts (portal #66, deployed 2026-11-25).** The help queue
+  now gets two senders: `send_pending(con, send, alert)`. The worker passes
+  `functools.partial(alerts.deliver, log_body=False)` as `send`, so a help
+  request is emailed once. It never goes into the alert outbox, so it is not
+  emailed twice or kept past decision 9's limit. The worker passes `alerts.send`
+  as `alert`, so the queue's own alerts to the admins ("Help requests are not
+  being sent") are still kept when mail is down. The same fix closed a second
+  leak. On a failed email, `deliver()` used to print the whole body to stderr,
+  which reaches the journal and, through the harvester, the store. With
+  `log_body=False` it logs only the body's length. `alerts.send` lost the
+  `record_body` flag that #64 had added, because its only user was the help
+  queue. A help request leaves no alert row. Its record is the queue's
+  `help-queued` and `help-sent` rows, which carry the length, never the text.
+  Checked live on production as amm554: `help-queued` read "request 1: 2008
+  characters", then `help-sent`.
+- **`db.tx()` joins a transaction the caller already holds** (review of #64). It
+  replaces the `_atomic` helper. `share_create`, `storage_extend`, `cmd_request`
+  and `cmd_session` write the change and its `audit` row in one transaction. The
+  other functions whose callers write their row still do it after the change
+  returns, as the actor map says: a crash between the two writes can lose that
+  one row.
