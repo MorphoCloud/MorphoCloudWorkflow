@@ -220,13 +220,12 @@ their four rules.
    `check-image.sh` all use `mc-instance`. Create one instance through the
    portal (as `amm554`) and repeat step 4's outside checks.
 6. Before this step: the docs FAQ entry on SSH port forwarding is published and
-   the chatbot's knowledge rebuilt (step 10 moves here), and members get one
-   portal notice. Then switch every other `instance-*` port, shelved ones
-   included, with the same one-call command. The list is read when the step
-   runs, not fixed here (2026-11-25: only #288); running it twice changes
-   nothing. A running instance first gets the same listener listing over SSH
-   from runner-1; anything outside 22, 5901 and 49528 is reported before its
-   switch.
+   the chatbot's knowledge rebuilt, and members get one portal notice. Then
+   switch every other `instance-*` port, shelved ones included, with the same
+   one-call command. The list is read when the step runs, not fixed here
+   (2026-11-25: only #288); running it twice changes nothing. A running instance
+   first gets the same listener listing over SSH from runner-1; anything outside
+   22, 5901 and 49528 is reported before its switch.
 7. Item 2, in this order: runner-2, the join VM, then runner-1 last (losing
    runner-1 would also lose the path used to repair the others; the maintainer's
    Mac, with its own OpenStack credentials, is the fallback). For each, in two
