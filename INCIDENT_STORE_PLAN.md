@@ -1056,6 +1056,139 @@ files.
 thresholds (80% of the size, 5 GB and 10 GB). The 95% count was added from the
 review.
 
+### Reconcile with production after the migration (design note, 2026-11-24)
+
+The harvester was designed before the 2026-11-23 migration. This note lists
+where it no longer matches production and the one change that fixes the whole
+set. Every item was checked in the code (MWF `main` a7e5fb0, portal `main`
+28bd83c), on the hosts (read-only) and in the stores on 2026-11-24/25.
+
+**What was found.**
+
+| #   | Gap                                                                                                                                                                                                                                                                                            | Evidence                                                                                                                               |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | The production portal VM `mc-portal` is not in `hosts:`. Its journal is not read.                                                                                                                                                                                                              | `incident-sources.yml` `hosts:`; `openstack server list` (BIO180006): `mc-portal` ACTIVE, 10.0.16.108; no `mcjournal` account on it    |
+| 2   | The Test side is still configured: the `MorphoCloud/Test-Instances` source (three hosts) and the Test crontab target, which runs a harvester into `Incidents-sandbox`. All three Test VMs are shelved. The sandbox store's watchdog emails every 6 hours that `mc-data-portal` cannot be read. | `incident-sources.yml`; `check-workflow-clock.py` `TARGETS`; BIO240357: MC-Test-runner, mc-data-portal, mc-join-test SHELVED_OFFLOADED |
+| 3   | 16 workflow names in `workflows:` exist in neither MWF nor Instances (the two retired by #459, old Instances-only files, Test-only files). They are still needed to classify old runs; only some say so.                                                                                       | GitHub contents API, Instances `.github/workflows` (41 files)                                                                          |
+| 4   | The portal's 1-minute job (`pickup`) shelves an unreachable instance with `gh workflow run` and the dispatch token, and writes no `DISPATCH` line. Its runs would be counted as `admin` (Phase 2's exit says none may be). None has happened since the migration.                              | portal `runner/mc_share_runner.py` `dispatch_shelve`                                                                                   |
+| 5   | The monthly bake emails through `admin-alert.yml` and logs its `DISPATCH` line to `~/bake/cron.log`, which the harvester does not read. Its 2026-11-24 23:51 email became incident `instances-45513468666` with `actor_kind: admin`. The bake's log itself is not in the store.                | `bake-monthly.py` `email()`; store record                                                                                              |
+| 6   | The control runner's (runner-2) Actions `_diag` error lines are never read: `control_host` is null, and its code path logs in as `exouser`, which runner-1 cannot do (publickey refused). `mcjournal` on runner-2 cannot enter `/home/exouser` (mode 750).                                     | `incident-sources.yml`; `harvest-incidents.py` `remote_diag`; read-only checks on both runners                                         |
+| 7   | `mc-k8s-portal` (BIO180006) is a server VM not listed and not excluded.                                                                                                                                                                                                                        | `openstack server list`                                                                                                                |
+
+Checked and in order (no change): the workflow kinds; commands posted by the
+portal (the member's own login, so `actor_kind` is right, and the
+`request-source:portal` label is a marker); `portal_only` refusals; the
+storage-usage snapshot (2026-W48, 44 shares); `expire-shares` failures reach the
+store; runner-1's harvester files match `main` byte for byte; the join app's
+GitHub sign-in adds no log file.
+
+**Decided by the maintainer (2026-11-24).**
+
+- Test-Instances is sunset for now and will serve another purpose later. Every
+  change here is for production, built from `main`. The Test crontab target is
+  removed too.
+- A successful bake stays an incident: its email asks the maintainer to promote
+  the images and gives the exact commands. Only its attribution changes, to
+  automation.
+- `mc-k8s-portal` is out of scope.
+- Runner-2's `_diag` error lines are read through the read-only `mcjournal`
+  account.
+- The portal events (evidence G, `portal_events` and `export-events`) are their
+  own design and PR, right after this one. Only the one-line `pickup` `DISPATCH`
+  log is done here.
+
+**The change.**
+
+MWF (one PR):
+
+- `incident-sources.yml`:
+  - a host `mc-portal` (`nova: mc-portal`, `ssh: mcjournal@10.0.16.108`) with
+    units `mc-data-portal.service`, `mc-data-worker.service`,
+    `mc-data-transfer.service` (new since Test: the MorphoSource cart),
+    `copyparty.service`, `caddy.service`, `mnt-shares-*.mount`, `cron.service`.
+    No `files:`: the portal logs only to the journal;
+  - `diag: true` on the `morphocloud-instances-runner-2` host; `control_host` is
+    removed;
+  - a comment under `hosts:` that `mc-k8s-portal` is left out on purpose: out of
+    scope (maintainer, 2026-11-24). The file's own rule is that leaving a server
+    out is an exclusion and must say why;
+  - the `MorphoCloud/Test-Instances` source is removed;
+  - `runner_logs` gains `{ name: bake, path: ~/bake/cron.log }`. That ships the
+    bake's log and lets rule 1 find its `DISPATCH` line, so its email is
+    `automation`;
+  - every workflow name that no longer exists says "retired <date>; kept for the
+    runs already recorded".
+- `scripts/mc-journal-read.py`: a third request form, `diag`. It reads the
+  per-file offsets as JSON on standard input and answers in the format
+  `remote_diag` already parses (`==FILE <name> <size>`, then the matching
+  lines). It reads only the directory named on the `diag-dir` line of the
+  root-owned allowlist, only files changed in the last 48 hours, and only lines
+  matching the `diag_match` pattern, which the reader holds itself. Nothing else
+  becomes readable.
+- `scripts/harvest-incidents.py`: `remote_diag` sends the `diag` request to the
+  host's `mcjournal` account instead of a shell script as `exouser`; offsets are
+  pruned to files seen in the last 48 hours, so the request stays small
+  (runner-2 keeps 27,000 `Worker_*.log` files, 5.7 GB).
+- `scripts/install-journal-reader.sh`: `--diag <dir>` writes the `diag-dir` line
+  and gives `mcjournal` traverse-only access to the home directory
+  (`setfacl -m u:mcjournal:x /home/exouser`). `_diag` and its files are already
+  world-readable (775 and 644).
+- `scripts/check-workflow-clock.py`: the Test target is removed;
+  `scripts/test-instances-runner.crontab` is deleted;
+  `runner-cron-dispatcher.md` and the comment in
+  `restore-instances-dispatcher.sh` are updated. The rendered production crontab
+  must come out byte-identical (checked in the PR).
+- Tests: the Test-source fixtures move to production names; new tests for the
+  `diag` form (allowlist only, the 48-hour window, the match), the bake
+  `DISPATCH` join, and an `mc-portal` journal line.
+
+Portal (one small PR, `morphocloud-data-portal`): `dispatch_shelve` logs
+`DISPATCH control-instance-from-workflow.yml repo=<repo> issue=<n> by=pickup result=<ok|FAILED …>`
+in the uniform format, with a test. `pickup.log` is already shipped, so rule 1
+finds it.
+
+**Actor map: who else touches each resource.**
+
+| Resource                                                                                                | Who writes or acts on it                                                                                    | Who reads it                                   | What this change does to it                                                                                                              |
+| ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| runner-1 harvester files (`~/harvest-incidents.py`, the two `.yml`, `redact.sed`, `mc-journal-read.py`) | `install-harvester.sh` (maintainer), `restore-instances-dispatcher.sh`                                      | the harvester, every 5 minutes, under its lock | replaced from `main` by `install-harvester.sh` (files only)                                                                              |
+| runner-1 crontab                                                                                        | `restore-instances-dispatcher.sh` (managed block); `install-runner.sh` (the pickup line, outside the block) | cron                                           | **no change**                                                                                                                            |
+| `~/bake/cron.log`                                                                                       | the bake (`0 8 * * 2`, `0 9 * * 1`)                                                                         | the maintainer; from now on the harvester      | read only, from its last offset                                                                                                          |
+| `~/mc-data/pickup.log`, `~/mc-data/mc_share_runner.py`                                                  | pickup every minute; `install-runner.sh` or a copy of the file                                              | the harvester (already)                        | the script gains the `DISPATCH` line; copied after the portal PR merges, crontab untouched                                               |
+| `mc-portal` VM                                                                                          | portal deploy (`provision.sh`); `mcrunner` (pickup and usage through the gate); members through the web app | —                                              | new locked `mcjournal` account with the runner's key, forced to the reader; read-only                                                    |
+| runner-2                                                                                                | Actions runner service (writes `_diag`); `mcjournal` (journal reads, already)                               | the harvester, through `mcjournal`             | the reader is replaced; one ACL entry (`x` on `/home/exouser`)                                                                           |
+| store `MorphoCloud/Incidents`                                                                           | the harvester only (decision 18)                                                                            | its watchdog; the maintainer                   | new: `mc-portal` journal, runner-2 `diag.log`, `bake.log`; `hosts` gains `mc-portal`                                                     |
+| production watchdog                                                                                     | GitHub schedule                                                                                             | `state/harvester.json`                         | no change; it emails if `mc-portal` stays unreadable for 2 hours, so the reader is installed before the config                           |
+| store `MorphoCloud/Incidents-sandbox`                                                                   | the Test harvester (stopped: MC-Test-runner shelved)                                                        | its watchdog (emails every 6 hours)            | its watchdog is disabled; the store is kept as it is                                                                                     |
+| MC-Test-runner (shelved)                                                                                | nobody while shelved                                                                                        | —                                              | **not touched.** Its old crontab still holds the Test harvester and dispatcher lines; whoever unshelves it must clear that crontab first |
+
+**Rollout, in order.** Each step on production needs the maintainer's OK.
+
+1. Both PRs merged after the Claude review.
+2. `install-journal-reader.sh` on `mc-portal` (as `ubuntu`, through runner-1 as
+   jump host), with no `files`.
+3. `install-journal-reader.sh --diag /home/exouser/actions-runner/_diag` on
+   runner-2.
+4. `install-harvester.sh exouser@149.165.152.104` (files and tokens only; no
+   crontab change).
+5. Copy the portal's `runner/mc_share_runner.py` to runner-1's `~/mc-data/`
+   after a diff against the copy there (they match `main` today).
+6. `gh workflow disable watchdog.yml -R MorphoCloud/Incidents-sandbox`. The
+   emails about `mc-data-portal` stop here.
+7. Check: the next cycle's `state/harvester.json` shows `mc-portal` and runner-2
+   `ok` and `last_error` null; `runner/<day>/mc-portal/journal.log` and
+   `runner/<day>/morphocloud-instances-runner-2/diag.log` appear; the harvest
+   log shows no error.
+
+**Testing.** Test is sunset, so there is no Test run. Unit tests cover each
+change. Steps 2, 3 and 7 are the live checks, each run once by hand on the real
+host. The bake attribution is checked at the next bake email (first Tuesday of
+December, or the Monday overdue check), by reading its record.
+
+**Cost.** No new crontab line, no new token. `mc-portal`'s journal on Test was
+about 40 KB a day; runner-2's `_diag` errors are expected to be similar to
+runner-1's.
+
 ### Volume
 
 Measured on Instances over 2026-10-09 to 11-07: about 1,100 runs a day, about
