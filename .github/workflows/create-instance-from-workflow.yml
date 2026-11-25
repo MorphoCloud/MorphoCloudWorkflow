@@ -124,6 +124,7 @@ jobs:
           volume_size_gb: ${{ vars.VOLUME_SIZE_GB || '100' }}
           default_session_timeout_hrs: ${{ vars.INSTANCE_SHELVING_TIMEOUT_HRS }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          security_group: ${{ vars.MORPHOCLOUD_SECURITY_GROUP || 'exosphere' }}
 
   # Job B — setup lane (cloud-init wait, volume mount, reboot, email). Runs on the
   # control runner so the long setup tail does not pin the scarce acquire runner;

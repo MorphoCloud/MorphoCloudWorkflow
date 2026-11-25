@@ -50,6 +50,13 @@ inputs:
     description: "Share mode: comma-separated vGPU flavors"
     required: false
     default: "g3.large,g3.medium"
+  security_group:
+    description:
+      "OpenStack security group for the server (NETWORK_SECURITY_PLAN.md).
+      Instances sets MORPHOCLOUD_SECURITY_GROUP=mc-instance; every other
+      repository keeps exosphere."
+    required: false
+    default: "exosphere"
   github_id:
     description: "Share mode: numeric GitHub ID of the instance owner"
     required: false
@@ -448,9 +455,18 @@ runs:
         fi
 
 
+        # NETWORK_SECURITY_PLAN.md: the group comes from the caller (default
+        # exosphere). A missing group stops here, before anything is created.
+        SECURITY_GROUP="${SECURITY_GROUP:-exosphere}"
+        if ! openstack security group show "$SECURITY_GROUP" -f value -c id >/dev/null; then
+          echo "::error ::security group '$SECURITY_GROUP' does not exist in this project; nothing was created (MORPHOCLOUD_SECURITY_GROUP, NETWORK_SECURITY_PLAN.md)"
+          exit 1
+        fi
+        echo "Security group: $SECURITY_GROUP"
+
         openstack server create "$INSTANCE_NAME" \
           --nic net-id="auto_allocated_network" \
-          --security-group "exosphere" \
+          --security-group "$SECURITY_GROUP" \
           --flavor "$INSTANCE_FLAVOR" \
           --image "$INSTANCE_IMAGE" \
           --key-name "murat-key" \
@@ -480,6 +496,7 @@ runs:
         IMAGE_VGPU: ${{ inputs.image_vgpu }}
         IMAGE_REGULAR: ${{ inputs.image_regular }}
         VGPU_FLAVORS: ${{ inputs.vgpu_flavors }}
+        SECURITY_GROUP: ${{ inputs.security_group }}
 
     - name: Wait for instance to reach stable state
       id: wait_instance_state

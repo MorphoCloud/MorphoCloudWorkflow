@@ -451,6 +451,7 @@ jobs:
           volume_size_gb: ${{ vars.VOLUME_SIZE_GB || '100' }}
           default_session_timeout_hrs: ${{ vars.INSTANCE_SHELVING_TIMEOUT_HRS }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          security_group: ${{ vars.MORPHOCLOUD_SECURITY_GROUP || 'exosphere' }}
 
       # Course creates stay one job (acquire + setup back-to-back on the same
       # runner) — unchanged behaviour; course repos with a single runner just

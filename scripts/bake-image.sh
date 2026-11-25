@@ -59,10 +59,17 @@ grep -q 'storage_mode' "$WORK/cloud-config" || { echo "could not add the share-m
 # No Data drop in share mode: the data portal replaces it.
 sed -i 's|\\"dropzone_enabled\\":true|\\"dropzone_enabled\\":false|' "$WORK/cloud-config"
 
+# NETWORK_SECURITY_PLAN.md: the build VM gets the instances' group,
+# mc-instance; exosphere only while mc-instance does not exist yet.
+SECURITY_GROUP="${MC_SECURITY_GROUP:-mc-instance}"
+if ! openstack security group show "$SECURITY_GROUP" -f value -c id >/dev/null 2>&1; then
+  log "security group $SECURITY_GROUP not found; using exosphere"
+  SECURITY_GROUP=exosphere
+fi
 log "creating build instance $NAME ($FLAVOR)"
 openstack server create "$NAME" \
   --nic net-id="auto_allocated_network" \
-  --security-group "exosphere" \
+  --security-group "$SECURITY_GROUP" \
   --flavor "$FLAVOR" \
   --image "Featured-Ubuntu24" \
   --property "exoSetup={\"status\":\"waiting\",\"epoch\":null}" \
