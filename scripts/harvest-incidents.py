@@ -2964,6 +2964,15 @@ class Harvester:
             return f"failed: {err}"
         self.local.data.pop("portal_events_down_since", None)
         at = to_iso(now)
+        if cursor and doc["max"] >= cursor and doc["cursor_ts"] is None:
+            # The portal never deletes an audit row, and a rebuilt database that
+            # grew past the cursor has a row there: rows were deleted. Not a
+            # restart (that would ship the whole history again): the cursor
+            # stays, and last_error names it until the maintainer decides.
+            msg = f"portal events: audit row {cursor} is missing (top row {doc['max']}); rows deleted?"
+            log(msg)
+            self.errors.append(msg)
+            return "failed: cursor row missing"
         if cursor and (
             doc["max"] < cursor or doc["cursor_ts"] != state.get("cursor_ts")
         ):
@@ -2980,7 +2989,7 @@ class Harvester:
         rows = doc["rows"]
         if not rows:
             return f"db {gen}: row {cursor}, nothing new"
-        details = [r.get("detail") or "" for r in rows]
+        details = [r.get("detail") or "" for r in rows]  # one sed pass needs strings
         clean, _ = self.redactor.text(EVENTS_SEP.join(details))
         parts = clean.split(EVENTS_SEP)
         if len(parts) != len(details):  # a rule spanned values: one at a time
@@ -2989,7 +2998,8 @@ class Harvester:
         for r, detail in zip(rows, parts):
             when = to_iso(float(r["ts"]))
             line = {"id": r["id"], "db": gen, "at": when, "github_id": r.get("github_id"),
-                    "login": r.get("login"), "action": r["action"], "detail": detail}  # fmt: skip
+                    "login": r.get("login"), "action": r["action"],
+                    "detail": None if r.get("detail") is None else detail}  # fmt: skip
             by_day.setdefault(day_path(when), []).append(
                 json.dumps(line, sort_keys=True) + "\n"
             )

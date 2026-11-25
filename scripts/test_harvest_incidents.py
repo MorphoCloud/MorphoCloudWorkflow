@@ -3177,7 +3177,7 @@ def test_portal_event_details_are_redacted_in_one_pass(tmp_path, cfg, monkeypatc
     assert [r["detail"] for r in got] == [
         "push failed: [token]",
         "line one\nline two",
-        "",
+        None,
     ]
     assert len(passes) == 1
     assert token not in (tmp_path / "store/portal/2025/11/24.jsonl").read_text()
@@ -3249,3 +3249,19 @@ def test_the_production_source_reads_portal_events():
     ]
     src = sources["MorphoCloud/Instances"]
     assert src.get("portal_events") is True
+
+
+def test_a_missing_cursor_row_is_an_error_not_a_restart(tmp_path, cfg, monkeypatch):
+    gone = {"schema": 1, "max": 5, "cursor_ts": None, "rows": [_ev(3), _ev(4), _ev(5)]}
+    h, calls = _events_h(tmp_path, cfg, monkeypatch, [[_ev(1), _ev(2)], gone, gone])
+    h.portal_events(T0 + 100)
+    assert h.portal_events(T0 + 400) == "failed: cursor row missing"
+    assert h.errors == [
+        "portal events: audit row 2 is missing (top row 5); rows deleted?"
+    ]
+    h.portal_events(T0 + 700)
+    assert calls == [0, 2, 2]  # the cursor stays
+    assert [r["id"] for r in _store_lines(tmp_path, "portal/2025/11/24.jsonl")] == [
+        1,
+        2,
+    ]

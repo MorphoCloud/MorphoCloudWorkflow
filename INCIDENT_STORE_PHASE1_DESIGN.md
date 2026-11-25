@@ -1137,6 +1137,15 @@ Where the build departs from the text above, and why.
   covers a rebuilt database that has already grown past the old cursor. A
   rebuild writes a `harvester-portal-db-restarted` line, and later rows carry
   the next `db` number.
+- **A missing cursor row is an error, not a restart.** If the top row is at or
+  past the cursor but there is no row at the cursor, rows were deleted, which
+  the portal never does (its test forbids it). The cursor stays, and
+  `last_error` names it until the maintainer decides. A restart would ship the
+  whole history again (review of #467).
+- **Readers dedupe on `(db, id)`.** The rows and the cursor are written in one
+  commit. A step that fails between writing the rows and writing the cursor (a
+  disk error) leaves rows that the next cycle writes again, with the same `db`
+  and `id`. A null `detail` stays null.
 - **The class test also accepts "audited by its callers".** Many writers
   (`mark_ready`, `set_state`, …) have their row written by the function that
   calls them, with more context (for example `installed`). The rule is that a
