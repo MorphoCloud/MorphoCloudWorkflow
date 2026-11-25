@@ -100,8 +100,9 @@ Code (one MWF PR, vendorized to Instances):
   allocations). Course and workshop repositories on other allocations, and
   `Test-Instances` (BIO240357, sunset), keep `exosphere` and change nothing. No
   other repository creates instances in BIO180006; step 6 checks again and
-  leaves alone, with a report, any `instance-*` server whose issue is not in
-  `MorphoCloud/Instances`. Workshops and courses created from
+  leaves alone, with a report, any `instance-*` server whose number is not a
+  request issue of `MorphoCloud/Instances` (the server name is
+  `instance-<issue number>`). Workshops and courses created from
   `MorphoCloud/Instances` itself get `mc-instance`, which serves them the same
   way (same ports).
 - `bake-image.sh` and `check-image.sh` use `mc-instance` (they run only on
@@ -138,8 +139,11 @@ stops working while SSH and TurboVNC keep working. To catch it:
   time. Decided by the maintainer 2026-11-25, to see how often, if ever, the
   address changes.
 - The check and `network-security-groups.sh` take the same lock
-  (`flock ~/netsec/lock`), so they never write at the same moment. Before
-  `mc-instance` exists the check does nothing and reports nothing.
+  (`flock ~/netsec/lock` on runner-1), so they never write at the same moment.
+  For that reason `network-security-groups.sh --apply` runs **only on
+  runner-1**; the maintainer's Mac is used only to move a port between groups
+  (rollback), never to write group rules. Before `mc-instance` exists the check
+  does nothing and reports nothing.
 - It accepts only addresses inside Jetstream2's public range 149.165.0.0/16, and
   at most 4 of them. An answer outside that, no answer, or a failed OpenStack
   call changes nothing. Such a problem emails the admins once it has lasted 3
@@ -210,7 +214,11 @@ their four rules.
    still uses `exosphere`.
 3. `network-security-groups.sh` on BIO180006: creates the three groups. Nothing
    uses them yet. The hourly proxy check is installed on runner-1 right after,
-   so the address is followed from the first instance on `mc-instance`.
+   so the address is followed from the first instance on `mc-instance`. While
+   nothing uses `mc-instance`, its update path is tested by hand: once with no
+   49528 rule (it adds one and reports no refusal), once with a deliberately
+   wrong extra address (it keeps the right one, removes the wrong one after 3
+   runs, run by hand, and emails).
 4. Live check on one test instance (#288), unshelved:
    - first, list every port listening on a non-local address (`ss -tulnp`),
      including whether RStudio Server runs. Anything member-facing beyond 22,
@@ -242,8 +250,9 @@ their four rules.
    from runner-1; one with anything listening outside 22, 5901 and 49528 is
    **skipped** and listed for the maintainer, and a later run picks it up.
    Shelved instances cannot be checked and are switched without it. At the end,
-   `openstack port list` confirms no port carries `default` and only
-   `morphoDepot-server` still carries `exosphere`.
+   `openstack port list` confirms no port carries `default`, and that
+   `exosphere` is left only on `morphoDepot-server` and on skipped instances,
+   which are listed. Steps 7 and later do not wait for skipped instances.
 7. Item 2, in this order: runner-2, the join VM, then runner-1 last (losing
    runner-1 would also lose the path used to repair the others; the maintainer's
    Mac, with its own OpenStack credentials, is the fallback). For each, in two
@@ -256,9 +265,8 @@ their four rules.
    rollback below is run from another working session. Check SSH from the Mac,
    runner-1 → runner-2/join (`mcjournal`), and the join site.
 8. Item 3: remove the `mc-jump` rule from `mc-portal` (k8s session told first).
-9. Test the hourly check's update path by hand: once with no 49528 rule (it adds
-   one and reports no refusal), once with a deliberately wrong address (it adds
-   the right one, removes the wrong one after its 3 runs, and emails).
+9. Confirm the hourly check's log and state file on runner-1 show it running (no
+   test on the live group: that was done at step 3).
 
 **Rollback:**
 
