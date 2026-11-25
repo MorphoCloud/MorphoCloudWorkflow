@@ -5,3 +5,5 @@
 # Monthly golden-image bake (STORAGE_REDESIGN_PLAN.md decision 22). Every Tuesday 08:00 UTC; the script goes on only on the first Tuesday of the month (cron cannot say that). Mondays 09:00 UTC: an email when no bake has succeeded for 43 days.
 0 8 * * 2 PATH=/home/exouser/venv/bin:/usr/local/bin:/usr/bin:/bin OS_CLOUD=BIO180006_IU /home/exouser/venv/bin/python /home/exouser/bake/bake-monthly.py >> /home/exouser/bake/cron.log 2>&1
 0 9 * * 1 PATH=/home/exouser/venv/bin:/usr/local/bin:/usr/bin:/bin OS_CLOUD=BIO180006_IU /home/exouser/venv/bin/python /home/exouser/bake/bake-monthly.py --overdue >> /home/exouser/bake/cron.log 2>&1
+# Hourly: mc-instance's web-desktop rule (port 49528) follows Exosphere's proxy address; changes and lasting problems are emailed (NETWORK_SECURITY_PLAN.md). Prints nothing when nothing changed.
+23 * * * * PATH=/home/exouser/venv/bin:/usr/local/bin:/usr/bin:/bin OS_CLOUD=BIO180006_IU /home/exouser/venv/bin/python /home/exouser/netsec/network-security.py proxy-check >> /home/exouser/netsec/proxy-check.log 2>&1

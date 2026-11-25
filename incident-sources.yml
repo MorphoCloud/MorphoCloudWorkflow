@@ -310,7 +310,8 @@ refusal_steps:
 # actor_kind looks for DISPATCH lines: pickup.log for the portal job's
 # auto-shelves (by=pickup), the bake's cron.log for its admin emails
 # (by=bake-monthly.py; INCIDENT_STORE_PLAN.md, "Reconcile with production
-# after the migration").
+# after the migration"), and the network check's proxy-check.log for its
+# admin emails (by=network-security.py; NETWORK_SECURITY_PLAN.md).
 # NOT the harvester's own log: shipping it would make every cycle a change
 # (the "committed" line), one commit every five minutes, and the watchdog's
 # "quiet store = stopped harvester" signal would be gone.
@@ -320,6 +321,7 @@ runner_logs:
   - { name: token-expiry, path: ~/token-expiry.log }
   - { name: pickup, path: ~/mc-data/pickup.log }
   - { name: bake, path: ~/bake/cron.log }
+  - { name: netsec, path: ~/netsec/proxy-check.log }
 # The Actions runner service's own logs (F5): only the lines the runner itself
 # logs at its ERR level (`[<date> <time> ERR  <Component>] ...`), from files
 # changed since the last cycle; the first cycle on a runner records where every

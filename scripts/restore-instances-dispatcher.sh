@@ -40,7 +40,7 @@ echo "   crontab: $CRONTAB"
 read -r -p "   Confirm this is the ACQUIRE runner (not control) [yes/no]: " ok
 [[ "$ok" == "yes" ]] || { echo "Aborted."; exit 1; }
 
-for f in "$MWF/scripts/morphocloud-dispatch.sh" "$MWF/scripts/bake-monthly.py" "$CRONTAB" "$WF_TOKEN"; do
+for f in "$MWF/scripts/morphocloud-dispatch.sh" "$MWF/scripts/bake-monthly.py" "$MWF/scripts/network-security.py" "$CRONTAB" "$WF_TOKEN"; do
   [[ -s "$f" ]] || { echo "ERROR: required file missing: $f"; exit 1; }
 done
 if [[ -n "$AN_TOKEN" ]]; then
@@ -79,6 +79,9 @@ scp "$MWF/scripts/police-floating-ips.py" "$RUNNER:police-floating-ips.py"
 # crontab lines are in the rendered block; each run clones MWF main for the rest.
 ssh "$RUNNER" 'mkdir -p ~/bake'
 scp "$MWF/scripts/bake-monthly.py" "$RUNNER:bake/bake-monthly.py"
+# Security groups and the hourly proxy-address check (NETWORK_SECURITY_PLAN.md).
+ssh "$RUNNER" 'mkdir -p ~/netsec'
+scp "$MWF/scripts/network-security.py" "$RUNNER:netsec/network-security.py"
 if (( HARVEST )); then
   scp "$CRONTAB" "$RUNNER:instances-runner.crontab"
 else
@@ -99,7 +102,7 @@ echo ">> Setting permissions and installing the crontab's managed block ..."
 # merge), so it cannot double-fire beside the rendered one.
 ssh "$RUNNER" '
   set -e
-  chmod +x ~/morphocloud-dispatch.sh ~/bake/bake-monthly.py
+  chmod +x ~/morphocloud-dispatch.sh ~/bake/bake-monthly.py ~/netsec/network-security.py
   [[ -f ~/check-dispatch-tokens.sh ]] && chmod +x ~/check-dispatch-tokens.sh
   chmod 600 ~/.config/morphocloud/*.pat
   kept=$(crontab -l 2>/dev/null \

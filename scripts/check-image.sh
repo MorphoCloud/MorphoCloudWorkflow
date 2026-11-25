@@ -57,10 +57,17 @@ grep -q '^package_upgrade: false' "$WORK/cloud-config" || fail "could not turn o
 sed -i 's|^package_update: true$|package_update: false|' "$WORK/cloud-config"
 grep -q '^package_update: false$' "$WORK/cloud-config" || fail "could not turn off package_update"
 
+# NETWORK_SECURITY_PLAN.md: the build VM gets the instances' group,
+# mc-instance; exosphere only while mc-instance does not exist yet.
+SECURITY_GROUP="${MC_SECURITY_GROUP:-mc-instance}"
+if ! openstack security group show "$SECURITY_GROUP" -f value -c id >/dev/null 2>&1; then
+  log "security group $SECURITY_GROUP not found; using exosphere"
+  SECURITY_GROUP=exosphere
+fi
 log "creating check instance $NAME ($FLAVOR, $IMAGE)"
 if ! openstack server create "$NAME" \
   --nic net-id="auto_allocated_network" \
-  --security-group "exosphere" \
+  --security-group "$SECURITY_GROUP" \
   --flavor "$FLAVOR" \
   --image "$IMAGE" \
   --property "exoSetup={\"status\":\"waiting\",\"epoch\":null}" \
