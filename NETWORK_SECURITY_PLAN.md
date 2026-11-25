@@ -1,11 +1,10 @@
 # Network exposure on production (BIO180006) — design note
 
-Status: **proposed, 2026-11-25** (not applied; the date changes to the approval
-date when merged). Nothing here is applied until the maintainer approves this
-note. Scope agreed with the maintainer on 2026-11-25: items 1–3 below. The
-Exosphere web-desktop proxy stays (members who need smooth 3D use TurboVNC). The
-k8s proof of concept (`mc-k8s-*`, `mc-jump`) and the MorphoDepot server are out
-of scope here; their findings are listed at the end.
+Status: **approved by the maintainer, 2026-11-25.** Scope agreed with the
+maintainer on 2026-11-25: items 1–3 below. The Exosphere web-desktop proxy stays
+(members who need smooth 3D use TurboVNC). The k8s proof of concept (`mc-k8s-*`,
+`mc-jump`) and the MorphoDepot server are out of scope here; their findings are
+listed at the end.
 
 ## What was found (read-only inventory, 2026-11-25)
 
@@ -107,7 +106,7 @@ Code (one MWF PR, vendorized to Instances):
   way (same ports).
 - `bake-image.sh` and `check-image.sh` use `mc-instance` (they run only on
   BIO180006; the build VM needs only SSH from runner-1).
-- `scripts/network-security-groups.sh`: writes `mc-instance`, `mc-runner` and
+- `scripts/network-security.py groups`: writes `mc-instance`, `mc-runner` and
   `mc-join`, and never touches any other group (`exosphere`, `default`,
   `mc-portal`, the k8s groups). It is **declarative** for its three groups: it
   creates each one, adds the rules in this note's tables and removes any other
@@ -129,7 +128,8 @@ Code (one MWF PR, vendorized to Instances):
 stops working while SSH and TurboVNC keep working. To catch it:
 
 - A security-group rule can hold only addresses, not a hostname, so the rule
-  follows the name instead: an **hourly** check on runner-1 resolves
+  follows the name instead: an **hourly** check on runner-1
+  (`network-security.py proxy-check`, the same script as `groups`) resolves
   `proxy-js2-iu.exosphere.app` and compares the set of addresses with the 49528
   rules of `mc-instance`.
 - On a difference it **updates the rules itself**: a new address is added at
@@ -138,9 +138,9 @@ stops working while SSH and TurboVNC keep working. To catch it:
   It emails the admins (`admin-alert.yml`) what changed: old and new addresses,
   time. Decided by the maintainer 2026-11-25, to see how often, if ever, the
   address changes.
-- The check and `network-security-groups.sh` take the same lock
+- The check and `network-security.py groups` take the same lock
   (`flock ~/netsec/lock` on runner-1), so they never write at the same moment.
-  For that reason `network-security-groups.sh --apply` runs **only on
+  For that reason `network-security.py groups --apply` runs **only on
   runner-1**; the maintainer's Mac is used only to move a port between groups
   (rollback), never to write group rules. Before `mc-instance` exists the check
   does nothing and reports nothing.
@@ -164,9 +164,9 @@ stops working while SSH and TurboVNC keep working. To catch it:
   other lines and installed only on runner-1 (BIO180006) by
   `restore-instances-dispatcher.sh`. It never reaches a course repository:
   `vendorize` and `vendorize-course` (`noxfile.py`) copy only the scripts they
-  name, and neither the crontab files, `network-security-groups.sh` nor the
-  check's script is among them (`check-workflow-clock.py` is copied only as the
-  pre-commit checker; its `TARGETS` hold the production crontab alone).
+  name, and neither the crontab files nor `scripts/network-security.py` is among
+  them (`check-workflow-clock.py` is copied only as the pre-commit checker; its
+  `TARGETS` hold the production crontab alone).
 - Accepted: the check, its update and its email all run on runner-1. If runner-1
   is down, a proxy move is not followed until it is back (the existing
   runner-down alerting covers runner-1 itself).
@@ -197,8 +197,8 @@ their four rules.
 | Resource                                     | Who writes or acts on it                                                                                             | What this change does                                                                                                                                                      |
 | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | group `exosphere` (BIO180006)                | the Exosphere web app (restores its defaults on use); `create-instance`, `bake-image.sh`, `check-image.sh` attach it | left as it is; `bake-image.sh` and `check-image.sh` move to `mc-instance` at step 5; after step 7 no production server needs it except `morphoDepot-server` (out of scope) |
-| groups `mc-instance`, `mc-runner`, `mc-join` | `network-security-groups.sh` (maintainer); the hourly check (only `mc-instance`'s 49528 rules)                       | new                                                                                                                                                                        |
-| group `mc-portal`                            | maintainer (by hand so far)                                                                                          | one rule removed; `network-security-groups.sh` does not manage it                                                                                                          |
+| groups `mc-instance`, `mc-runner`, `mc-join` | `network-security.py groups` (maintainer); the hourly check (only `mc-instance`'s 49528 rules)                       | new                                                                                                                                                                        |
+| group `mc-portal`                            | maintainer (by hand so far)                                                                                          | one rule removed; `network-security.py groups` does not manage it                                                                                                          |
 | member instance ports                        | `create-instance` (at create); unshelve keeps the port and its groups; delete removes the port                       | new instances get `mc-instance`; existing ones are switched once (below)                                                                                                   |
 | Exosphere's proxy                            | Exosphere's operators; we cannot change it                                                                           | it alone may reach 49528; the hourly check follows its address                                                                                                             |
 | runner-1 → runner-2, join, portal SSH        | the harvester (`mcjournal`), pickup and usage (`mcrunner`), the maintainer                                           | unchanged: 22 stays open on runner-2 and join; the portal rules for the runners stay                                                                                       |
@@ -212,7 +212,7 @@ their four rules.
 2. The MWF PR (variable, scripts, hourly check, tests), Claude review, merged.
    Merging changes nothing yet: the variable is unset, so `create-instance`
    still uses `exosphere`.
-3. `network-security-groups.sh` on BIO180006: creates the three groups. Nothing
+3. `network-security.py groups` on BIO180006: creates the three groups. Nothing
    uses them yet. The hourly proxy check is installed on runner-1 right after,
    so the address is followed from the first instance on `mc-instance`. While
    nothing uses `mc-instance`, its update path is tested by hand: once with no
@@ -238,21 +238,15 @@ their four rules.
    it); vendorize. From here `create-instance`, `bake-image.sh` and
    `check-image.sh` all use `mc-instance`. Create one instance through the
    portal (as `amm554`) and repeat step 4's outside checks.
-6. Before this step: the docs FAQ entry on SSH port forwarding is published, the
-   chatbot's knowledge is rebuilt, and members get one portal notice with the
-   date of the switch: from then on an instance is reachable only by SSH,
-   TurboVNC and the web desktop; a program they start themselves (Jupyter, a web
-   server) is reached through SSH port forwarding (link to the FAQ); Mosh no
-   longer works. Then switch every other `instance-*` port, shelved ones
-   included, with the same one-call command. The list is read when the step
-   runs, not fixed here (2026-11-25: only #288); running it twice changes
-   nothing. A running instance first gets the same listener listing over SSH
-   from runner-1; one with anything listening outside 22, 5901 and 49528 is
-   **skipped** and listed for the maintainer, and a later run picks it up.
-   Shelved instances cannot be checked and are switched without it. At the end,
-   `openstack port list` confirms no port carries `default`, and that
-   `exosphere` is left only on `morphoDepot-server` and on skipped instances,
-   which are listed. Steps 7 and later do not wait for skipped instances.
+6. Production has no member instances during the migration window (2026-11-25:
+   only the test instance #288), and members are locked out. So the whole
+   rollout finishes **before reopening**: from step 5 on, every instance a
+   member creates starts on `mc-instance`, and nothing needs to be switched
+   under a member. This step only confirms it: `openstack port list` shows no
+   `instance-*` port on `exosphere` or `default`, and `exosphere` is left only
+   on `morphoDepot-server`. The docs FAQ entry on SSH port forwarding (for
+   programs a member starts themselves, such as Jupyter) is published and the
+   chatbot's knowledge rebuilt before reopening.
 7. Item 2, in this order: runner-2, the join VM, then runner-1 last (losing
    runner-1 would also lose the path used to repair the others; the maintainer's
    Mac, with its own OpenStack credentials, is the fallback). For each, in two
@@ -285,7 +279,7 @@ their four rules.
 
 - A host firewall in the golden image (`ufw`, with Docker's published ports
   handled through the `DOCKER-USER` chain), as a second layer on instances.
-- `mc-portal`'s group under `network-security-groups.sh`, so it gets the same
+- `mc-portal`'s group under `network-security.py groups`, so it gets the same
   drift check (its group is the only layer there; `ufw` is off).
 
 ## Out of scope, reported only (2026-11-25)
