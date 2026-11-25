@@ -285,3 +285,18 @@ def test_a_good_run_ends_the_problem_episode():
     _, _, state = ns.follow({PROXY}, {PROXY}, ns.State(failures=5, last_alert=123.0))
     assert state.failures == 0
     assert state.last_alert == 0.0
+
+
+def test_proxy_rules_now_catches_wide_and_portless_rules_but_not_icmp():
+    rules = [
+        ("p", ns.tcp_in(49528, f"{PROXY}/32")),
+        ("range", ns.Rule("ingress", "IPv4", "tcp", 49000, 50000, "0.0.0.0/0")),
+        ("alltcp", ns.Rule("ingress", "IPv4", "tcp", None, None, "0.0.0.0/0")),
+        ("any", ns.Rule("ingress", "IPv4", None, None, None, "0.0.0.0/0")),
+        ("icmp", ns.ICMP_IN),
+        ("vnc", ns.tcp_in(5901)),
+        ("out", ns.EGRESS4),
+    ]
+    mine, strays = ns.proxy_rules_now(rules)
+    assert mine == {PROXY: "p"}
+    assert sorted(rid for rid, _ in strays) == ["alltcp", "any", "range"]

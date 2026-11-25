@@ -424,7 +424,12 @@ def proxy_rules_now(
     mine: dict[str, str] = {}
     strays: list[tuple[str, Rule]] = []
     for rid, r in rules:
-        if r.direction != "ingress" or r.port_min != PROXY_PORT:
+        # Any ingress TCP (or any-protocol) rule whose range includes 49528, or
+        # that has no port limit at all; ICMP never does.
+        covers = r.protocol in ("tcp", None) and (
+            r.port_min is None or r.port_min <= PROXY_PORT <= (r.port_max or r.port_min)
+        )
+        if r.direction != "ingress" or not covers:
             continue
         addr = r.remote.removesuffix("/32")
         proxy_form = (
