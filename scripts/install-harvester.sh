@@ -15,14 +15,12 @@
 #
 # Environment (defaults are production):
 #   MWF_HARVEST_SOURCE_TOKEN  PAT file: Actions:read + Issues:read on the source repo
-#                             (default ~/.ssh/GH_MorphoCloud-incidents-source;
-#                             Test: ~/.ssh/GH_MorphoCloud-test-incidents-source)
+#                             (default ~/.ssh/GH_MorphoCloud-incidents-source)
 #   MWF_HARVEST_STORE_TOKEN   PAT file: Contents:write + Issues:write on the store
-#                             (default ~/.ssh/GH_MorphoCloud-incidents-store;
-#                             Test: ~/.ssh/GH_MorphoCloud-test-incidents-store)
-#   MWF_SOURCE_REPO           default MorphoCloud/Instances (Test: MorphoCloud/Test-Instances)
-#   MWF_STORE_REPO            default MorphoCloud/Incidents (Test: MorphoCloud/Incidents-sandbox)
-#   MWF_OS_CLOUD              default BIO180006_IU (Test: BIO240357_IU); --outside-block only
+#                             (default ~/.ssh/GH_MorphoCloud-incidents-store)
+#   MWF_SOURCE_REPO           default MorphoCloud/Instances (the only source since Test was sunset, 2026-11-24)
+#   MWF_STORE_REPO            default MorphoCloud/Incidents
+#   MWF_OS_CLOUD              default BIO180006_IU; --outside-block only
 set -euo pipefail
 
 RUNNER="${1:?usage: install-harvester.sh <user@host> [--outside-block]}"

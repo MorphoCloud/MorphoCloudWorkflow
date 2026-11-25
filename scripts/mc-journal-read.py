@@ -35,6 +35,21 @@ readable. Output: the bytes from `offset` up to the last whole line (at most
 CAP), then `##OFFSET <new offset>`. A file shorter than `offset` (rotated or
 rewritten) is read from 0. `-` is first sight: nothing is returned but the
 file's current size, so reading starts at its end.
+
+The third form reads the GitHub Actions runner's own logs (`_diag`) on a
+runner host (INCIDENT_STORE_PLAN.md, "Reconcile with production after the
+migration"):
+
+    diag
+
+with a JSON object on standard input, {"prime": bool, "offsets": {file: n}}.
+The directory is the `diag-dir` line of the same allowlist; without that line
+the request is refused. Only regular files (never a link) changed in the last
+DIAG_WINDOW are looked at, and only lines matching DIAG_MATCH, the runner's
+own ERR level, are returned. For each file read: `==FILE <name> <new offset>`
+and then its matching lines; with `prime`, only the `==FILE` lines (the
+directory's history is not evidence). Last line: `##DIAG ok`. A file left out
+(the CAP or the time budget was reached) keeps the caller's offset.
 """
 
 from __future__ import annotations
@@ -44,6 +59,7 @@ import grp
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -61,6 +77,15 @@ UNITS_RE = re.compile(r"^[A-Za-z0-9@._*:,-]{1,1024}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 ALLOW_FIELDS = 2  # an allowlist line: name, absolute path
 ALLOWLIST = "/etc/morphocloud/mc-journal-files"
+# The `diag` form. The pattern is the harvester's `diag_match`
+# (incident-sources.yml; a test keeps the two equal): the runner's own ERR
+# lines, nothing else from its logs leaves the host.
+DIAG_DIR = "diag-dir"  # the allowlist name of the runner's _diag directory
+DIAG_MATCH = re.compile(r"^\[\S+ \S+ ERR ")
+DIAG_WINDOW = 48 * 3600  # files changed in the last two days
+DIAG_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+DIAG_REQUEST_MAX = 2_000_000  # bytes of JSON on standard input
+DIAG_READ_MAX = 64_000_000  # bytes read from one file per call
 
 
 def deny(msg: str) -> int:
@@ -166,7 +191,7 @@ def allowed_files(path: str = ALLOWLIST) -> dict[str, str]:
 
 
 def read_file(name: str, offset_text: str, out, allowlist: str = ALLOWLIST) -> int:
-    path = allowed_files(allowlist).get(name)
+    path = allowed_files(allowlist).get(name) if name != DIAG_DIR else None
     if path is None or not (offset_text.isdigit() or offset_text == "-"):
         return deny(f"file '{name}' is not in {allowlist}")
     try:
@@ -191,6 +216,96 @@ def read_file(name: str, offset_text: str, out, allowlist: str = ALLOWLIST) -> i
     return 0
 
 
+def diag_request(raw: str) -> tuple[bool, dict[str, int]] | None:
+    """(prime, offsets) from the caller's JSON, or None when it is malformed."""
+    try:
+        req = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(req, dict) or not isinstance(req.get("prime"), bool):
+        return None
+    offsets = req.get("offsets") or {}
+    if not isinstance(offsets, dict):
+        return None
+    clean: dict[str, int] = {}
+    for name, off in offsets.items():
+        if not (isinstance(name, str) and DIAG_NAME_RE.match(name)):
+            return None
+        if not isinstance(off, int) or isinstance(off, bool) or off < 0:
+            return None
+        clean[name] = off
+    return req["prime"], clean
+
+
+def diag_hits(path: Path, offset: int) -> tuple[int, list[str]] | None:
+    """(new offset, matching lines) of one regular file read from `offset`,
+    never through a link; None when it cannot be read as one."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as fh:
+        st = os.fstat(fh.fileno())
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        if st.st_size < offset:  # rewritten: from the start
+            offset = 0
+        fh.seek(offset)
+        chunk = fh.read(min(st.st_size - offset, DIAG_READ_MAX))
+    cut = chunk.rfind(b"\n") + 1  # a partial last line waits for the next call
+    hits = [
+        line + "\n"
+        for line in chunk[:cut].decode("utf-8", "replace").splitlines()
+        if DIAG_MATCH.search(line)
+    ]
+    return offset + cut, hits
+
+
+def read_diag(stdin, out, allowlist: str = ALLOWLIST, now: float | None = None) -> int:
+    directory = allowed_files(allowlist).get(DIAG_DIR)
+    if directory is None:
+        return deny(f"no '{DIAG_DIR}' line in {allowlist}")
+    req = diag_request(stdin.read(DIAG_REQUEST_MAX + 1)[:DIAG_REQUEST_MAX])
+    if req is None:
+        return deny('expected {"prime": true|false, "offsets": {file: n}} on stdin')
+    prime, offsets = req
+    now = time.time() if now is None else now
+    deadline = time.monotonic() + BUDGET
+    try:
+        entries = sorted(os.scandir(directory), key=lambda e: e.name)
+    except OSError as e:
+        return deny(f"cannot list {DIAG_DIR}: {type(e).__name__}")
+    written = 0
+    for entry in entries:
+        if time.monotonic() > deadline:
+            break  # the rest keep their offsets: next call
+        try:
+            st = entry.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        if (
+            not stat.S_ISREG(st.st_mode)
+            or not DIAG_NAME_RE.match(entry.name)
+            or now - st.st_mtime > DIAG_WINDOW
+        ):
+            continue
+        if prime:
+            out.write(f"==FILE {entry.name} {st.st_size}\n")
+            continue
+        got = diag_hits(Path(entry.path), offsets.get(entry.name, 0))
+        if got is None:
+            continue
+        new, hits = got
+        size = sum(len(h) for h in hits)
+        if written and written + size > CAP:
+            break  # this file and the rest keep their offsets: next call
+        out.write(f"==FILE {entry.name} {new}\n")
+        out.writelines(hits)
+        written += size
+    out.write("##DIAG ok\n")
+    return 0
+
+
 def can_read_system_journal() -> bool:
     """Without root, systemd-journal or adm, journalctl shows only the
     caller's own entries and still exits 0: a reader in that state would look
@@ -211,10 +326,12 @@ def main() -> int:
     parts = raw.split()
     if len(parts) == 3 and parts[0] == "file":  # noqa: PLR2004 — verb, name, offset
         return read_file(parts[1], parts[2], sys.stdout)
+    if parts == ["diag"]:
+        return read_diag(sys.stdin, sys.stdout)
     req = parse_request(raw)
     if req is None:
         return deny(
-            "expected 'journal <cursor|-> <unit-globs>' or 'file <name> <offset>'"
+            "expected 'journal <cursor|-> <unit-globs>', 'file <name> <offset>' or 'diag'"
         )
     cursor, units = req
     if not can_read_system_journal():

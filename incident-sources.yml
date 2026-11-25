@@ -10,10 +10,9 @@ sources:
   MorphoCloud/Instances:
     short: instances # the store's per-repository file name and incident-id prefix
     instance_prefix: "instance-" # production servers are instance-<issue>
-    control_host: null # exouser@<ip> of the second (control) runner, for its _diag logs over SSH
     # The weekly storage-usage snapshot (INCIDENT_STORE_PLAN.md "Storage usage
     # (weekly snapshot)"): the portal's `usage` reply through
-    # ~/mc-data/portal_target. Production only; Test-Instances' portal is shelved.
+    # ~/mc-data/portal_target.
     storage_usage: true
     # Coverage amendment, class K: other repositories harvested with this
     # source, by explicit list (maintainer, 2026-11-10): the join health
@@ -28,17 +27,22 @@ sources:
     # install-journal-reader.sh creates; `nova` is the server's name in
     # Jetstream2; `units` ship in full (warnings and kernel lines always ship);
     # `files` are our services' logs outside the journal, read through the
-    # host's allowlist. A new server VM is added here; leaving one out is an
-    # exclusion and must say why.
+    # host's allowlist; `diag: true` reads another runner's Actions `_diag`
+    # error lines through the same account (the reader's `diag` request; the
+    # acquire runner's own are read locally, `diag_dir` below). A new server
+    # VM is added here; leaving one out is an exclusion and must say why.
+    # Left out: mc-k8s-portal, the Kubernetes proof of concept, out of scope
+    # (maintainer, 2026-11-24).
     hosts:
       - name: morphocloud-instances-runner
         nova: morphocloud-instances-runner
         ssh: local
         units: ["actions.runner.*", "cron.service"]
-      - name: morphocloud-instances-runner-2
+      - name: morphocloud-instances-runner-2 # the control runner
         nova: morphocloud-instances-runner-2
         ssh: mcjournal@10.0.16.66
         units: ["actions.runner.*", "cron.service"]
+        diag: true
       - name: join-morphocloud # the join app, the website, welcome emails, the JS2 notifier
         nova: morphocloud-org-server
         ssh: mcjournal@10.0.16.245
@@ -51,29 +55,17 @@ sources:
         files:
           send-welcomes: /var/log/morphocloud-send-welcomes.log
           js2-status: /var/log/morphocloud-intake-js2-cron.log
-  MorphoCloud/Test-Instances:
-    short: test-instances
-    instance_prefix: "morpho-cloud-test_instance-"
-    control_host: null
-    hosts:
-      - name: mc-test-runner
-        nova: MC-Test-runner
-        ssh: local
-        units: ["actions.runner.*", "cron.service"]
-      - name: mc-data-portal # moves to production at the migration
-        nova: mc-data-portal
-        ssh: mcjournal@10.1.158.71
+      - name: mc-portal # the data portal (since the 2026-11-23 migration); logs only to the journal
+        nova: mc-portal
+        ssh: mcjournal@10.0.16.108
         units:
           - mc-data-portal.service
           - mc-data-worker.service
+          - mc-data-transfer.service # the MorphoSource cart downloads
           - copyparty.service
           - caddy.service
           - "mnt-shares-*.mount"
           - cron.service
-      - name: mc-join-test
-        nova: mc-join-test
-        ssh: mcjournal@10.1.158.175
-        units: [morphocloud-intake.service, nginx.service, cron.service]
 
 # Class I: journal lines counted per day instead of stored (each entry's count
 # goes in the host's daily summary line, so a filter that grows greedy shows).
@@ -134,8 +126,10 @@ admins:
 # is recorded as kind `other` (a failure is an incident, a success a count) and
 # named in state/harvester.json's last_error at every cycle until it is listed,
 # so the watchdog emails about it (test: every MWF workflow is listed; the list
-# below also covers the files that exist only in Instances, Test-Instances or
-# the monitor, checked against the GitHub API on 2026-11-10).
+# below also covers the files that exist only in Instances or the monitor,
+# checked against the GitHub API on 2026-11-10 and 2026-11-24). A workflow that
+# no longer exists stays listed, marked retired, so its recorded runs keep
+# their kind when they are re-derived.
 workflows:
   # Code: CI and code review in any repository, and Test's E2E harness.
   # Counted in the rollups, never an outcome line, a log or an incident (a red
@@ -150,8 +144,8 @@ workflows:
     - dependabot-updates
     - copilot
     - copilot-pull-request-reviewer
-    - e2e-verify-instance.yml # Test-Instances only
-    - _e2e_perm_check.yml # Test-Instances only
+    - e2e-verify-instance.yml # retired 2026-11-24 (Test-Instances sunset); kept for the runs already recorded
+    - _e2e_perm_check.yml # retired 2026-11-24 (Test-Instances sunset); kept for the runs already recorded
   # A command: one member action, one outcome line, jobs and the full log every time.
   command:
     - control-instance.yml
@@ -167,8 +161,8 @@ workflows:
     - create-workshop.yml
     - approve-workshop.yml
     - update-renew-label.yml # retired 2026-11-24; kept for the runs already recorded
-    - delete-volume.yml # Instances only (not in MWF)
-    - delete-volume-from-workflow.yml # Instances only (not in MWF)
+    - delete-volume.yml # retired (gone from Instances); kept for the runs already recorded
+    - delete-volume-from-workflow.yml # retired (gone from Instances); kept for the runs already recorded
   # An alert: every run is an incident (something asked for the admins).
   alert:
     - admin-alert.yml
@@ -178,7 +172,7 @@ workflows:
   # a failed one is an incident.
   sweep:
     - automatic-instance-shelving.yml
-    - automatic-volume-deleting.yml # Instances only (not in MWF)
+    - automatic-volume-deleting.yml # retired (gone from Instances); kept for the runs already recorded
     - health-check.yml # morphocloud-monitor
     - label-portal-request.yml
     - labels.yml
@@ -189,8 +183,8 @@ workflows:
     - request-notify-admin-workshop.yml
     - request-notify-admin.yml
     - runner-setup-helper.yml
-    - update-issue-from-workflow.yml # Test-Instances only
-    - update-issue.yml # Test-Instances only
+    - update-issue-from-workflow.yml # retired 2026-11-24 (Test-Instances sunset); kept for the runs already recorded
+    - update-issue.yml # retired 2026-11-24 (Test-Instances sunset); kept for the runs already recorded
     - validate-command-instance.yml
     - validate-command-workshop.yml
     - validate-request.yml
@@ -309,7 +303,11 @@ refusal_steps:
   - "Validate course command"
 
 # Runner-side logs shipped in full (F1-F4), each from its last offset. A path
-# that does not exist on a runner is skipped (pickup.log exists on Test only).
+# that does not exist on a runner is skipped. Each is also where rule 1 of
+# actor_kind looks for DISPATCH lines: pickup.log for the portal job's
+# auto-shelves (by=pickup), the bake's cron.log for its admin emails
+# (by=bake-monthly.py; INCIDENT_STORE_PLAN.md, "Reconcile with production
+# after the migration").
 # NOT the harvester's own log: shipping it would make every cycle a change
 # (the "committed" line), one commit every five minutes, and the watchdog's
 # "quiet store = stopped harvester" signal would be gone.
@@ -318,6 +316,7 @@ runner_logs:
   - { name: fip-police, path: ~/fip-police.log }
   - { name: token-expiry, path: ~/token-expiry.log }
   - { name: pickup, path: ~/mc-data/pickup.log }
+  - { name: bake, path: ~/bake/cron.log }
 # The Actions runner service's own logs (F5): only the lines the runner itself
 # logs at its ERR level (`[<date> <time> ERR  <Component>] ...`), from files
 # changed since the last cycle; the first cycle on a runner records where every

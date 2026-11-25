@@ -62,9 +62,9 @@ BLOCK_END = "# END morphocloud-dispatcher"
 # OpenStack cloud name on that runner, the floating-IP hold N of decision 24,
 # lines appended verbatim after the rendered ones, or None, and the incident
 # store the harvester writes to, or None for no harvester). Production holds
-# 5; the Test project keeps no reserve (hold 1: one spare ahead, no more),
-# by the maintainer's decision of 2026-11-03. The Test runner harvests into
-# Incidents-sandbox only while INCIDENT_STORE_PLAN.md Phase 1 is tested.
+# 5. Production only: the Test-Instances target (and its harvester into
+# Incidents-sandbox) was removed when Test was sunset on 2026-11-24
+# (INCIDENT_STORE_PLAN.md, "Reconcile with production after the migration").
 TARGETS = {
     "scripts/instances-runner.crontab": (
         "MorphoCloud/Instances",
@@ -72,13 +72,6 @@ TARGETS = {
         5,
         "scripts/instances-runner.crontab.extra",
         "MorphoCloud/Incidents",
-    ),
-    "scripts/test-instances-runner.crontab": (
-        "MorphoCloud/Test-Instances",
-        "BIO240357_IU",
-        1,
-        None,
-        "MorphoCloud/Incidents-sandbox",
     ),
 }
 # Runner-side scripts on the same clock (not workflows): (cron, command).

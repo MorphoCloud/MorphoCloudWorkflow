@@ -18,16 +18,16 @@ line promised every half hour. Now:
   person or another workflow dispatches says `# dispatch: manual`.
 - `scripts/check-workflow-clock.py render` writes the crontabs from the markers:
   `scripts/instances-runner.crontab` (production, plus the `.extra` lines for
-  MorphoCloudAnalytics and the token check) and
-  `scripts/test-instances-runner.crontab`.
+  MorphoCloudAnalytics and the token check). Test-Instances' crontab was removed
+  when Test was sunset on 2026-11-24.
 - The pre-commit hook `check-workflow-clock` fails when a schedule has no
   marker, a marker and schedule differ, a `workflow_dispatch`-only workflow has
   no marker, or a committed crontab is stale.
 
-**Scope: `Instances` and `Test-Instances`.** `MC-*` course repos stay on
-GitHub's schedule by the maintainer's decision (late shelving there burns the
-instructor's per-course allocation, not the main one); the `on: schedule`
-backstop is their only clock, which is why it stays in the workflows.
+**Scope: `Instances`.** `MC-*` course repos stay on GitHub's schedule by the
+maintainer's decision (late shelving there burns the instructor's per-course
+allocation, not the main one); the `on: schedule` backstop is their only clock,
+which is why it stays in the workflows.
 
 ## Files
 
@@ -40,16 +40,16 @@ backstop is their only clock, which is why it stays in the workflows.
   runner-side scripts that share the clock (`RUNNER_SCRIPTS`): today
   [`police-floating-ips.py`](police-floating-ips.py), the floating-IP policy of
   INSTANCE_DASHBOARD_PLAN.md decision 24, every five minutes.
-- [`instances-runner.crontab`](instances-runner.crontab),
-  [`test-instances-runner.crontab`](test-instances-runner.crontab) — rendered;
-  edit the markers, not these.
+- [`instances-runner.crontab`](instances-runner.crontab) — rendered; edit the
+  markers, not this.
 - [`restore-instances-dispatcher.sh`](restore-instances-dispatcher.sh) —
   installs scripts, token(s) and crontab on a runner; refuses a stale crontab.
   The rendered crontab is a **managed block** (`# BEGIN morphocloud-dispatcher`
   … `# END morphocloud-dispatcher`): the installer replaces that block and keeps
-  every other line of the runner's crontab — the Test runner's portal `pickup`
-  line lives there. Stray dispatcher and `harvest-incidents` lines outside the
-  block are dropped so nothing double-fires.
+  every other line of the runner's crontab — the portal's `pickup` line
+  (production runner-1 since the migration) lives there. Stray dispatcher and
+  `harvest-incidents` lines outside the block are dropped so nothing
+  double-fires.
 - [`harvest-incidents.py`](harvest-incidents.py) — the incident harvester
   (`INCIDENT_STORE_PLAN.md`), the second runner-side script on the clock: every
   five minutes it records the repository's runs in the incident store
@@ -83,14 +83,10 @@ Production (`exouser@149.165.152.104`, defaults):
 scripts/restore-instances-dispatcher.sh
 ```
 
-Test-Instances (`exouser@149.165.154.162`, no analytics lines):
-
-```bash
-MWF_CRONTAB=scripts/test-instances-runner.crontab \
-MWF_WF_TOKEN=~/.ssh/GH_MorphoCloud-test-workflow-dispatcher \
-MWF_ANALYTICS_TOKEN= \
-scripts/restore-instances-dispatcher.sh exouser@149.165.154.162
-```
+Test-Instances has no crontab since it was sunset on 2026-11-24. MC-Test-runner
+is shelved with its old crontab (Test dispatcher lines and a harvester into
+Incidents-sandbox) still installed: whoever unshelves it clears that crontab
+first.
 
 The token is a dedicated fine-grained PAT with **`Actions: Read and write`** on
 that one repository (Metadata:read is automatic), saved to

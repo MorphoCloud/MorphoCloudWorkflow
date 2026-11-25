@@ -1189,6 +1189,21 @@ December, or the Monday overdue check), by reading its record.
 about 40 KB a day; runner-2's `_diag` errors are expected to be similar to
 runner-1's.
 
+**As built.**
+
+- The harvester keeps runner-2's `_diag` offsets in its runner-side state, each
+  with the time the reader last named the file, and forgets one after 7 days. A
+  file the reader leaves out (its output cap or time budget reached) keeps its
+  offset. A file that comes back after more than 7 unnamed days is read from its
+  start once.
+- A `_diag` read that fails is logged every cycle. After 2 hours it is named in
+  `last_error`, so the store's watchdog emails about it. A host whose journal
+  answers is not marked "unreachable" for this.
+- The reader opens `_diag` files with `O_NOFOLLOW` and reads only regular files,
+  so a link placed in `_diag` cannot expose another file to `mcjournal`.
+- The rendered production crontab is byte-identical before and after (checked
+  with `check-workflow-clock.py render`).
+
 ### Volume
 
 Measured on Instances over 2026-10-09 to 11-07: about 1,100 runs a day, about

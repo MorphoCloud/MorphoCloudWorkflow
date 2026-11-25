@@ -14,14 +14,29 @@
 #   - from the runner, checks the account answers (and records the host key in
 #     the runner's known_hosts, which the harvester's BatchMode SSH needs).
 #
+#   - with `--diag <dir>` (a runner host marked `diag: true` in
+#     incident-sources.yml): writes the allowlist's `diag-dir` line, which the
+#     reader's `diag` request reads (only the runner's ERR lines of files
+#     changed in two days), and gives mcjournal traverse-only access (`x`, an
+#     ACL entry) to each parent directory it cannot pass, e.g. /home/exouser.
+#     It gains no right to list or read anything else there.
+#
 # Usage:
-#   install-journal-reader.sh <admin user@host> <runner user@host> <address the runner uses> [name=/abs/path ...]
+#   install-journal-reader.sh <admin user@host> <runner user@host> <address the runner uses> [--diag /abs/dir] [name=/abs/path ...]
 #   e.g. install-journal-reader.sh exouser@149.165.151.191 exouser@149.165.152.104 10.0.16.245 \
 #          send-welcomes=/var/log/morphocloud-send-welcomes.log js2-status=/var/log/morphocloud-intake-js2-cron.log
+#   the control runner:
+#        install-journal-reader.sh exouser@149.165.154.131 exouser@149.165.152.104 10.0.16.66 \
+#          --diag /home/exouser/actions-runner/_diag
+#   the portal (no admin login of its own from outside but through the runner):
+#        MWF_SSH_JUMP=exouser@149.165.152.104 install-journal-reader.sh ubuntu@149.165.170.226 \
+#          exouser@149.165.152.104 10.0.16.108
+# Re-running it replaces the reader and the allowlist with what is given now:
+# give every entry the host needs each time.
 # The acquire runner itself needs no account: install-harvester.sh puts the
 # reader beside the harvester and adds exouser to systemd-journal.
 # Environment: MWF_SSH_JUMP=<user@host> to reach the admin host through a jump
-# host (the Test portal and test join VMs: MWF_SSH_JUMP=exouser@149.165.154.162).
+# host.
 set -euo pipefail
 
 ADMIN="${1:?usage: install-journal-reader.sh <admin user@host> <runner user@host> <address> [name=/path ...]}"
@@ -35,6 +50,14 @@ READER="$MWF/scripts/mc-journal-read.py"
 [[ -s "$READER" ]] || { echo "ERROR: $READER missing"; exit 1; }
 
 ALLOW=""
+DIAG=""
+if [[ "${1:-}" == "--diag" ]]; then
+  DIAG="${2:?--diag needs the _diag directory}"
+  shift 2
+  [[ "$DIAG" =~ ^/[A-Za-z0-9._/-]{1,255}$ && "$DIAG" != *..* ]] \
+    || { echo "ERROR: bad --diag directory '$DIAG' (absolute; letters, digits, . _ / -; no ..)"; exit 1; }
+  ALLOW+="diag-dir $DIAG"$'\n'
+fi
 for kv in "$@"; do
   name="${kv%%=*}"; path="${kv#*=}"
   # Both end up inside a single-quoted string of a root command on the host:
@@ -70,6 +93,19 @@ ssh ${JUMP[@]+"${JUMP[@]}"} "$ADMIN" "
   sudo -n chmod 600 /var/lib/mcjournal/.ssh/authorized_keys
   printf '%s' '$ALLOW' | sudo -n tee /etc/morphocloud/mc-journal-files >/dev/null
   sudo -n chmod 644 /etc/morphocloud/mc-journal-files
+  if [ -n '$DIAG' ]; then
+    # traverse only (x) on each parent mcjournal cannot pass, then check it
+    # can list the directory itself; nothing is granted on the directory.
+    d=''
+    for part in \$(echo '$DIAG' | tr '/' ' '); do
+      d=\"\$d/\$part\"
+      [ \"\$d\" = '$DIAG' ] && break
+      sudo -n -u mcjournal test -x \"\$d\" || sudo -n setfacl -m u:mcjournal:x \"\$d\"
+    done
+    sudo -n -u mcjournal test -r '$DIAG' -a -x '$DIAG' \
+      || { echo '  ERROR: mcjournal still cannot read $DIAG'; exit 1; }
+    echo \"  diag-dir: $DIAG (\$(sudo -n -u mcjournal ls '$DIAG' | wc -l) files readable by mcjournal)\"
+  fi
   if sudo -n grep -qsE '^\s*AllowUsers' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf; then
     echo '  WARNING: sshd has AllowUsers; add mcjournal there or the runner cannot log in'
   fi
