@@ -300,3 +300,38 @@ def test_proxy_rules_now_catches_wide_and_portless_rules_but_not_icmp():
     mine, strays = ns.proxy_rules_now(rules)
     assert mine == {PROXY: "p"}
     assert sorted(rid for rid, _ in strays) == ["alltcp", "any", "range"]
+
+
+def test_a_rule_call_that_fails_every_run_reaches_the_alert(tmp_path, monkeypatch):
+    # The proxy needs a rule; creating it fails every hour (quota, permission).
+    log = _fake_world(monkeypatch, tmp_path, [])
+
+    def create_fails(*_):
+        msg = "quota exceeded"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(ns, "create_rule", create_fails)
+    for _ in range(ns.FAIL_RUNS):
+        ns.cmd_proxy_check()
+    assert ns.State.load(tmp_path / "state.json").failures == ns.FAIL_RUNS
+    assert len(log["sent"]) == 1
+    assert "quota exceeded" in log["sent"][0][1]
+
+
+def test_parse_rule_on_a_real_openstack_row():
+    # Captured from `openstack security group rule list mc-portal -f json`
+    # (BIO180006, 2026-11-25): the remote-group keys are present and null.
+    real = {
+        "ID": "02d4fdd1-f585-401e-b4e0-46110fed2d7e",
+        "IP Protocol": "tcp",
+        "Ethertype": "IPv4",
+        "IP Range": "149.165.149.15/32",
+        "Port Range": "22:22",
+        "Direction": "ingress",
+        "Remote Security Group": None,
+        "Remote Address Group": None,
+    }
+    assert ns.parse_rule(real)[1] == ns.tcp_in(22, "149.165.149.15/32")
+    real["Remote Security Group"] = "8f0c"
+    real["IP Range"] = None
+    assert ns.parse_rule(real)[1].remote == "group:8f0c"

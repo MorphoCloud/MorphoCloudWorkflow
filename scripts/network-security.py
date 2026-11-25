@@ -450,7 +450,8 @@ def cmd_proxy_check() -> int:
     with locked(wait=False) as ok:
         if not ok:
             return 0  # a groups run is writing; the next hour checks again
-        state = State.load(STATE)
+        prev = State.load(STATE)
+        new: State | None = None  # follow()'s result, once it has run
         now = time.time()
         done: list[str] = []  # every rule change made this run, for the email
         resolved: set[str] = set()
@@ -463,7 +464,7 @@ def cmd_proxy_check() -> int:
             problem = validate(resolved)
             if problem is None:
                 current, strays = proxy_rules_now(group_rules(gid))
-                add, remove, state = follow(resolved, set(current), state)
+                add, remove, new = follow(resolved, set(current), prev)
                 for a in sorted(add):  # add first: no moment without the proxy
                     create_rule(gid, tcp_in(PROXY_PORT, f"{a}/32"))
                     done.append(f"added {a}")
@@ -492,10 +493,14 @@ def cmd_proxy_check() -> int:
                 + "\n\nNothing to do: the rule was updated automatically (NETWORK_SECURITY_PLAN.md)."
                 + (f"\n\nThe run then failed: {problem}" if problem else ""),
             )
-        if problem is None:
-            state.save(STATE)
+        if problem is None and new is not None:
+            new.save(STATE)  # a good run: counters reset (follow)
             return 0
-        state.failures += 1
+        if problem is None:
+            problem = "the check ended without a result"
+        # A problem run: count it on the loaded state, never on follow()'s
+        # reset one, so a call that fails every hour reaches the alert.
+        state = State((new or prev).missing, prev.failures + 1, prev.last_alert)
         log(
             f"problem (run {state.failures} in a row){'' if done else ', nothing changed'}: {problem}"
         )
