@@ -1198,9 +1198,13 @@ runner-1's.
 **As built.**
 
 - The harvester keeps runner-2's `_diag` offsets in its runner-side state, each
-  with the time the reader last named the file, and forgets one after 30 days
-  (the request stays near 250 KB). It sends that limit as `forget_before`. A
-  file the reader finds without an offset starts at its end when its name
+  with the time the reader last named the file, and forgets one after 3 days.
+  (The build said 30 days and about 250 KB, from a wrong estimate of runner-2's
+  logs. Measured at rollout, 2026-11-25: about 920 Worker logs a day, so 30 days
+  meant a 1.3 MB request every cycle, near the reader's 2 MB limit; with the
+  reader's 2-day window, 3 days keep about 200 KB.) A live file is named at
+  every call, so it is never forgotten. It sends that limit as `forget_before`.
+  A file the reader finds without an offset starts at its end when its name
   (`Worker_YYYYMMDD-HHMMSS-utc.log`) dates it before that limit, so a forgotten
   file's lines never ship twice; a newer file, or one without a date in its
   name, is read from its start (a new file).

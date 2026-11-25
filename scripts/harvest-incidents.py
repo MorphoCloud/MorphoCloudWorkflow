@@ -127,12 +127,15 @@ EXTRA_FIRST_SIGHT = 7 * 86400
 JOURNAL_TIMEOUT = 180
 JOURNAL_READER = HERE / "mc-journal-read.py"
 # A host's _diag offsets are forgotten when the reader has not named the file
-# for 30 days (it names only files changed in the last two days). The request
-# says so (`forget_before`), and the reader starts a file it finds again
-# without an offset at its end when the file's name dates it before then, so a
-# forgotten file's lines are never shipped twice. 30 days of runner-2's
-# Worker logs keep the request near 250 KB.
-DIAG_KEEP = 30 * 86400
+# for 3 days (it names every file changed in the last two days at each call,
+# so a live file is never forgotten). The request says so (`forget_before`),
+# and the reader starts a file it finds again without an offset at its end
+# when the file's name dates it before then: a forgotten file was named, so
+# created, more than 3 days earlier, and its lines are never shipped twice.
+# Runner-2 writes about 920 Worker logs a day (measured 2026-11-16..24): the
+# reader's 2-day window plus 3 days keep the request and the runner-side state near 200 KB (30 days: 1.3 MB, near
+# the reader's DIAG_REQUEST_MAX).
+DIAG_KEEP = 3 * 86400
 # A host's _diag that cannot be read for this long is named in last_error (the
 # watchdog's two-hour rule for an unreadable server).
 DIAG_DOWN = 2 * 3600
