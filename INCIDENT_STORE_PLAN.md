@@ -547,6 +547,11 @@ subcommand, and `provision.sh` re-run on Test and production). The working
 tables stay as they are. Rows are pruned after 400 days. The harvester keeps one
 cursor. Test now, production after the 2026-11-23 migration.
 
+**Amended 2026-11-25 (built):** the portal's existing `audit` table already is
+an append-only log, so it is the event log; there is no `portal_events` table.
+`export-events` reads it by row number. See INCIDENT_STORE_PHASE1_DESIGN.md, "PR
+C — the portal".
+
 | #   | Event kind (`portal_events.kind`)                                                                                                                                                                                                                                                    | Replaces                                                                                   |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
 | G1  | `command.posted`, `command.outcome` (when the portal sees the 👍/👎; the harvester joins the GitHub side by `comment_id` and never reads a missing outcome as pending). The member-side denominator, including presses that never produced a run                                     | `instance_commands`                                                                        |

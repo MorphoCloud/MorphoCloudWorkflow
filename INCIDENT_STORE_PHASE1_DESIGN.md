@@ -873,5 +873,300 @@ the per-capture lock-time estimates and measurements the plan requires._
 
 ## PR C — the portal
 
-_To be written after PR A ships. Scope per the plan: `portal_events`,
-`export-events`, the `pickup` `DISPATCH` line, the harvester's portal step._
+Design note, 2026-11-25. Approved by the maintainer on 2026-11-25, with the
+recommended answer to each decision below. Built in portal #64 and this PR; see
+"As built" at the end for where the build departs from the text.
+
+The `pickup` `DISPATCH` line of the plan's PR C is already done (portal #60,
+merged 2026-11-25). The portal's systemd journal (G10, the error lines) is
+already harvested from `mc-portal` (MWF #464). This note covers what is left:
+the store records what members do and see on the portal.
+
+### Facts verified for this design (portal `main` 778f6ba, 2026-11-25)
+
+The plan's section G was written from the portal's `share-prototype` (abbbd74)
+on 2026-11-08. I re-swept the current code: every SQL write in `app/`, `admin/`
+and `runner/`, the function it sits in, and who calls that function. A short
+script did the sweep; the tables below come from its output, not from memory.
+
+- **One database.** Every write goes to `/var/lib/mc-data/portal.db`. There is
+  no other store on the portal, apart from the systemd journal.
+- **26 tables today**, against 17 on 2026-11-08. The new ones are
+  `storage_requests`, `team_messages`, `team_messages_received`, `message_acks`,
+  `chatbot_acks`, and the MorphoSource tables `ms_batches`, `ms_items`,
+  `ms_disk` and `ms_disk_checks`.
+- **The portal already has an append-only log: `audit`.** It is written at 47
+  places in the web app, the root worker, the transfer service and the admin
+  tool. No code updates or deletes an `audit` row, and nothing prunes it. It has
+  no explicit id column, so its SQLite `rowid` is the row number. Nothing in the
+  portal runs `VACUUM`.
+- **Production's `audit` table, read-only, 2026-11-25:** 155 rows (about 11 KB)
+  since the database was created on 2026-11-24. The row numbers run 1 to 155
+  with no gaps. The most common actions are `installed`, `login`,
+  `mount-selfcheck`, `instance-request` and `instance-create`.
+- **History is still lost in these places.** The plan's list was right in kind.
+  The details now are:
+  - `instance_requests.state` is overwritten. There are 9 `move_request` calls
+    and the worker's `expire_requests`. Only three of the moves leave an audit
+    row (replaced, opened, `/create` posted). `closed`, `rejected` and `failed`
+    leave none.
+  - `instance_commands.outcome` (the 👍/👎 the portal saw) is set without an
+    audit row.
+  - `failures` (what went wrong for a member, which the worker emails) is pruned
+    at 30 days, with no audit row.
+  - Admin alerts (`admin/alerts.py`): a delivered alert leaves no row anywhere.
+    A failed one stays in `alert_outbox` only until it is delivered.
+  - Help requests (`chatbot_escalations`) are deleted once emailed.
+  - Reachability: `replace_instance_states` replaces the whole snapshot every
+    report. When an instance stopped or started answering is kept nowhere.
+  - Auto-shelve requests and the runner's answers stay in `auto_shelves`,
+    without an audit row. The dispatch itself is now in `pickup.log` as a
+    `DISPATCH` line.
+  - **What the member was refused.** Every refusal on the dashboard goes through
+    one function, `_back(message)` in `app/main.py`, with 30 callers. Examples
+    are "The last command is still running.", "The command could not be sent.
+    Please try again." and "That instance type is not available right now." None
+    of them is recorded. A press that never reached GitHub is therefore
+    invisible to the store. This is the plan's G1 "denominator". The sign-in
+    failure pages (`message.html`) and the assistant's refusals (`_Refused` in
+    `app/chatbot.py`) are the same class.
+- **The harvester already reads the portal.** The weekly storage-usage snapshot
+  calls the gate command `usage` over SSH with the runner's own key, using the
+  target in `~/mc-data/portal_target` (`portal_usage()` in
+  `harvest-incidents.py`). A second read-only command can use the same path.
+
+### The design
+
+**1. Use `audit` as the event log. Do not add `portal_events`.** The plan
+proposed a new append-only table written beside every event. `audit` already is
+that table, at 47 places. A second table would copy it. The change is to add the
+missing events as `audit` rows, through the same `db.audit()` call. Each new row
+follows the existing convention: `action` is the event, `github_id` and `login`
+say whose it is, and `detail` carries `issue #N` where there is one. No schema
+change and no migration.
+
+**2. The class rule, with a CI test.** "Every function that changes something a
+member can see writes one `audit` row." A list would go stale, so the rule is
+checked instead. A test in the portal parses `app/db.py`, `admin/alerts.py` and
+`app/chatbot_queue.py`. Every function with an `INSERT`, `UPDATE` or `DELETE`
+must either call `audit()` or be on an exempt list in the test, with the reason
+beside each entry. The same test fails on any `UPDATE audit` or
+`DELETE FROM audit` anywhere in the code. The exempt entries planned:
+
+| Exempt function(s)                                               | Reason                                                                       |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `set_usage`, `ms_progress`                                       | counters, not events; usage is the harvester's weekly snapshot               |
+| `should_alert`, `clear_alert`                                    | throttle stamps; the alert itself is an event (below)                        |
+| `queue_outbox`, `outbox_delete`, `queue_digest`, `digest_delete` | covered by the alert events in `alerts.py`                                   |
+| `set_connection`, `clear_connection`                             | secrets; their callers already audit `connection-set` and `connection-clear` |
+| `replace_messages`                                               | the team's messages are GitHub discussions, already public and kept          |
+| `unalerted_*`                                                    | an "admins told" flag                                                        |
+| `_migrate_shares`                                                | schema migration                                                             |
+
+**3. The events added.** Each is written in the function that makes the change,
+right after the change succeeds:
+
+| Event (`action`)                                                   | Written in                                                                   | Fills                                                                                      |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `request-<state>`                                                  | `move_request`, `expire_requests`                                            | every request state change, with the message (G2)                                          |
+| `command-posted` (with the comment id)                             | `record_command`                                                             | the join key from a press to the GitHub run (G1)                                           |
+| `command-outcome` (`ok` / `failed`)                                | `set_command_outcome`                                                        | what the member's card showed (G1)                                                         |
+| `refused`                                                          | `_back()`, the sign-in failure pages, the assistant's `_Refused`             | every refusal a member saw, with its text and the page action (G1); `_back` gains the user |
+| `failure-<kind>`                                                   | `record_failure`                                                             | the failures table's rows, before its 30-day prune (G3)                                    |
+| `auto-shelve-requested`, `auto-shelve-result`                      | `record_auto_shelve`, `set_auto_shelve_result`                               | (G4)                                                                                       |
+| `reachability` (`issue #N name yes→no` / `no→yes`)                 | `replace_instance_states`, only when an instance's answer changes            | the only reachability history (G5)                                                         |
+| `alert-sent`, `alert-queued`, `alert-delayed-sent`, `alert-digest` | `alerts.send`, `flush_outbox`, `send_digest`                                 | every admin alert, subject and body (G6)                                                   |
+| `help-queued`, `help-sent`, `help-expired`                         | `chatbot_queue.queue`, `send_pending`                                        | that a help request was made and delivered, **not its text** (decision 2 below) (G7)       |
+| `share-claimed`, `extensions-claimed`, `mailed`                    | `claim_pending`, `claim_extensions`, `mark_mailed`                           | the runner's storage steps that leave no row today (G9)                                    |
+| `ms-failed`, `ms-retry`, `ms-stopped-for-space`                    | `ms_finish` (failed), `ms_retry_later`, `ms_stop_for_space`, `ms_fail_batch` | MorphoSource transfer failures (new since the plan)                                        |
+| `notice-ok`, `assistant-ok`                                        | `ack_message`, `ack_attention`                                               | that the member saw and closed a notice                                                    |
+
+The test, not this table, is the authority. If the build finds another writer,
+it gets an event or an exempt line with a reason.
+
+**4. One read-only gate command: `export-events <since>`.**
+
+- **Gate.** A new arm in `deploy/mc-data-runner-gate` passes only digits.
+- **Admin tool.** A new subcommand in `admin/cli.py` opens the database
+  read-only (`mode=ro`). It prints one JSON document:
+  `{"schema": 1, "max": <highest rowid>, "rows": [...]}`. The rows are those
+  with `rowid > since`, oldest first, at most 2,000 per call. Each row is
+  `id, ts, github_id, login, action, detail`.
+- **What it never reads.** It reads no other table. `connections` is never read.
+- **The cursor is safe.** SQLite lets one writer at a time hold the lock, so
+  rows are committed in row-number order. A reader never sees row N+1 while row
+  N is still to come. A rolled-back insert leaves no gap that a later row could
+  fill below the cursor.
+
+**5. The harvester's portal step (MWF).**
+
+- **Config and call.** `incident-sources.yml` gains `portal_events: true` on the
+  Instances source, like `storage_usage`. Each 5-minute cycle makes one
+  `export-events` call through `~/mc-data/portal_target`, using the code
+  `portal_usage()` already uses.
+- **Storage.** Rows are redacted with the store's `redact.sed`, like every other
+  text. They are written to `portal/YYYY/MM/DD/events.jsonl` by the row's own
+  time. The cursor is kept in `harvest-local.json` and advanced only after the
+  store commit. If a call returns 2,000 rows, the next cycle continues from
+  there.
+- **Failures.** A failed call is logged. Once it has failed for more than 2
+  hours, it is added to the cycle's errors, so the store watchdog emails, the
+  same rule as `DIAG_DOWN`.
+- **A rebuilt portal database.** If `max` is lower than the cursor, the database
+  was rebuilt (a new VM, or a restore). The harvester records
+  `portal database restarted at row <max>` in the store and starts again from 0.
+- **Incidents.** These rows are context only. An incident on issue N can show
+  the portal rows for issue N. No portal row opens an incident by itself in this
+  phase.
+
+### Decisions this note asks the maintainer to confirm
+
+1. **`audit` as the event log, instead of a new `portal_events` table.** I
+   recommend yes: no copy of 47 existing sites, no migration, and production's
+   first 155 rows come in on the first call.
+2. **Help requests: record that one was made, not its text.** CHATBOT_PLAN.md
+   decision 9 tells members that the text is deleted once emailed ("Nothing is
+   kept longer"). The plan's G7 (2026-11-08) proposed storing the text,
+   redacted. I recommend the event only: member id, login, time, text length,
+   and sent or expired. The text still reaches your inbox. If you want the text
+   in the store, decision 9 and the member-facing wording change with it.
+3. **Admin alerts: subject and body in the store.** These are texts the code
+   writes for you (logins, issue numbers, error lines). The help-request email
+   also goes through `alerts.send`, so for that one only the subject is
+   recorded.
+4. **`audit` is not pruned on the portal for now.** At about 10 KB a day it is
+   about 4 MB a year. The plan's 400-day prune can come later if it is ever
+   needed.
+5. **Testing on production** (the Test side is sunset). See the test plan below.
+
+### Actor map
+
+| Actor                                                | What it does to `portal.db`                                                                      | What this change does to it                                          |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| Members, through the web app (`mc-data-portal`)      | requests, commands, resets, storage requests, MorphoSource, acks, help requests                  | the functions they reach now also write one `audit` row              |
+| Admins, through the web app's admin page             | storage request decisions                                                                        | unchanged (already audited)                                          |
+| The root worker (`mc-data-worker`)                   | resets, request expiry, failure and auto-shelve emails, help-request sends, mount checks, alerts | new rows from request expiry, alerts and help sends                  |
+| The transfer service (`mc-data-transfer`)            | MorphoSource downloads                                                                           | new rows for failures, retries and stops for space                   |
+| The runner's `pickup`, through the gate (`mcrunner`) | claims, installs, state reports, auto-shelve answers, storage-term steps                         | new rows from claims, reachability changes and auto-shelve answers   |
+| **The harvester**, through the same gate             | reads `usage` weekly                                                                             | also reads `export-events` every 5 minutes; read-only                |
+| The maintainer by hand (`mc-data-admin`)             | the same functions                                                                               | the same rows. A hand edit with `sqlite3` leaves none (a stated gap) |
+| `provision.sh`                                       | `init`: creates missing tables                                                                   | installs the new gate arm; no table change                           |
+
+**Interleavings checked:**
+
+- **A harvester read during a writer's transaction.** The database is in WAL
+  mode, so the reader sees the last committed state. It never blocks the writer,
+  and never sees half a transaction.
+- **Two gate calls at once (`pickup` and the harvester).** They are separate SSH
+  sessions and separate processes. The harvester's is read-only. Neither waits
+  on the other.
+- **An event row written beside its change.** Where the change already runs in a
+  transaction (`tx()`), the row goes into the same one. Where the caller writes
+  outside a transaction (most of today's `audit()` calls), a crash between the
+  two statements can lose one event row. That is the same as today's `audit`
+  behavior, and I am not changing it here.
+
+### Two PRs
+
+- **Portal PR:** the events, `export-events`, the gate arm, the class test, and
+  the `_back` change.
+- **MWF PR:** the harvester's portal step, the config line and its tests. It is
+  built after the portal PR is merged and deployed, so it is tested against the
+  real command.
+
+Each PR gets one review, and every HIGH or MEDIUM finding is fixed or dismissed
+with a reason.
+
+### Test plan (presented for approval; production, since Test is sunset)
+
+1. Unit tests in both repositories, including the class test failing on a
+   fixture function that writes without `audit()`.
+2. Deploying the portal PR to production with `provision.sh` needs your OK.
+   After the deploy, one `export-events 0` from runner-1 returns every row from
+   1, with `max` equal to the row count.
+3. As amm554 on the production portal:
+   - a refused press (Shelve while a command is still running), which should
+     produce one `refused` row;
+   - one help request, which should produce `help-queued` and then `help-sent`,
+     with no text in either.
+
+   Both send nothing to GitHub. The help request emails you once.
+
+4. Enabling the harvester step (a vendorize of MWF `main` to runner-1) needs
+   your OK. The next cycle writes `portal/2026/11/…/events.jsonl` with those
+   rows. The cursor advances. A second cycle adds nothing new.
+5. Stopping the gate arm for one cycle logs the failure and does not email. The
+   watchdog rule (2 hours) is checked by a unit test, not by waiting.
+
+### Cost
+
+- **Portal disk:** about 10 KB a day of `audit` rows (production's first day: 11
+  KB).
+- **Harvester:** one SSH call per cycle (288 a day). Each starts one Python
+  process on the portal for under a second.
+- **Store:** about 4 MB a year.
+
+### Found while sweeping (not part of this change)
+
+- **A help request can be emailed twice when the mail server fails.**
+  `chatbot_queue.send_pending` passes `alerts.send` as its sender. `alerts.send`
+  puts a failed email into `alert_outbox` and returns False. `send_pending` then
+  keeps the request and retries it 5 minutes later, and the outbox also delivers
+  its copy once mail works. The outbox copy also holds the member's text past
+  decision 9's limit until it is delivered. The fix is to pass `alerts.deliver`
+  instead, which sends once and keeps nothing. This is a one-line portal fix. I
+  will raise it as its own item and not fold it in here.
+
+### As built (2026-11-25)
+
+Where the build departs from the text above, and why.
+
+- **The cursor is in the store, not in `harvest-local.json`.** It is
+  `state/portal-events.json` (`cursor`, `db`, `cursor_ts`), written in the same
+  commit as the rows. A failed push then neither skips nor repeats a row.
+- **The store path is `portal/YYYY/MM/DD.jsonl`**, the same layout as
+  `platform/`. Each line is `id, db, at, github_id, login, action, detail`. Only
+  `detail` goes through the redaction rules; `action` comes from the code and
+  `login` is kept, as everywhere in the store. All of a cycle's details are
+  redacted in one `sed` pass. If a rule spans two values (an unclosed
+  private-key block), each value is redacted on its own instead.
+- **A rebuilt database is caught in two ways, not one.** `export-events` also
+  returns `cursor_ts`, the time of the row at the cursor. The harvester treats
+  the database as rebuilt when the top row is below its cursor, or when
+  `cursor_ts` differs from the time it stored with the cursor. The second check
+  covers a rebuilt database that has already grown past the old cursor. A
+  rebuild writes a `harvester-portal-db-restarted` line, and later rows carry
+  the next `db` number.
+- **A missing cursor row is an error, not a restart.** If the top row is at or
+  past the cursor but there is no row at the cursor, rows were deleted, which
+  the portal never does (its test forbids it). The cursor stays, and
+  `last_error` names it until the maintainer decides. A restart would ship the
+  whole history again (review of #467).
+- **Readers dedupe on `(db, id)`.** The rows and the cursor are written in one
+  commit. A step that fails between writing the rows and writing the cursor (a
+  disk error) leaves rows that the next cycle writes again, with the same `db`
+  and `id`. A null `detail` stays null.
+- **The class test also accepts "audited by its callers".** Many writers
+  (`mark_ready`, `set_state`, …) have their row written by the function that
+  calls them, with more context (for example `installed`). The rule is that a
+  writer writes the row itself or through a function it calls, or every function
+  that calls it does, or it is exempt with a reason. As built, 19 writers write
+  their own row, 33 rely on their callers, and 16 are exempt. The test fails on
+  a fixture writer with no row, and on an exempt entry that no longer writes or
+  now writes a row.
+- **Events beyond the table above.** `ms-ok`, `ms-refresh`, `ms-listing-failed`
+  (only when the reason changes, not every retry),
+  `instance-recreate-requested`, `session-set`, and `create-request` from the
+  admin tool. `help-send-failed` was added beside `help-queued`, `help-sent` and
+  `help-expired`.
+- **Refusals.** `_back(message, user)`: each of the 22 calls with a message
+  passes the member. The two storage-request redirects that bypassed `_back` now
+  go through it. The row names the route, for example
+  `instance_command: The last command is still running.`. The assistant records
+  `assistant-refused` (too long, busy, rate limit) and `assistant-unavailable`
+  (the model call failed). A refusal before the sign-in is known is not
+  recorded.
+- **Help requests and alerts.** The worker passes
+  `functools.partial(alerts.send, record_body=False)` to the help queue, so a
+  help request's alert row has the subject only. The duplicate-email bug above
+  is still open, as its own item.
