@@ -30,7 +30,9 @@ One cycle, in order:
       `extra_repos` (production: the join health monitor);
    I. the system journal of every host the source lists, from a saved cursor,
       through mc-journal-read.py (locally, or as the read-only `mcjournal`
-      account's forced command over SSH);
+      account's forced command over SSH), and of a host marked `diag: true`
+      (the control runner) also its Actions _diag error lines, through the
+      same account;
    J. the Nova state of those hosts, a line on every change;
 8. one commit and one push, only when something changed. The cursor moves with
    every sweep tick on production, so a store that has not changed for two
@@ -75,7 +77,6 @@ import io
 import json
 import os
 import re
-import shlex
 import socket
 import subprocess
 import sys
@@ -125,6 +126,16 @@ EXTRA_FIRST_SIGHT = 7 * 86400
 # long; an unreachable or slow host is recorded and retried next cycle.
 JOURNAL_TIMEOUT = 180
 JOURNAL_READER = HERE / "mc-journal-read.py"
+# A host's _diag offsets are forgotten when the reader has not named the file
+# for 30 days (it names only files changed in the last two days). The request
+# says so (`forget_before`), and the reader starts a file it finds again
+# without an offset at its end when the file's name dates it before then, so a
+# forgotten file's lines are never shipped twice. 30 days of runner-2's
+# Worker logs keep the request near 250 KB.
+DIAG_KEEP = 30 * 86400
+# A host's _diag that cannot be read for this long is named in last_error (the
+# watchdog's two-hour rule for an unreadable server).
+DIAG_DOWN = 2 * 3600
 UFW_SRC_RE = re.compile(r"\bSRC=(\d+\.\d+\.\d+)\.\d+")
 UFW_DPT_RE = re.compile(r"\bDPT=(\d+)")
 TOP_N = 10
@@ -2497,9 +2508,6 @@ class Harvester:
             )
             if lines:
                 self.ship_by_day(host, "diag", lines, day)
-            control = self.src.get("control_host")
-            if control:
-                status["diag_remote"] = self.remote_diag(control, day)
         return status
 
     def ship_capped(self, rel: str, lines: list[str]) -> None:
@@ -2523,76 +2531,47 @@ class Harvester:
         for day, part in split_by_day(lines, today).items():
             self.ship_capped(f"runner/{day}/{host}/{name}.log", part)
 
-    def remote_diag(self, control: str, day: str) -> str:
-        """The control runner's _diag error lines over SSH, from per-file
-        offsets kept here (`diag_remote_offsets`), so a line is shipped once.
-        The offsets advance only when the whole read succeeded; an unreachable
-        host loses nothing, the next cycle reads from the same offsets."""
-        offsets = self.local.data.setdefault("diag_remote_offsets", {})
-        cases = "".join(
-            f"    {shlex.quote(name)}) off={int(off)};;\n"
-            for name, off in offsets.items()
+    def host_diag(self, host: dict, st: dict, now: float, today: str) -> str | None:
+        """The Actions runner's own error lines (`_diag`) of a host marked
+        `diag: true`, through the reader's `diag` request as the read-only
+        mcjournal account (INCIDENT_STORE_PLAN.md, "Reconcile with production
+        after the migration"). Offsets are kept here per file with the time the
+        reader last named it, and forgotten after DIAG_KEEP (the reader then
+        starts that file at its end if it changes again); they advance only
+        for the files the reader names, and a call that reached its cap names
+        the rest with their old offsets, so an unreachable host or a capped
+        call loses nothing. No offsets yet = first sight: every file's end is
+        recorded and nothing is shipped, as diag_new_lines() does. Returns the
+        error, or None."""
+        kept = st.get("diag")
+        prime = kept is None
+        kept = dict(kept or {})
+        request = json.dumps(
+            {
+                "prime": prime,
+                "offsets": {n: int(v[0]) for n, v in kept.items()},
+                "forget_before": int(now - DIAG_KEEP),
+            }
         )
-        # No offsets yet = first sight of this host: record where every file
-        # ends and ship nothing, as diag_new_lines() does; history is not evidence.
-        prime = "1" if not offsets else ""
-        script = (
-            f"prime={prime}\n"
-            "cd ~/actions-runner/_diag || exit 3\nhostname\n"
-            'for f in *; do\n  [ -f "$f" ] || continue\n'
-            '  size=$(stat -c %s "$f"); off=0\n'
-            f'  case "$f" in\n{cases}  esac\n'
-            '  [ "$size" -lt "$off" ] && off=0\n'
-            '  echo "==FILE $f $size"\n'  # every file, so a rotated one is forgotten
-            '  [ -n "$prime" ] && continue\n'
-            '  [ "$size" -eq "$off" ] && continue\n'
-            f'  tail -c +$((off+1)) "$f" | grep -E {shlex.quote(self.cfg.diag_match.pattern)} || true\n'
-            "done\n"
-        )
-        try:
-            r = subprocess.run(
-                [
-                    "ssh",
-                    "-o",
-                    "BatchMode=yes",
-                    "-o",
-                    "ConnectTimeout=10",
-                    control,
-                    "bash",
-                    "-s",
-                ],
-                input=script,
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
-            )
-        except (subprocess.TimeoutExpired, OSError):
-            return "unreachable"
-        if r.returncode != 0:
-            return "unreachable"
-        lines = r.stdout.splitlines()
-        host = lines[0].strip() if lines else control.split("@")[-1]
-        # Only the files the listing names keep an offset: a rotated file is
-        # forgotten, as diag_new_lines() does locally.
-        new_offsets: dict[str, int] = {}
+        lines, _, err = self.host_call(host, "diag", "##DIAG ", stdin=request)
+        if err:
+            return err
         body: list[str] = []
         header = None
-        for line in lines[1:]:
+        for line in lines:
             if line.startswith("==FILE "):
-                name, size = line[len("==FILE ") :].rsplit(" ", 1)
-                new_offsets[name] = int(size)
+                name, size = line[len("==FILE ") :].strip().rsplit(" ", 1)
+                kept[name] = [int(size), int(now)]
                 header = f"# {name}\n"
-            else:
-                if header:
-                    body.append(header)
-                    header = None
-                body.append(line + "\n")
+                continue
+            if header:
+                body.append(header)
+                header = None
+            body.append(line if line.endswith("\n") else line + "\n")
         if body:
-            self.ship_by_day(host, "diag", body, day)
-        offsets.clear()
-        offsets.update(new_offsets)
-        return "ok"
+            self.ship_by_day(host["name"], "diag", body, today)
+        st["diag"] = {n: v for n, v in kept.items() if now - v[1] <= DIAG_KEEP}
+        return None
 
     # -- class K: the other repositories this source lists -------------------
     def extra_repos(self) -> list[str]:
@@ -2649,7 +2628,7 @@ class Harvester:
         return self.host_call(host, f"journal {cursor} {units}", "##CURSOR ")
 
     def host_call(
-        self, host: dict, request: str, trailer: str
+        self, host: dict, request: str, trailer: str, stdin: str | None = None
     ) -> tuple[list[str], str, str | None]:
         """One request to mc-journal-read.py: (lines, the trailer's value,
         error). The acquire runner runs it locally; every other host through
@@ -2670,6 +2649,7 @@ class Harvester:
                 timeout=JOURNAL_TIMEOUT,
                 check=False,
                 env=env,
+                input=stdin,
             )
         except (subprocess.TimeoutExpired, OSError) as e:
             return [], "", f"{type(e).__name__}"
@@ -2778,8 +2758,26 @@ class Harvester:
             # caught up (nothing new) means every earlier day is complete
             self.journal_summaries(name, st, read_to or today)
             self.host_files(host, st, today)
+            if host.get("diag"):
+                self.diag_of(host, st, now, today)
             status[name] = "ok"
         return status
+
+    def diag_of(self, host: dict, st: dict, now: float, today: str) -> None:
+        """host_diag() with its failure kept: logged every cycle, and named in
+        last_error once it has lasted DIAG_DOWN, so the watchdog emails
+        about it (a host whose journal answers but whose _diag does not is
+        not "unreachable")."""
+        err = self.host_diag(host, st, now, today)
+        if err is None:
+            st.pop("diag_down_since", None)
+            return
+        since = st.setdefault("diag_down_since", to_iso(now))
+        log(f"{host['name']} _diag: {err}")
+        if now - parse_ts(since) > DIAG_DOWN:
+            self.errors.append(
+                f"{host['name']}: runner logs (_diag) unreadable since {since}: {err}"
+            )
 
     # -- class J: platform state of the server VMs -----------------------------
     def platform(self, now: float) -> str:

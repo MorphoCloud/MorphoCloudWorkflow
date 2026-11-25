@@ -3,12 +3,15 @@ Run: python -m pytest scripts/test_harvest_incidents.py"""
 
 from __future__ import annotations
 
+import calendar
 import importlib.util
 import io
 import json
+import os
 import re
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -529,9 +532,7 @@ def test_rule1_dispatch_line_makes_automation_whoever_the_actor_is(cfg, tmp_path
         hv.actor_kind(cfg, late, "MorphoCloud/Instances", None, None, d)[0] == "admin"
     )
     assert (
-        hv.actor_kind(
-            cfg, run_of("muratmaga"), "MorphoCloud/Test-Instances", None, None, d
-        )[0]
+        hv.actor_kind(cfg, run_of("muratmaga"), "MorphoCloud/Other", None, None, d)[0]
         == "admin"
     )
 
@@ -932,56 +933,108 @@ def test_assemble_log_matches_a_sanitized_job_folder():
     assert tail == "a\n##[error]boom\n"
 
 
-def test_remote_diag_parses_listing_and_forgets_rotated_files(tmp_path, monkeypatch):
+def _diag_h(tmp_path, replies, sent):
+    """A harvester whose host_call answers the `diag` request with `replies`."""
     h = hv.Harvester.__new__(hv.Harvester)
-    h.cfg = hv.Config({"diag_match": "ERR"}, {})
+    h.cfg = hv.Config({}, {})
     h.store = hv.Store(tmp_path / "store", "instances", dry_run=False)
-    h.local = hv.Local(tmp_path / "local.json", dry_run=False)
-    h.local.data["diag_remote_offsets"] = {"Runner_old.log": 500, "Worker_1.log": 10}
-    # a stub: the subprocess.run patch below would catch the redactor's sed too
     h.redactor = SimpleNamespace(text=lambda t: (t, 0))
-    out = "control-host\n==FILE Worker_1.log 40\nERR two\n==FILE Worker_2.log 7\n"
-    monkeypatch.setattr(
-        hv.subprocess,
-        "run",
-        lambda *_a, **_k: subprocess.CompletedProcess(
-            args=[], returncode=0, stdout=out, stderr=""
-        ),
-    )
-    assert h.remote_diag("exouser@control", "2026/11/09") == "ok"
-    assert h.local.data["diag_remote_offsets"] == {
-        "Worker_1.log": 40,
-        "Worker_2.log": 7,
-    }
-    shipped = (tmp_path / "store/runner/2026/11/09/control-host/diag.log").read_text()
-    assert shipped == "# Worker_1.log\nERR two\n"
+    h.errors = []
+
+    def fake_call(host, request, trailer, stdin=None):
+        sent.append((host["ssh"], request, trailer, json.loads(stdin)))
+        return replies.pop(0)
+
+    h.host_call = fake_call
+    return h
 
 
-def test_remote_diag_first_sight_primes_without_shipping(tmp_path, monkeypatch):
-    h = hv.Harvester.__new__(hv.Harvester)
-    h.cfg = hv.Config({"diag_match": "ERR"}, {})
-    h.store = hv.Store(tmp_path / "store", "instances", dry_run=False)
-    h.local = hv.Local(tmp_path / "local.json", dry_run=False)
-    h.redactor = SimpleNamespace(text=lambda t: (t, 0))
-    sent: dict = {}
+RUNNER2 = {"name": "runner-2", "ssh": "mcjournal@10.0.16.66", "diag": True}
+NOW = 1_795_000_000.0
 
-    def fake_run(*_a, **kw):
-        sent["script"] = kw["input"]
-        return subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout="control-host\n==FILE Runner_1.log 900\n",
-            stderr="",
+
+def test_host_diag_first_sight_primes_without_shipping(tmp_path):
+    sent: list = []
+    h = _diag_h(tmp_path, [(["==FILE Runner_1.log 900\n"], "ok", None)], sent)
+    st: dict = {}
+    assert h.host_diag(RUNNER2, st, NOW, "2026/11/25") is None
+    assert sent == [
+        (
+            "mcjournal@10.0.16.66",
+            "diag",
+            "##DIAG ",
+            {"prime": True, "offsets": {}, "forget_before": int(NOW - hv.DIAG_KEEP)},
         )
+    ]
+    assert st["diag"] == {"Runner_1.log": [900, int(NOW)]}
+    assert not (tmp_path / "store/runner").exists()
 
-    monkeypatch.setattr(hv.subprocess, "run", fake_run)
-    assert h.remote_diag("exouser@control", "2026/11/09") == "ok"
-    assert sent["script"].startswith("prime=1\n")
-    assert h.local.data["diag_remote_offsets"] == {"Runner_1.log": 900}
-    assert not (tmp_path / "store/runner/2026/11/09/control-host/diag.log").exists()
-    # with offsets in hand the script ships
-    h.remote_diag("exouser@control", "2026/11/09")
-    assert sent["script"].startswith("prime=\n")
+
+def test_host_diag_ships_named_files_and_keeps_the_others(tmp_path):
+    sent: list = []
+    reply = [
+        "==FILE Worker_1.log 40\n",
+        "[2026-11-25 01:02:03Z ERR  JobDispatcher] lost the job\n",
+        "==FILE Worker_2.log 7\n",
+    ]
+    h = _diag_h(tmp_path, [(reply, "ok", None)], sent)
+    old = int(NOW) - 3600
+    st = {
+        "diag": {
+            "Worker_1.log": [10, old],
+            "Runner_capped.log": [500, old],  # not named this call (cap): kept
+            "Runner_gone.log": [
+                5,
+                int(NOW) - hv.DIAG_KEEP - 1,
+            ],  # a week unnamed: forgotten
+        }
+    }
+    assert h.host_diag(RUNNER2, st, NOW, "2026/11/25") is None
+    assert sent[0][3] == {
+        "prime": False,
+        "offsets": {"Worker_1.log": 10, "Runner_capped.log": 500, "Runner_gone.log": 5},
+        "forget_before": int(NOW - hv.DIAG_KEEP),
+    }
+    assert st["diag"] == {
+        "Worker_1.log": [40, int(NOW)],
+        "Worker_2.log": [7, int(NOW)],
+        "Runner_capped.log": [500, old],
+    }
+    shipped = (tmp_path / "store/runner/2026/11/25/runner-2/diag.log").read_text()
+    assert (
+        shipped
+        == "# Worker_1.log\n[2026-11-25 01:02:03Z ERR  JobDispatcher] lost the job\n"
+    )
+
+
+def test_host_diag_failure_keeps_offsets_and_reaches_last_error_after_two_hours(
+    tmp_path,
+):
+    sent: list = []
+    down = ([], "", "mc-journal-read: refused: no 'diag-dir' line")
+    h = _diag_h(tmp_path, [down, down, ([], "ok", None)], sent)
+    st = {"diag": {"Worker_1.log": [10, int(NOW)]}}
+    h.diag_of(RUNNER2, st, NOW, "2026/11/25")
+    assert st["diag"] == {"Worker_1.log": [10, int(NOW)]}
+    assert h.errors == []  # a short failure is only logged
+    h.diag_of(RUNNER2, st, NOW + hv.DIAG_DOWN + 1, "2026/11/25")
+    assert len(h.errors) == 1
+    assert "runner-2: runner logs (_diag) unreadable since" in h.errors[0]
+    h.diag_of(RUNNER2, st, NOW + hv.DIAG_DOWN + 400, "2026/11/25")
+    assert "diag_down_since" not in st
+
+
+def test_journals_reads_diag_only_for_a_host_marked_diag(tmp_path, cfg, monkeypatch):
+    hosts = [
+        {"name": "join", "ssh": "mcjournal@10.0.0.1", "units": ["x"]},
+        {**RUNNER2, "units": ["x"]},
+    ]
+    h = _jh(tmp_path, cfg, hosts)
+    monkeypatch.setattr(h, "read_journal", lambda _h, _c: ([], "c1", None))
+    called = []
+    monkeypatch.setattr(h, "diag_of", lambda host, *_a: called.append(host["name"]))
+    assert h.journals(NOW) == {"join": "ok", "runner-2": "ok"}
+    assert called == ["runner-2"]
 
 
 def test_assemble_log_empty_archive_means_no_log():
@@ -1147,6 +1200,226 @@ def test_reader_file_form_reads_only_the_allowlist(tmp_path):
     assert jr.read_file("welcomes", "-1", io.StringIO(), str(allow)) == 2  # noqa: PLR2004
 
 
+ERR_LINE = "[2026-11-25 01:02:03Z ERR  JobDispatcher] lost the job\n"
+INFO_LINE = "[2026-11-25 01:02:04Z INFO JobDispatcher] fine\n"
+
+
+def _diag_dir(tmp_path, now):
+    d = tmp_path / "_diag"
+    d.mkdir()
+    (d / "Worker_new.log").write_text(
+        INFO_LINE + ERR_LINE + "[2026-11-25 01:02:05Z ERR  partial"
+    )
+    (d / "Runner_1.log").write_text(INFO_LINE * 3)
+    old = d / "Worker_old.log"
+    old.write_text(ERR_LINE)
+    os.utime(old, (now - jr.DIAG_WINDOW - 60, now - jr.DIAG_WINDOW - 60))
+    secret = tmp_path / "secret"
+    secret.write_text(ERR_LINE)
+    (d / "Worker_link.log").symlink_to(secret)  # never followed
+    allow = tmp_path / "allow"
+    allow.write_text(f"diag-dir {d}\n")
+    return d, allow
+
+
+def test_reader_diag_first_sight_names_recent_files_only(tmp_path):
+    now = time.time()
+    _, allow = _diag_dir(tmp_path, now)
+    out = io.StringIO()
+    stdin = io.StringIO('{"prime": true, "offsets": {}}')
+    assert jr.read_diag(stdin, out, str(allow), now) == 0
+    assert out.getvalue().splitlines() == [
+        f"==FILE Runner_1.log {len(INFO_LINE) * 3}",
+        f"==FILE Worker_new.log {len(INFO_LINE) + len(ERR_LINE)}",  # never mid-line
+        "##DIAG ok",
+    ]
+
+
+def test_reader_diag_ships_only_err_lines_from_each_offset(tmp_path):
+    now = time.time()
+    _, allow = _diag_dir(tmp_path, now)
+    out = io.StringIO()
+    stdin = io.StringIO(
+        json.dumps({"prime": False, "offsets": {"Runner_1.log": len(INFO_LINE) * 3}})
+    )
+    assert jr.read_diag(stdin, out, str(allow), now) == 0
+    whole = len(INFO_LINE) + len(ERR_LINE)  # the partial last line waits
+    assert out.getvalue() == (
+        f"==FILE Runner_1.log {len(INFO_LINE) * 3}\n"
+        f"==FILE Worker_new.log {whole}\n{ERR_LINE}##DIAG ok\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "stdin",
+    [
+        "not json",
+        '{"offsets": {}}',
+        '{"prime": false, "offsets": {"../etc/passwd": 0}}',
+        '{"prime": false, "offsets": {"a.log": -1}}',
+        '{"prime": false, "offsets": {"a.log": true}}',
+        '{"prime": false, "offsets": {"..": 0}}',
+        '{"prime": false, "offsets": {".hidden": 0}}',
+        '{"prime": false, "offsets": {}, "forget_before": "x"}',
+        '{"prime": false, "offsets": {}, "forget_before": -1}',
+        '{"prime": false, "offsets": {}, "forget_before": NaN}',
+    ],
+)
+def test_reader_diag_refuses_a_bad_request(tmp_path, stdin):
+    _, allow = _diag_dir(tmp_path, time.time())
+    assert jr.read_diag(io.StringIO(stdin), io.StringIO(), str(allow)) == 2  # noqa: PLR2004
+
+
+def test_reader_diag_needs_the_allowlist_line_and_is_not_a_file(tmp_path):
+    d, allow = _diag_dir(tmp_path, time.time())
+    empty = tmp_path / "empty"
+    empty.write_text("")
+    req = '{"prime": true, "offsets": {}}'
+    assert jr.read_diag(io.StringIO(req), io.StringIO(), str(empty)) == 2  # noqa: PLR2004
+    # the directory's allowlist name never opens it through the file form
+    assert jr.read_file("diag-dir", "0", io.StringIO(), str(allow)) == 2  # noqa: PLR2004
+
+
+def _diag_req(offsets, forget_before=0):
+    return io.StringIO(
+        json.dumps({"prime": False, "offsets": offsets, "forget_before": forget_before})
+    )
+
+
+def test_reader_diag_caps_the_first_file_too_and_names_the_rest(tmp_path, monkeypatch):
+    """Review of #464: the cap applies from the first file; a capped call
+    names every remaining known file with the caller's own offset."""
+    now = time.time()
+    d = tmp_path / "_diag"
+    d.mkdir()
+    (d / "A_crash.log").write_text(ERR_LINE * 10)
+    (d / "B_known.log").write_text(ERR_LINE * 2)
+    (d / "C_new.log").write_text(ERR_LINE)
+    allow = tmp_path / "allow"
+    allow.write_text(f"diag-dir {d}\n")
+    monkeypatch.setattr(jr, "CAP", len(ERR_LINE) * 3)
+    out = io.StringIO()
+    assert jr.read_diag(_diag_req({"B_known.log": 0}), out, str(allow), now) == 0
+    assert out.getvalue() == (
+        f"==FILE A_crash.log {len(ERR_LINE) * 3}\n"
+        + ERR_LINE * 3
+        + "==FILE B_known.log 0\n"  # kept, not read; C_new is read next call
+        + "##DIAG ok\n"
+    )
+
+
+def test_reader_diag_one_line_longer_than_the_cap_is_cut_not_stuck(
+    tmp_path, monkeypatch
+):
+    now = time.time()
+    d = tmp_path / "_diag"
+    d.mkdir()
+    long_line = "[2026-11-25 01:02:03Z ERR  X] " + "y" * 100 + "\n"
+    (d / "A.log").write_text(long_line)
+    allow = tmp_path / "allow"
+    allow.write_text(f"diag-dir {d}\n")
+    monkeypatch.setattr(jr, "CAP", 40)
+    out = io.StringIO()
+    assert jr.read_diag(_diag_req({}), out, str(allow), now) == 0
+    lines = out.getvalue().splitlines()
+    assert lines[0] == f"==FILE A.log {len(long_line)}"  # moved past it
+    assert len(lines[1]) == 39  # noqa: PLR2004 — cut to the cap
+    assert lines[1].endswith(" [truncated]")
+
+
+def test_reader_diag_skips_a_run_without_newline_longer_than_a_read(
+    tmp_path, monkeypatch
+):
+    now = time.time()
+    d = tmp_path / "_diag"
+    d.mkdir()
+    (d / "A.log").write_text("x" * 50)
+    allow = tmp_path / "allow"
+    allow.write_text(f"diag-dir {d}\n")
+    monkeypatch.setattr(jr, "DIAG_READ_MAX", 20)
+    out = io.StringIO()
+    jr.read_diag(_diag_req({}), out, str(allow), now)
+    assert out.getvalue().startswith("==FILE A.log 20\n")  # never stuck at 0
+
+
+def test_reader_diag_a_forgotten_old_file_starts_at_its_end(tmp_path):
+    """Review of #464: an offset the harvester forgot (DIAG_KEEP) must not
+    make the file's old lines ship again. A file the caller does not know
+    starts at its end when its name dates it before forget_before, and is
+    read from 0 when it is newer or carries no date (a new file)."""
+    now = time.time()
+    d = tmp_path / "_diag"
+    d.mkdir()
+    (d / "Worker_20260101-000000-utc.log").write_text(ERR_LINE)  # old, touched again
+    (d / "Worker_20261124-000000-utc.log").write_text(
+        ERR_LINE
+    )  # newer than forget_before
+    (d / "nodate.log").write_text(ERR_LINE)
+    allow = tmp_path / "allow"
+    allow.write_text(f"diag-dir {d}\n")
+    forget = calendar.timegm((2026, 10, 25, 0, 0, 0))
+    out = io.StringIO()
+    assert jr.read_diag(_diag_req({}, forget), out, str(allow), now) == 0
+    assert out.getvalue() == (
+        f"==FILE Worker_20260101-000000-utc.log {len(ERR_LINE)}\n"
+        f"==FILE Worker_20261124-000000-utc.log {len(ERR_LINE)}\n{ERR_LINE}"
+        f"==FILE nodate.log {len(ERR_LINE)}\n{ERR_LINE}"
+        "##DIAG ok\n"
+    )
+
+
+def test_reader_diag_first_sight_names_every_file_past_the_time_budget(
+    tmp_path, monkeypatch
+):
+    """Review of #464: a first sight out of time still names every file, so
+    none is read from 0 later."""
+    now = time.time()
+    _, allow = _diag_dir(tmp_path, now)
+    monkeypatch.setattr(jr, "BUDGET", -1)  # out of time from the start
+    out = io.StringIO()
+    stdin = io.StringIO('{"prime": true, "offsets": {}}')
+    assert jr.read_diag(stdin, out, str(allow), now) == 0
+    assert [x.split()[1] for x in out.getvalue().splitlines()[:-1]] == [
+        "Runner_1.log",
+        "Worker_new.log",
+    ]
+
+
+def test_journal_installer_refuses_a_diag_dir_with_a_trailing_slash(tmp_path):
+    for bad in ("/home/exouser/actions-runner/_diag/", "/home//exouser/_diag"):
+        r = subprocess.run(
+            [
+                "bash",
+                str(SCRIPTS / "install-journal-reader.sh"),
+                "a@h",
+                "r@h",
+                "10.0.0.1",
+                "--diag",
+                bad,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+        )
+        assert r.returncode == 1, bad
+        assert "bad --diag directory" in r.stdout, bad
+
+
+def test_reader_diag_pattern_is_the_configs(cfg):
+    assert jr.DIAG_MATCH.pattern == cfg.diag_match.pattern
+
+
+def test_reader_main_routes_diag(monkeypatch):
+    seen = []
+    monkeypatch.setattr(jr, "read_diag", lambda _i, _o: seen.append(1) or 0)
+    monkeypatch.setenv("SSH_ORIGINAL_COMMAND", "diag")
+    assert jr.main() == 0
+    assert seen == [1]
+    monkeypatch.setenv("SSH_ORIGINAL_COMMAND", "diag extra")
+    assert jr.main() == 2  # noqa: PLR2004
+
+
 def test_code_kind_is_counted_never_evidence(cfg):
     assert cfg.kind("claude-code-review.yml") == "code"
     assert not hv.needs_detail("code", "failure")
@@ -1161,6 +1434,7 @@ def _jh(tmp_path, cfg, hosts):
     h.local = hv.Local(tmp_path / "local.json", dry_run=False)
     h.redactor = SimpleNamespace(text=lambda t: (t, 0))
     h.src = {"short": "instances", "hosts": hosts}
+    h.errors = []
     return h
 
 
@@ -1268,7 +1542,12 @@ def test_extra_repos_is_the_explicit_list_and_production_lists_only_the_monitor(
     # the maintainer's scope (2026-11-10): no course repositories, no user data
     prod = cfg.raw["sources"]["MorphoCloud/Instances"]["extra_repos"]
     assert prod == ["MorphoCloud/morphocloud-monitor"]
-    assert "extra_repos" not in cfg.raw["sources"]["MorphoCloud/Test-Instances"]
+
+
+def test_production_is_the_only_source(cfg):
+    """Test-Instances was sunset on 2026-11-24 (INCIDENT_STORE_PLAN.md,
+    "Reconcile with production after the migration")."""
+    assert list(cfg.raw["sources"]) == ["MorphoCloud/Instances"]
 
 
 def test_a_listed_repository_the_token_cannot_read_is_named(tmp_path, cfg, monkeypatch):
@@ -1359,6 +1638,61 @@ def test_journal_installer_rejects_quote_breaking_input():
     text = (SCRIPTS / "install-journal-reader.sh").read_text()
     assert "awk '{print $1, $2}'" in text  # the key comment never reaches the host
     assert "^/[A-Za-z0-9._/-]{1,255}$" in text  # no quote can appear in a path
+    # --diag: traverse only on the parents, then a check that it can read
+    assert "setfacl -m u:mcjournal:x" in text
+    assert 'ALLOW+="diag-dir $DIAG"' in text
+
+
+def test_production_hosts_after_the_migration(cfg):
+    """INCIDENT_STORE_PLAN.md, "Reconcile with production after the migration"."""
+    hosts = {h["name"]: h for h in cfg.raw["sources"]["MorphoCloud/Instances"]["hosts"]}
+    portal = hosts["mc-portal"]
+    assert portal["nova"] == "mc-portal"
+    assert portal["ssh"] == "mcjournal@10.0.16.108"
+    assert {"mc-data-portal.service", "mc-data-worker.service",
+            "mc-data-transfer.service", "mnt-shares-*.mount"} <= set(portal["units"])  # fmt: skip
+    # _diag through mcjournal only on the control runner; the acquire runner reads its own
+    assert [n for n, h in hosts.items() if h.get("diag")] == [
+        "morphocloud-instances-runner-2"
+    ]
+    assert "control_host" not in cfg.raw["sources"]["MorphoCloud/Instances"]
+    assert "mc-k8s-portal" not in hosts  # out of scope, said in a comment
+
+
+def test_bake_and_pickup_dispatch_lines_are_found_where_they_are_written(cfg, tmp_path):
+    """The bake prints its DISPATCH line to ~/bake/cron.log (its crontab line's
+    redirect) and the portal's pickup to ~/mc-data/pickup.log: both are runner
+    logs, so rule 1 finds them and their runs are automation, not admin."""
+    paths = {e["name"]: e["path"] for e in cfg.runner_logs}
+    extra = (SCRIPTS / "instances-runner.crontab.extra").read_text()
+    assert ">> /home/exouser/bake/cron.log" in extra
+    assert paths["bake"] == "~/bake/cron.log"
+    assert paths["pickup"] == "~/mc-data/pickup.log"
+    bake = tmp_path / "cron.log"
+    bake.write_text(
+        "2026-11-24T23:51:43Z DISPATCH admin-alert.yml repo=MorphoCloud/Instances"
+        " issue=- by=bake-monthly.py result=ok\n"
+    )
+    pickup = tmp_path / "pickup.log"
+    pickup.write_text(
+        "2026-11-25T02:00:04Z DISPATCH control-instance-from-workflow.yml"
+        " repo=MorphoCloud/Instances issue=287 by=pickup result=ok\n"
+    )
+    d = hv.Dispatches([bake, pickup])
+    alert = run_of("muratmaga", wf="admin-alert.yml", created="2026-11-24T23:51:42Z")
+    assert hv.actor_kind(cfg, alert, "MorphoCloud/Instances", None, None, d) == (
+        "automation",
+        "dispatch-line",
+    )
+    shelve = run_of(
+        "muratmaga",
+        wf="control-instance-from-workflow.yml",
+        created="2026-11-25T02:00:05Z",
+    )
+    assert hv.actor_kind(cfg, shelve, "MorphoCloud/Instances", 287, None, d) == (
+        "automation",
+        "dispatch-line",
+    )
 
 
 # One example per noise entry, each FORMATTED BY THE READER ITSELF: a pattern
@@ -1526,8 +1860,8 @@ def test_harvester_asks_for_first_sight_of_a_new_file(tmp_path, cfg, monkeypatch
 
 
 def test_every_mwf_workflow_has_a_kind(cfg):
-    """MWF's workflows are what Instances and Test-Instances run; the few
-    files that exist only there are listed by hand (incident-sources.yml)."""
+    """MWF's workflows are what Instances runs; the few files that exist only
+    there, or no longer exist, are listed by hand (incident-sources.yml)."""
     names = sorted(p.name for p in (ROOT / ".github" / "workflows").glob("*.yml"))
     assert names
     assert [n for n in names if n not in cfg.kinds] == []
@@ -2462,11 +2796,10 @@ def test_storage_usage_runs_only_where_the_source_asks_for_it(
     tmp_path, cfg, monkeypatch
 ):
     h, calls = _usage_h(tmp_path, cfg, monkeypatch, [])
-    h.src = {"short": "test-instances"}
+    h.src = {"short": "other"}
     assert h.storage_usage(MON_1300) is None
     assert calls == []
     assert cfg.raw["sources"]["MorphoCloud/Instances"]["storage_usage"] is True
-    assert "storage_usage" not in cfg.raw["sources"]["MorphoCloud/Test-Instances"]
 
 
 def test_storage_usage_takes_each_week_once_and_keeps_the_final_use(

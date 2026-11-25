@@ -13,8 +13,8 @@
 #
 # Environment (defaults are the production Instances runner):
 #   MWF_CRONTAB          crontab to install, rendered by scripts/check-workflow-clock.py
-#                        (default scripts/instances-runner.crontab; Test-Instances uses
-#                        scripts/test-instances-runner.crontab)
+#                        (default scripts/instances-runner.crontab, the only one since
+#                        Test-Instances was sunset on 2026-11-24)
 #   MWF_WF_TOKEN         fine-grained PAT, Actions:read/write on the dispatched repo
 #                        (default ~/.ssh/GH_MorphoCloud-workflow-dispatcher)
 #   MWF_ANALYTICS_TOKEN  PAT for the MorphoCloudAnalytics lines; set to "" to skip
@@ -92,7 +92,7 @@ fi
 
 echo ">> Setting permissions and installing the crontab's managed block ..."
 # Only the block between the BEGIN/END markers is ours. Everything else in the
-# runner's crontab is kept (the Test runner's portal pickup line lives there — an
+# runner's crontab is kept (the portal's pickup line lives there — an
 # earlier version of this script replaced the whole crontab and silenced it).
 # Dispatcher lines outside the block (pre-marker installs) are dropped too, and
 # so is a hand-added harvest-incidents line (production before the 2026-11-23
