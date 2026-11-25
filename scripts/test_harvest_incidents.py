@@ -1406,6 +1406,17 @@ def test_journal_installer_refuses_a_diag_dir_with_a_trailing_slash(tmp_path):
         assert "bad --diag directory" in r.stdout, bad
 
 
+def test_diag_keep_outlives_the_readers_window_and_keeps_the_request_small():
+    """A file the reader still names (changed in its window) must never be
+    forgotten, and the offsets of runner-2's ~920 Worker logs a day must stay
+    well under the request limit (rollout measurement, 2026-11-25)."""
+    assert hv.DIAG_KEEP > jr.DIAG_WINDOW
+    per_day = 920
+    entry = len('"Worker_20261124-123456-utc.log": 1234567, ')
+    days = (hv.DIAG_KEEP + jr.DIAG_WINDOW) / 86400
+    assert per_day * days * entry < jr.DIAG_REQUEST_MAX / 4
+
+
 def test_reader_diag_pattern_is_the_configs(cfg):
     assert jr.DIAG_MATCH.pattern == cfg.diag_match.pattern
 
