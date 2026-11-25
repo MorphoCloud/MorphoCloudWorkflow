@@ -587,12 +587,36 @@ runs:
         os_cloud: ${{ inputs.os_cloud }}
         instance_name: ${{ steps.define.outputs.instance_name }}
 
-    - name: comment (no capacity available)
-      if: ${{ steps.unavailable.outputs.value == 'true' }}
+    # Two answers, by what Nova recorded (collect-instance-diagnostics
+    # `cause`). host_failed: the scheduler found machines and the build failed
+    # on them, so "none available" would be untrue (2026-11-25, #287); trying
+    # again usually works. Anything else keeps the no-capacity answer. The
+    # first line of each is a marker the data portal reads to word its card
+    # (app/guidance.py), so the portal never guesses from these sentences.
+    - name: comment (build failed on Jetstream2's machines)
+      if:
+        ${{ steps.unavailable.outputs.value == 'true' &&
+        steps.create_diagnostics.outputs.cause == 'host_failed' }}
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
         body: |
+          <!-- mc-failure: host_failed -->
+          ### Instance Creation Results ❌
+
+          Jetstream2 could not build the **${{ steps.labels.outputs.instance_flavor }}** instance on the machines it tried. This is on Jetstream2's side; trying again usually works.
+
+          See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+    - name: comment (no capacity available)
+      if:
+        ${{ steps.unavailable.outputs.value == 'true' &&
+        steps.create_diagnostics.outputs.cause != 'host_failed' }}
+      uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+      with:
+        issue-number: ${{ inputs.issue_number }}
+        body: |
+          <!-- mc-failure: no_host -->
           ### Instance Creation Results ❌
 
           No instance of type **${{ steps.labels.outputs.instance_flavor }}** is available on JS2 at the moment.

@@ -915,6 +915,7 @@ runs:
                 jq -r --arg f "$flavor" '[.flavors[]? | select(.name == $f) | .count][0] // ""' 2>/dev/null || true)
             fi
             {
+              printf '%s\n' '<!-- mc-failure: no_host -->'
               printf '%s\n\n' '### Command Results ❌'
               printf '%s' "Jetstream2 has no **${flavor:-the requested flavor}** host free right now, so **${INSTANCE_NAME}** could not be placed"
               if [[ -n "$vacancy" ]]; then printf ' (Jetstream2 reports %s available)' "$vacancy"; fi
@@ -937,6 +938,7 @@ runs:
             first_failure=$(echo "$events" | jq -r --arg cutoff "$cutoff_ts" \
               '[.[] | select(.Action == "unshelve" and .Message == "Error" and ."Start Time" > $cutoff) | ."Start Time"] | sort | .[0][0:16] // "unknown"')
             {
+              printf '%s\n' '<!-- mc-failure: host_failed -->'
               printf '%s\n\n' '### Command Results ❌'
               printf '%s\n\n' "Unshelving **${INSTANCE_NAME}** is failing on Jetstream2's side — ${total_failures} attempt(s) since ${first_failure} UTC failed on the compute host. @MorphoCloud/morphocloud-admins have been notified and will investigate, escalating to Jetstream2 support if needed."
               # A host-side unshelve failure leaves the instance back at
