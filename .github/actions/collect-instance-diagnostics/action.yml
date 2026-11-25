@@ -89,23 +89,29 @@ runs:
         cat "$OUTPUT_FILE"
         [[ -s "$OUTPUT_FILE" ]] && echo "file=$OUTPUT_FILE" >> "$GITHUB_OUTPUT" || true
 
-        # The cause, from the newest request: a compute_* step with a host
-        # means the scheduler found a machine and the work failed on it
-        # (2026-11-25, #287: "Exhausted all hosts available for retrying build
-        # failures" after two hosts); "No valid host" with no compute step
-        # means there was no machine to try.
+        # The cause. host_failed: Nova found machines and the work failed on
+        # them. Its fault says so ("Exhausted all hosts available for retrying
+        # build failures": 2026-11-25, #287, after two hosts whose steps read
+        # Success and -), or a compute_* step of the newest request ended in
+        # Error. no_host: "No valid host" and no compute step ran. Anything
+        # else, a server still in BUILD on a host included, is unknown: its
+        # step has a host but no result yet, and no fault.
         cause=unknown
         newest=$(echo "$reqs" | head -n1)
         if [[ -n "$server" ]]; then
           fault=$(echo "$server" | jq -r '.fault.message // ""')
-          computed=0
+          steps="[]"
           if [[ -n "$newest" ]]; then
-            computed=$(openstack server event show "$INSTANCE_NAME" "$newest" -f json 2>/dev/null | \
-              jq '[.events[]? | select((.event // "") | startswith("compute_")) | select((.host_id // "") != "")] | length' 2>/dev/null)
+            steps=$(openstack server event show "$INSTANCE_NAME" "$newest" -f json 2>/dev/null | \
+              jq -c '[.events[]? | select((.event // "") | startswith("compute_"))]' 2>/dev/null)
+            [[ -n "$steps" ]] || steps="[]"
           fi
-          if [[ "${computed:-0}" -gt 0 ]]; then
+          failed_on_host=$(echo "$steps" | jq '[.[] | select((.result // "") | ascii_downcase == "error")] | length' 2>/dev/null)
+          ran_on_host=$(echo "$steps" | jq '[.[] | select((.host_id // "") != "")] | length' 2>/dev/null)
+          if [[ "$fault" == *"Exhausted all hosts available for retrying build failures"* ]] \
+            || [[ "${failed_on_host:-0}" -gt 0 ]]; then
             cause=host_failed
-          elif [[ "$fault" == *"No valid host"* ]]; then
+          elif [[ "$fault" == *"No valid host"* && "${ran_on_host:-0}" -eq 0 ]]; then
             cause=no_host
           fi
         fi
