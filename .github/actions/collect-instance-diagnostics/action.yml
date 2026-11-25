@@ -26,6 +26,13 @@ outputs:
       "Path of the written markdown block; empty only when the file could not be
       written. A server that is already gone still yields a block saying so."
     value: ${{ steps.collect.outputs.file }}
+  cause:
+    description:
+      "Why Nova's newest request failed: host_failed (it reached a compute host
+      and the build or unshelve failed there: Jetstream2's side), no_host (the
+      fault is 'No valid host' and no compute step ran: no free machine), or
+      unknown"
+    value: ${{ steps.collect.outputs.cause }}
 runs:
   using: "composite"
   steps:
@@ -81,6 +88,29 @@ runs:
 
         cat "$OUTPUT_FILE"
         [[ -s "$OUTPUT_FILE" ]] && echo "file=$OUTPUT_FILE" >> "$GITHUB_OUTPUT" || true
+
+        # The cause, from the newest request: a compute_* step with a host
+        # means the scheduler found a machine and the work failed on it
+        # (2026-11-25, #287: "Exhausted all hosts available for retrying build
+        # failures" after two hosts); "No valid host" with no compute step
+        # means there was no machine to try.
+        cause=unknown
+        newest=$(echo "$reqs" | head -n1)
+        if [[ -n "$server" ]]; then
+          fault=$(echo "$server" | jq -r '.fault.message // ""')
+          computed=0
+          if [[ -n "$newest" ]]; then
+            computed=$(openstack server event show "$INSTANCE_NAME" "$newest" -f json 2>/dev/null | \
+              jq '[.events[]? | select((.event // "") | startswith("compute_")) | select((.host_id // "") != "")] | length' 2>/dev/null)
+          fi
+          if [[ "${computed:-0}" -gt 0 ]]; then
+            cause=host_failed
+          elif [[ "$fault" == *"No valid host"* ]]; then
+            cause=no_host
+          fi
+        fi
+        echo "cause=$cause" >> "$GITHUB_OUTPUT"
+        echo "cause: $cause"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ inputs.instance_name }}
