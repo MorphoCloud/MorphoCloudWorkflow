@@ -1641,6 +1641,13 @@ USAGE_TARGET = Path("~/mc-data/portal_target")
 USAGE_FINAL = "storage/final.jsonl"
 USAGE_REPORT = "storage/report.md"
 USAGE_STATE = "state/storage-usage.json"
+# Portal events (INCIDENT_STORE_PHASE1_DESIGN.md, "PR C"): the portal's audit
+# rows after a cursor, every cycle, through the gate's export-events.
+EVENTS_SCHEMA = 1
+EVENTS_STATE = "state/portal-events.json"
+EVENTS_TIMEOUT = 60
+EVENTS_DOWN = 2 * 3600  # failing this long: named in last_error (the watchdog emails)
+EVENTS_SEP = "\n\x1f\n"  # between values in one redaction pass
 USAGE_STATES = ("ready", "unavailable", "read_only")
 USAGE_TARGET_RE = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9.:-]+$")
 USAGE_DAY_RE = re.compile(r"^\d{4}-\d\d-\d\d$")
@@ -1729,32 +1736,86 @@ def validate_usage(  # noqa: PLR0911 — one return per refusal reason
     return doc, None
 
 
-def portal_usage(
-    target_file: Path = USAGE_TARGET, previous: int = 0
-) -> tuple[dict | None, str | None]:
-    """One `usage` call through the portal's forced-command gate, with the
-    runner's own key (the account the workflows use). The error that reaches
-    the store names the failure only; ssh's own words (which carry the
-    portal's address) go to the harvester's local log."""
+def portal_call(
+    command: list[str], target_file: Path | None = None, timeout: int = USAGE_TIMEOUT
+) -> tuple[str | None, str | None]:
+    """One command through the portal's forced-command gate, with the
+    runner's own key (the account the workflows use): (stdout, None) or
+    (None, error). The error that reaches the store names the failure only;
+    ssh's own words (which carry the portal's address) go to the harvester's
+    local log."""
     try:
-        target = target_file.expanduser().read_text().strip()
+        target = (target_file or USAGE_TARGET).expanduser().read_text().strip()
     except OSError as e:
         return None, f"no portal target ({type(e).__name__})"
     if not USAGE_TARGET_RE.match(target):
         return None, "portal target is not user@host"
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
            "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
-           target, "usage"]  # fmt: skip
+           target, *command]  # fmt: skip
     try:
         r = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=USAGE_TIMEOUT, check=False
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
         )
     except (subprocess.TimeoutExpired, OSError) as e:
         return None, type(e).__name__
     if r.returncode != 0:
-        log(f"portal usage: ssh exit {r.returncode}: {r.stderr.strip()[-300:]}")
+        log(f"portal {command[0]}: ssh exit {r.returncode}: {r.stderr.strip()[-300:]}")
         return None, f"ssh exit {r.returncode} (details in the harvester log)"
-    return validate_usage(r.stdout, previous)
+    return r.stdout, None
+
+
+def portal_usage(
+    target_file: Path | None = None, previous: int = 0
+) -> tuple[dict | None, str | None]:
+    """The portal's `usage` reply, checked."""
+    out, err = portal_call(["usage"], target_file)
+    if err:
+        return None, err
+    return validate_usage(out, previous)
+
+
+def portal_events_call(since: int) -> tuple[dict | None, str | None]:
+    """The portal's `export-events <since>` reply, checked."""
+    out, err = portal_call(["export-events", str(int(since))], timeout=EVENTS_TIMEOUT)
+    if err:
+        return None, err
+    return validate_events(out, since)
+
+
+def validate_events(text: str, since: int) -> tuple[dict | None, str | None]:
+    """The export's shape: schema 1, an int max, cursor_ts a number or null,
+    and rows with ids above `since`, ascending and not past max."""
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return None, "export-events: not JSON"
+    if not isinstance(doc, dict) or doc.get("schema") != EVENTS_SCHEMA:
+        return None, "export-events: unknown schema"
+    top, at, rows = doc.get("max"), doc.get("cursor_ts"), doc.get("rows")
+    if isinstance(top, bool) or not isinstance(top, int) or not isinstance(rows, list):
+        return None, "export-events: bad max or rows"
+    if at is not None and (isinstance(at, bool) or not isinstance(at, (int, float))):
+        return None, "export-events: bad cursor_ts"
+    last = since
+    for r in rows:
+        ok = (
+            isinstance(r, dict)
+            and isinstance(r.get("id"), int)
+            and not isinstance(r.get("id"), bool)
+            and last < r["id"] <= top
+            and isinstance(r.get("ts"), (int, float))
+            and isinstance(r.get("action"), str)
+            and all(
+                r.get(k) is None or isinstance(r.get(k), str)
+                for k in ("login", "detail")
+            )
+            and (r.get("github_id") is None or isinstance(r.get("github_id"), int))
+        )
+        if not ok:
+            return None, "export-events: a bad row"
+        last = r["id"]
+    return doc, None
 
 
 def usage_rows(doc: dict, week: str, taken_at: str) -> list[dict]:
@@ -2879,6 +2940,68 @@ class Harvester:
         self.store.write_json(USAGE_STATE, {"week": week, "taken_at": at})
         return sum(1 for r in finals if r["gone_by"] == at)
 
+    # -- portal events: what members did and saw on the portal --------------
+    def portal_events(self, now: float) -> str | None:
+        """INCIDENT_STORE_PHASE1_DESIGN.md, "PR C": the portal's audit rows
+        after the cursor, redacted, one line each in portal/<day>.jsonl by the
+        row's own time. The cursor is in the store (EVENTS_STATE), written in
+        the same commit as the rows, so a failed push neither skips nor repeats
+        a row. A rebuilt portal database (its top row below the cursor, or the
+        row at the cursor not the one taken) starts a new `db` generation from
+        row 0, with a line saying so. A failing call is logged every cycle and
+        named in last_error once it has lasted EVENTS_DOWN. Only a source with
+        portal_events."""
+        if not self.src.get("portal_events"):
+            return None
+        state = self.store.read_json(EVENTS_STATE) or {"cursor": 0, "db": 1}
+        cursor, gen = int(state.get("cursor", 0)), int(state.get("db", 1))
+        doc, err = portal_events_call(cursor)
+        if err:
+            since = self.local.data.setdefault("portal_events_down_since", to_iso(now))
+            log(f"portal events: {err}")
+            if now - parse_ts(since) > EVENTS_DOWN:
+                self.errors.append(f"portal events unreadable since {since}: {err}")
+            return f"failed: {err}"
+        self.local.data.pop("portal_events_down_since", None)
+        at = to_iso(now)
+        if cursor and (
+            doc["max"] < cursor or doc["cursor_ts"] != state.get("cursor_ts")
+        ):
+            self.store.append_jsonl(
+                f"portal/{day_path(at)}.jsonl",
+                {"at": at, "db": gen + 1, "action": "harvester-portal-db-restarted",
+                 "detail": f"the portal database was rebuilt: row {cursor} of db {gen}"
+                 f" is gone (top row now {doc['max']}); reading from row 0"},
+            )  # fmt: skip
+            self.store.write_json(
+                EVENTS_STATE, {"cursor": 0, "db": gen + 1, "cursor_ts": None, "at": at}
+            )
+            return f"db {gen + 1}: restarted"
+        rows = doc["rows"]
+        if not rows:
+            return f"db {gen}: row {cursor}, nothing new"
+        details = [r.get("detail") or "" for r in rows]
+        clean, _ = self.redactor.text(EVENTS_SEP.join(details))
+        parts = clean.split(EVENTS_SEP)
+        if len(parts) != len(details):  # a rule spanned values: one at a time
+            parts = [self.redactor.text(d)[0] for d in details]
+        by_day: dict[str, list[str]] = {}
+        for r, detail in zip(rows, parts):
+            when = to_iso(float(r["ts"]))
+            line = {"id": r["id"], "db": gen, "at": when, "github_id": r.get("github_id"),
+                    "login": r.get("login"), "action": r["action"], "detail": detail}  # fmt: skip
+            by_day.setdefault(day_path(when), []).append(
+                json.dumps(line, sort_keys=True) + "\n"
+            )
+        for day, lines in sorted(by_day.items()):
+            self.store.append_text(f"portal/{day}.jsonl", "".join(lines))
+        last = rows[-1]
+        self.store.write_json(
+            EVENTS_STATE,
+            {"cursor": last["id"], "db": gen, "cursor_ts": last["ts"], "at": at},
+        )
+        return f"db {gen}: {len(rows)} rows to {last['id']} (top {doc['max']})"
+
     # -- the end of a cycle ---------------------------------------------------
     def finish(
         self, now: float, started: float, error: str | None, extra: dict
@@ -2990,6 +3113,9 @@ class Harvester:
         usage = step("storage_usage", lambda: self.storage_usage(now))
         if usage:
             extra["storage_usage"] = usage
+        events = step("portal_events", lambda: self.portal_events(now))
+        if events:
+            extra["portal_events"] = events
         error = "; ".join(errors) or None
         self.finish(now, started, error, extra)
         return 1 if error else 0

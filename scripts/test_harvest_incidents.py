@@ -3045,3 +3045,207 @@ def test_a_share_extended_later_is_in_the_extended_table_for_every_bin():
     assert "| 0-30 | 0 |" in plain
     assert "| 0-30 | 3 |" in extended
     assert "| 61-90 | 3 |" in extended
+
+
+# --- portal events (INCIDENT_STORE_PHASE1_DESIGN.md, "PR C") ------------------
+
+T0 = 1_764_000_000.0  # 2025-11-24T16:00:00Z
+
+
+def _ev(i, ts=None, **kw):
+    return {"id": i, "ts": T0 + i if ts is None else ts, "github_id": 7, "login": "amm554",
+            "action": "login", "detail": f"row {i}", **kw}  # fmt: skip
+
+
+def _events_h(tmp_path, cfg, monkeypatch, replies, redactor=None):
+    """A harvester whose export-events calls answer from `replies`: a list
+    of rows (max = the last id, or the cursor) or an error string."""
+    h = _jh(tmp_path, cfg, [])
+    h.src = {"short": "instances", "portal_events": True}
+    if redactor is not None:
+        h.redactor = redactor
+    calls = []
+    table: dict[int, float] = {}
+
+    def fake(since):
+        calls.append(since)
+        r = replies.pop(0)
+        if isinstance(r, str):
+            return None, r
+        if isinstance(r, dict):
+            return r, None
+        for e in r:
+            table[e["id"]] = e["ts"]
+        top = max([e["id"] for e in r] + [since if since in table else 0])
+        return {"schema": 1, "max": top, "cursor_ts": table.get(since), "rows": r}, None
+
+    monkeypatch.setattr(hv, "portal_events_call", fake)
+    return h, calls
+
+
+def test_portal_events_ship_by_day_and_move_the_cursor_in_the_store(
+    tmp_path, cfg, monkeypatch
+):
+    late = T0 + 86400
+    h, calls = _events_h(tmp_path, cfg, monkeypatch,
+                         [[_ev(1), _ev(2, ts=late)], [_ev(3, ts=late)], []])  # fmt: skip
+    assert h.portal_events(T0 + 100) == "db 1: 2 rows to 2 (top 2)"
+    assert h.portal_events(T0 + 400) == "db 1: 1 rows to 3 (top 3)"
+    assert h.portal_events(T0 + 700) == "db 1: row 3, nothing new"
+    assert calls == [0, 2, 3]
+    day1 = _store_lines(tmp_path, "portal/2025/11/24.jsonl")
+    day2 = _store_lines(tmp_path, "portal/2025/11/25.jsonl")
+    assert [r["id"] for r in day1] == [1]
+    assert [r["id"] for r in day2] == [2, 3]
+    assert day1[0] == {"id": 1, "db": 1, "at": "2025-11-24T16:00:01Z", "github_id": 7,
+                       "login": "amm554", "action": "login", "detail": "row 1"}  # fmt: skip
+    state = json.loads((tmp_path / "store" / hv.EVENTS_STATE).read_text())
+    assert (state["cursor"], state["db"], state["cursor_ts"]) == (3, 1, late)
+
+
+def test_portal_events_run_only_where_the_source_asks(tmp_path, cfg, monkeypatch):
+    h, calls = _events_h(tmp_path, cfg, monkeypatch, [])
+    h.src = {"short": "instances"}
+    assert h.portal_events(T0) is None
+    assert calls == []
+
+
+def test_a_failing_export_is_named_only_after_two_hours(tmp_path, cfg, monkeypatch):
+    h, _ = _events_h(
+        tmp_path, cfg, monkeypatch, ["ssh exit 255", "ssh exit 255", [_ev(1)]]
+    )
+    assert h.portal_events(T0) == "failed: ssh exit 255"
+    assert h.errors == []
+    assert h.portal_events(T0 + hv.EVENTS_DOWN + 1) == "failed: ssh exit 255"
+    assert h.errors == [
+        "portal events unreadable since 2025-11-24T16:00:00Z: ssh exit 255"
+    ]
+    h.portal_events(T0 + hv.EVENTS_DOWN + 300)
+    assert "portal_events_down_since" not in h.local.data
+
+
+@pytest.mark.parametrize("rebuilt", ["shorter", "regrown"])
+def test_a_rebuilt_portal_database_starts_a_new_generation_from_row_0(
+    tmp_path, cfg, monkeypatch, rebuilt
+):
+    after = (
+        {
+            "schema": 1,
+            "max": 1,
+            "cursor_ts": None,
+            "rows": [],
+        }  # fewer rows than the cursor
+        if rebuilt == "shorter"
+        else {
+            "schema": 1,
+            "max": 9,
+            "cursor_ts": T0 + 5000,
+            "rows": [_ev(3, ts=T0 + 5001)],
+        }
+    )
+    h, calls = _events_h(
+        tmp_path, cfg, monkeypatch, [[_ev(1), _ev(2)], after, [_ev(1, ts=T0 + 9000)]]
+    )
+    h.portal_events(T0 + 100)
+    assert h.portal_events(T0 + 400) == "db 2: restarted"
+    assert h.portal_events(T0 + 700) == "db 2: 1 rows to 1 (top 1)"
+    assert calls == [0, 2, 0]
+    lines = _store_lines(tmp_path, "portal/2025/11/24.jsonl")
+    assert [(r.get("id"), r["db"], r["action"]) for r in lines] == [
+        (1, 1, "login"),
+        (2, 1, "login"),
+        (None, 2, "harvester-portal-db-restarted"),
+        (1, 2, "login"),
+    ]
+
+
+def test_portal_event_details_are_redacted_in_one_pass(tmp_path, cfg, monkeypatch):
+    token = "ghp_" + "A" * 36
+    rows = [
+        _ev(1, detail=f"push failed: {token}"),
+        _ev(2, detail="line one\nline two"),
+        _ev(3, detail=None),
+    ]
+    h, _ = _events_h(
+        tmp_path, cfg, monkeypatch, [rows], redactor=hv.Redactor(SED, None)
+    )
+    passes = []
+    real = h.redactor.text
+    h.redactor = SimpleNamespace(text=lambda t: (passes.append(t), real(t))[1])
+    h.portal_events(T0 + 100)
+    got = _store_lines(tmp_path, "portal/2025/11/24.jsonl")
+    assert [r["detail"] for r in got] == [
+        "push failed: [token]",
+        "line one\nline two",
+        "",
+    ]
+    assert len(passes) == 1
+    assert token not in (tmp_path / "store/portal/2025/11/24.jsonl").read_text()
+
+
+def test_a_rule_that_spans_values_falls_back_to_one_value_at_a_time(
+    tmp_path, cfg, monkeypatch
+):
+    rows = [
+        _ev(1, detail="-----BEGIN OPENSSH PRIVATE KEY-----\nabc"),
+        _ev(2, detail="after"),
+    ]
+    h, _ = _events_h(
+        tmp_path, cfg, monkeypatch, [rows], redactor=hv.Redactor(SED, None)
+    )
+    h.portal_events(T0 + 100)
+    got = _store_lines(tmp_path, "portal/2025/11/24.jsonl")
+    assert [r["detail"] for r in got] == ["[private-key]\n[private-key]", "after"]
+
+
+@pytest.mark.parametrize(
+    ("doc", "why"),
+    [
+        ("not json", "not JSON"),
+        ({"schema": 2, "max": 0, "rows": []}, "unknown schema"),
+        ({"schema": 1, "max": "3", "rows": []}, "bad max or rows"),
+        ({"schema": 1, "max": 3, "cursor_ts": "x", "rows": []}, "bad cursor_ts"),
+        (
+            {"schema": 1, "max": 3, "rows": [_ev(2), _ev(1)]},
+            "a bad row",
+        ),  # not ascending
+        ({"schema": 1, "max": 3, "rows": [_ev(4)]}, "a bad row"),  # past max
+        ({"schema": 1, "max": 3, "rows": [_ev(1, detail=5)]}, "a bad row"),
+        ({"schema": 1, "max": 3, "rows": [_ev(1, id=True)]}, "a bad row"),
+    ],
+)
+def test_a_bad_export_reply_is_refused(doc, why):
+    text = doc if isinstance(doc, str) else json.dumps(doc)
+    assert hv.validate_events(text, 0) == (None, f"export-events: {why}")
+
+
+def test_a_good_export_reply_passes():
+    doc = {"schema": 1, "max": 3, "cursor_ts": T0, "rows": [_ev(2), _ev(3)]}
+    assert hv.validate_events(json.dumps(doc), 1) == (doc, None)
+
+
+def test_export_events_goes_through_the_gate_with_the_cursor(tmp_path, monkeypatch):
+    f = tmp_path / "portal_target"
+    f.write_text("mcrunner@10.9.8.7\n")
+    monkeypatch.setattr(hv, "USAGE_TARGET", f)
+    seen = []
+
+    def run(cmd, **_k):
+        seen.append(cmd)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"schema": 1, "max": 0, "rows": []}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(hv.subprocess, "run", run)
+    assert hv.portal_events_call(12)[1] is None
+    assert seen[0][-3:] == ["mcrunner@10.9.8.7", "export-events", "12"]
+
+
+def test_the_production_source_reads_portal_events():
+    sources = hv.yaml.safe_load((ROOT / "incident-sources.yml").read_text("utf-8"))[
+        "sources"
+    ]
+    src = sources["MorphoCloud/Instances"]
+    assert src.get("portal_events") is True

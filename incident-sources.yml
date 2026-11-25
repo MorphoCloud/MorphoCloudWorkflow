@@ -14,6 +14,9 @@ sources:
     # (weekly snapshot)"): the portal's `usage` reply through
     # ~/mc-data/portal_target.
     storage_usage: true
+    # Portal events (INCIDENT_STORE_PHASE1_DESIGN.md "PR C"): the portal's audit
+    # rows after a cursor, every cycle, through the same gate (`export-events`).
+    portal_events: true
     # Coverage amendment, class K: other repositories harvested with this
     # source, by explicit list (maintainer, 2026-11-10): the join health
     # monitor only. Course repositories are their own thing and their failure
