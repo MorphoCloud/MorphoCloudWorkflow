@@ -54,8 +54,8 @@ DIAG=""
 if [[ "${1:-}" == "--diag" ]]; then
   DIAG="${2:?--diag needs the _diag directory}"
   shift 2
-  [[ "$DIAG" =~ ^/[A-Za-z0-9._/-]{1,255}$ && "$DIAG" != *..* ]] \
-    || { echo "ERROR: bad --diag directory '$DIAG' (absolute; letters, digits, . _ / -; no ..)"; exit 1; }
+  [[ "$DIAG" =~ ^/[A-Za-z0-9._/-]{1,255}$ && "$DIAG" != *..* && "$DIAG" != */ && "$DIAG" != *//* ]] \
+    || { echo "ERROR: bad --diag directory '$DIAG' (absolute; letters, digits, . _ / -; no .., no trailing or double /)"; exit 1; }
   ALLOW+="diag-dir $DIAG"$'\n'
 fi
 for kv in "$@"; do

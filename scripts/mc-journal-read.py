@@ -65,6 +65,7 @@ import calendar
 import fnmatch
 import grp
 import json
+import math
 import os
 import re
 import stat
@@ -93,6 +94,7 @@ DIAG_MATCH = re.compile(r"^\[\S+ \S+ ERR ")
 DIAG_WINDOW = 48 * 3600  # files changed in the last two days
 DIAG_NAME_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$")  # never . or ..
 DIAG_NAME_DATE_RE = re.compile(r"(\d{8})-(\d{6})")  # Worker_20261125-002110-utc.log
+TRUNCATED = " [truncated]"
 DIAG_TAIL = 65_536  # bytes read back from a file's end to find its last whole line
 DIAG_REQUEST_MAX = 2_000_000  # bytes of JSON on standard input
 DIAG_READ_MAX = 64_000_000  # bytes read from one file per call
@@ -239,7 +241,7 @@ def diag_request(raw: str) -> tuple[bool, dict[str, int], float] | None:  # noqa
     forget = req.get("forget_before", 0)
     if not isinstance(offsets, dict) or isinstance(forget, bool):
         return None
-    if not isinstance(forget, (int, float)) or forget < 0:
+    if not isinstance(forget, (int, float)) or not math.isfinite(forget) or forget < 0:
         return None
     clean: dict[str, int] = {}
     for name, off in offsets.items():
@@ -326,7 +328,8 @@ def diag_hits(
             if used + len(line) > budget:
                 if hits:
                     return offset + pos, hits, True
-                line = line[: max(budget - 1, 0)] + "\n"  # never stuck on one line
+                # never stuck on one line: cut to the budget, and say so
+                line = line[: max(budget - len(TRUNCATED) - 1, 0)] + TRUNCATED + "\n"
                 hits.append(line)
                 return offset + pos + len(raw) + 1, hits, True
             hits.append(line)
@@ -355,7 +358,9 @@ def read_diag(stdin, out, allowlist: str = ALLOWLIST, now: float | None = None) 
     written = 0
     deferred = False  # the CAP or the time budget is reached: name, never read
     for entry in entries:
-        deferred = deferred or time.monotonic() > deadline
+        # A first sight only stats and reads tails, so it always names every
+        # file: one it left out would be read from 0 later and ship history.
+        deferred = deferred or (not prime and time.monotonic() > deadline)
         try:
             st = entry.stat(follow_symlinks=False)
         except OSError:

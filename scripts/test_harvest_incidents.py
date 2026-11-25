@@ -1262,6 +1262,7 @@ def test_reader_diag_ships_only_err_lines_from_each_offset(tmp_path):
         '{"prime": false, "offsets": {".hidden": 0}}',
         '{"prime": false, "offsets": {}, "forget_before": "x"}',
         '{"prime": false, "offsets": {}, "forget_before": -1}',
+        '{"prime": false, "offsets": {}, "forget_before": NaN}',
     ],
 )
 def test_reader_diag_refuses_a_bad_request(tmp_path, stdin):
@@ -1323,6 +1324,7 @@ def test_reader_diag_one_line_longer_than_the_cap_is_cut_not_stuck(
     lines = out.getvalue().splitlines()
     assert lines[0] == f"==FILE A.log {len(long_line)}"  # moved past it
     assert len(lines[1]) == 39  # noqa: PLR2004 — cut to the cap
+    assert lines[1].endswith(" [truncated]")
 
 
 def test_reader_diag_skips_a_run_without_newline_longer_than_a_read(
@@ -1364,6 +1366,44 @@ def test_reader_diag_a_forgotten_old_file_starts_at_its_end(tmp_path):
         f"==FILE nodate.log {len(ERR_LINE)}\n{ERR_LINE}"
         "##DIAG ok\n"
     )
+
+
+def test_reader_diag_first_sight_names_every_file_past_the_time_budget(
+    tmp_path, monkeypatch
+):
+    """Review of #464: a first sight out of time still names every file, so
+    none is read from 0 later."""
+    now = time.time()
+    _, allow = _diag_dir(tmp_path, now)
+    monkeypatch.setattr(jr, "BUDGET", -1)  # out of time from the start
+    out = io.StringIO()
+    stdin = io.StringIO('{"prime": true, "offsets": {}}')
+    assert jr.read_diag(stdin, out, str(allow), now) == 0
+    assert [x.split()[1] for x in out.getvalue().splitlines()[:-1]] == [
+        "Runner_1.log",
+        "Worker_new.log",
+    ]
+
+
+def test_journal_installer_refuses_a_diag_dir_with_a_trailing_slash(tmp_path):
+    for bad in ("/home/exouser/actions-runner/_diag/", "/home//exouser/_diag"):
+        r = subprocess.run(
+            [
+                "bash",
+                str(SCRIPTS / "install-journal-reader.sh"),
+                "a@h",
+                "r@h",
+                "10.0.0.1",
+                "--diag",
+                bad,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+        )
+        assert r.returncode == 1, bad
+        assert "bad --diag directory" in r.stdout, bad
 
 
 def test_reader_diag_pattern_is_the_configs(cfg):
