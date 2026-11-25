@@ -188,6 +188,86 @@ dropped automated run is logged for the admins, never blamed on the member.
 Workshop creates take the per-issue group. Control commands refuse while one is
 in flight, as create already does.
 
+### Classes 2 and 3 — design, 2026-11-06 (for approval; nothing coded)
+
+**The rule.** An automatic command says why it was sent, and acts only if that
+is still true once it holds the instance's lock. A member's command never waits
+behind, or is evicted by, an automatic one that no longer applies.
+
+**1. Every automatic dispatch carries a reason.**
+`control-instance-from-workflow` gains an optional `reason` input (empty keeps
+today's behavior, so course repos and anything not yet converted are unchanged).
+Its job's first step, inside the per-issue lock, re-checks the reason against
+Jetstream2 and GitHub as they are now. If it no longer holds, the run logs one
+line ("reason no longer holds: ...") and ends successfully: no comment, no label
+change, no email.
+
+| Dispatcher (today's line)                                     | Reason              | Re-checked under the lock                                                                 |
+| ------------------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------- |
+| auto-shelve, SHUTOFF (`automatic-instance-shelving.yml:110`)  | `shutoff`           | the server is SHUTOFF now                                                                 |
+| auto-shelve, unreachable (`:80`); portal runner (decision 23) | `unreachable`       | ACTIVE, no task in flight, and no address on its port or no SSH answer now                |
+| auto-shelve, workshop end (`:162`)                            | `workshop-end`      | the `shelve-at` label is still in the past                                                |
+| auto-shelve, session timeout (`:315`)                         | `timeout`           | the session age, read now, is still at or over the timeout read now from the labels       |
+| follow-through retry (`follow-through.yml:186`)               | `retry:<cmd>`       | `followup:<cmd>` is still on the issue (a member's own command removes it when it starts) |
+| follow-through, stalled setup (`:170`)                        | `setup-stalled`     | `exoSetup` is still not complete                                                          |
+| reconcile repair (`reconcile-instances.yml:178`)              | `repair:no-address` | ACTIVE, no task in flight, no address on its port now                                     |
+| End of Life (`close-expired-issues.yml:286`)                  | `expired`           | the expiry recomputed from the labels now (`expiration:*`, `renewed:N`) is still past     |
+| close guard (`guard-issue-close.yml:61, 84`)                  | `closed`            | the issue is still closed                                                                 |
+| workshop deletion test (`test-workshop-deletion.yml:169`)     | `test`              | none (a test harness)                                                                     |
+
+**2. Extend and Renew take the instance's lock.** `extend-session.yml` and
+`update-renew-label.yml` join `morphocloud-instance-issue-<n>` (no cancel). An
+Extend that arrives while a timeout shelve is queued now runs first, and the
+shelve's re-check then finds the timer reset and does nothing. A Renew before
+End of Life's delete makes that delete's re-check find the request no longer
+expired. End of Life also re-reads each issue's labels right before acting on it
+(not from its 12:00 snapshot), and deletes a volume only after that read.
+
+**3. Automation never evicts a member's command.** Before dispatching, every
+automatic actor checks whether a run for that issue is queued or running
+(control, send-email, delete, create, resume-setup, extend, renew) and, if so,
+skips the issue this pass. Every actor in the table runs again on its own
+schedule, and the re-check makes a repeat dispatch safe, so a skipped or dropped
+automatic command is simply sent again on the next pass. Follow-through stops
+removing `followup:<cmd>` before it dispatches: the retry run removes it when it
+starts, as every control run does, so a dropped retry leaves the marker in place
+for the next pass instead of losing it.
+
+**4. A dropped command is reported to the right person.**
+`report-dropped-command` also watches Extend and Renew, which become evictable
+in point 2, and tells the member. A dropped automatic run is never reported to
+the member.
+
+**5. Member commands queue in order.** `control-instance.yml` refuses a new
+command while an earlier one on the same issue is still running, as `/create`
+already does (`refuse-if-command-in-flight`). That ends reversed Shelve and
+Unshelve pairs (3c).
+
+**6. Workshop creates share the instance's lock**
+(`create-instance-from-workflow` moves to the per-issue group, 3b). Workshop
+backfill counts SHELVED, SHUTOFF and ERROR sub-issues as present, not missing,
+which ends the failed create every ten minutes.
+
+**7. The status-label sweep stops writing stale labels.** For each issue it
+re-reads the server right before writing, and it never writes onto a closed
+issue or over `status:deleted` (2c).
+
+**8. The portal stops offering actions during work in flight** (portal repo,
+2h). Any Nova task in flight shows the card as working; commands and Reset
+storage are blocked while any of the member's instances has a task in flight or
+a command running.
+
+**Tests before code is merged:** the re-check for each reason in the table, from
+fixtures; the dispatch skip when a run is queued; follow-through keeping its
+marker across a dropped retry. **On Test as amm554, presented before running:**
+Extend against a queued timeout shelve (a low `timeout:` label on #526); Renew
+against an End of Life delete (an expired label set on a test request and End of
+Life dispatched by hand); a member Shelve and Unshelve in quick succession; a
+status sweep during a delete.
+
+**Not in this class:** the identity check for auto-shelve and the uptime
+collection (class 1, deliberately left out); the portal's own races (class 6).
+
 ### Class 4 — Markers are removed by actors that did not set them (medium)
 
 | ID  | Finding                                                                                                                   | Status |
