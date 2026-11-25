@@ -104,13 +104,18 @@ Code (one MWF PR, vendorized to Instances):
 - `bake-image.sh` and `check-image.sh` use `mc-instance` (they run only on
   BIO180006; the build VM needs only SSH from runner-1).
 - `scripts/network-security-groups.sh`: writes `mc-instance`, `mc-runner` and
-  `mc-join`. It is **declarative**: it creates each group, adds the rules in
-  this note's tables and removes any other rule in those groups (so a rule added
-  by hand is reverted). It takes the proxy's address the same way the hourly
-  check does (below), never from a fixed value, so the two never undo each
-  other. It is a **dry run by default** and prints the difference; `--apply`
-  changes. It runs by hand (maintainer, or runner-1 with its existing OpenStack
-  credentials), never inside a workflow.
+  `mc-join`, and never touches any other group (`exosphere`, `default`,
+  `mc-portal`, the k8s groups). It is **declarative** for its three groups: it
+  creates each one, adds the rules in this note's tables and removes any other
+  rule in them, so a rule added by hand is reverted. The managed set includes
+  the IPv4 allow-all egress rule (`out any anywhere`), so outgoing traffic is
+  never lost; OpenStack's default IPv6 egress rule is removed (no IPv6 subnet).
+  The proxy rule is one `tcp 49528` rule per address, `remote_ip_prefix
+  <address>/32`, with the address taken the same way the hourly check takes it
+  (below), never from a fixed value, so the two never undo each other. It is a
+  **dry run by default** and prints the difference; `--apply` changes. It runs
+  by hand (maintainer, or runner-1 with its existing OpenStack credentials),
+  never inside a workflow.
 - Checked by `git grep` (MWF, portal) and GitHub code search (Instances): every
   use of 49528 builds a proxy URL (`generate-connection-url`,
   `list-instance-credentials.sh`, the portal's `web_url`); nothing reaches 49528
@@ -123,22 +128,34 @@ stops working while SSH and TurboVNC keep working. To catch it:
   follows the name instead: an **hourly** check on runner-1 resolves
   `proxy-js2-iu.exosphere.app` and compares the set of addresses with the 49528
   rules of `mc-instance`.
-- On a difference it **updates the rules itself** (adds the new addresses first,
-  then removes the old ones, so there is no gap) and emails the admins
+- On a difference in either direction (an address added to or gone from the
+  name) it **updates the rules itself** (adds the new addresses first, then
+  removes the old ones, so there is no gap) and emails the admins
   (`admin-alert.yml`) what changed: old and new addresses, time. Decided by the
   maintainer 2026-11-25, to see how often, if ever, the address changes.
 - It accepts only addresses inside Jetstream2's public range 149.165.0.0/16. An
-  answer outside it, no answer, or a failed OpenStack call changes nothing and
-  emails the admins (no silent failure). Trusting the name adds little risk:
+  answer outside it, no answer, or a failed OpenStack call changes nothing. Such
+  a problem emails the admins once it has lasted 3 consecutive runs (so one DNS
+  or API hiccup is not an alert), and then at most once a day while it lasts
+  (state in `~/netsec/proxy-check.json`). A successful update always emails, and
+  fixes the mismatch, so it does not repeat. Trusting the name adds little risk:
   whoever could repoint `exosphere.app`'s DNS could already send every member's
   browser to their own server.
 - Every run that changes something, and every refusal, writes one line to
   `~/netsec/proxy-check.log` (and the uniform `DISPATCH` line for the email), so
   the number of changes over time can be read back. A run with no change writes
   nothing.
-- It is a crontab line on runner-1 only (BIO180006), rendered by
+- It is a line in `scripts/instances-runner.crontab.extra`, rendered by
   `check-workflow-clock.py` with the same `PATH`, `~/venv` and `OS_CLOUD` as the
-  other lines; it does not exist in course repositories.
+  other lines and installed only on runner-1 (BIO180006) by
+  `restore-instances-dispatcher.sh`. It never reaches a course repository:
+  `vendorize` and `vendorize-course` (`noxfile.py`) copy only the scripts they
+  name, and neither the crontab files, `network-security-groups.sh` nor the
+  check's script is among them (`check-workflow-clock.py` is copied only as the
+  pre-commit checker; its `TARGETS` hold the production crontab alone).
+- Accepted: the check, its update and its email all run on runner-1. If runner-1
+  is down, a proxy move is not followed until it is back (the existing
+  runner-down alerting covers runner-1 itself).
 - Accepted by design: the update follows the change, so in the worst case the
   web desktop is down for up to an hour. SSH and TurboVNC are not affected.
 
@@ -163,17 +180,17 @@ their four rules.
 
 ## Actor map: who else touches each resource
 
-| Resource                                     | Who writes or acts on it                                                                                             | What this change does                                                                                    |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| group `exosphere` (BIO180006)                | the Exosphere web app (restores its defaults on use); `create-instance`, `bake-image.sh`, `check-image.sh` attach it | left as it is; after the switch no production server needs it except `morphoDepot-server` (out of scope) |
-| groups `mc-instance`, `mc-runner`, `mc-join` | `network-security-groups.sh` (maintainer); the hourly check (only `mc-instance`'s 49528 rules)                       | new                                                                                                      |
-| group `mc-portal`                            | maintainer (by hand so far)                                                                                          | one rule removed; `network-security-groups.sh` does not manage it                                        |
-| member instance ports                        | `create-instance` (at create); unshelve keeps the port and its groups; delete removes the port                       | new instances get `mc-instance`; existing ones are switched once (below)                                 |
-| Exosphere's proxy                            | Exosphere's operators; we cannot change it                                                                           | it alone may reach 49528; the hourly check follows its address                                           |
-| runner-1 → runner-2, join, portal SSH        | the harvester (`mcjournal`), pickup and usage (`mcrunner`), the maintainer                                           | unchanged: 22 stays open on runner-2 and join; the portal rules for the runners stay                     |
-| the reconcile probe (port 22)                | portal pickup, every minute                                                                                          | unchanged                                                                                                |
-| k8s session (`mc-jump`)                      | the k8s proof of concept                                                                                             | loses SSH to `mc-portal`; it is told before the rule is removed                                          |
-| course repositories (other allocations)      | their own runners, vendorized `create-instance`                                                                      | none: the variable is unset there, so `exosphere` as before                                              |
+| Resource                                     | Who writes or acts on it                                                                                             | What this change does                                                                                                                                                      |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| group `exosphere` (BIO180006)                | the Exosphere web app (restores its defaults on use); `create-instance`, `bake-image.sh`, `check-image.sh` attach it | left as it is; `bake-image.sh` and `check-image.sh` move to `mc-instance` at step 5; after step 7 no production server needs it except `morphoDepot-server` (out of scope) |
+| groups `mc-instance`, `mc-runner`, `mc-join` | `network-security-groups.sh` (maintainer); the hourly check (only `mc-instance`'s 49528 rules)                       | new                                                                                                                                                                        |
+| group `mc-portal`                            | maintainer (by hand so far)                                                                                          | one rule removed; `network-security-groups.sh` does not manage it                                                                                                          |
+| member instance ports                        | `create-instance` (at create); unshelve keeps the port and its groups; delete removes the port                       | new instances get `mc-instance`; existing ones are switched once (below)                                                                                                   |
+| Exosphere's proxy                            | Exosphere's operators; we cannot change it                                                                           | it alone may reach 49528; the hourly check follows its address                                                                                                             |
+| runner-1 → runner-2, join, portal SSH        | the harvester (`mcjournal`), pickup and usage (`mcrunner`), the maintainer                                           | unchanged: 22 stays open on runner-2 and join; the portal rules for the runners stay                                                                                       |
+| the reconcile probe (port 22)                | portal pickup, every minute                                                                                          | unchanged                                                                                                                                                                  |
+| k8s session (`mc-jump`)                      | the k8s proof of concept                                                                                             | loses SSH to `mc-portal`; it is told before the rule is removed                                                                                                            |
+| course repositories (other allocations)      | their own runners, vendorized `create-instance`                                                                      | none: the variable is unset there, so `exosphere` as before                                                                                                                |
 
 ## Rollout, in order (each production step after the maintainer's OK)
 
@@ -193,28 +210,38 @@ their four rules.
    - from outside: the web desktop opens through the portal's link; SSH and
      TurboVNC connect; `http://<ip>:49528` direct from runner-1 and from the Mac
      times out; a test listener on another port (e.g. 49530) is unreachable;
-     MyDrive and `/software` stay mounted;
-   - shelve and unshelve once: the port keeps `mc-instance`.
+     MyDrive and `/software` stay mounted; the test listener is stopped and its
+     file removed afterwards;
+   - shelve and unshelve once: the port keeps `mc-instance`;
+   - the outputs of these checks go into the implementation PR's description.
 5. Set `MORPHOCLOUD_SECURITY_GROUP=mc-instance` as a repository variable on
    Instances (and confirm `gh variable list --org MorphoCloud` does not hold
    it); vendorize. From here `create-instance`, `bake-image.sh` and
    `check-image.sh` all use `mc-instance`. Create one instance through the
    portal (as `amm554`) and repeat step 4's outside checks.
-6. Switch every other `instance-*` port, shelved ones included, with the same
-   one-call command. The list is read when the step runs, not fixed here
-   (2026-11-25: only #288). Running it twice changes nothing.
-7. Item 2, for each runner and the join VM, in two calls with no gap:
-   `openstack port set --security-group mc-runner <port>` (adds; both groups
-   attached), check SSH, then
+6. Before this step: the docs FAQ entry on SSH port forwarding is published and
+   the chatbot's knowledge rebuilt (step 10 moves here), and members get one
+   portal notice. Then switch every other `instance-*` port, shelved ones
+   included, with the same one-call command. The list is read when the step
+   runs, not fixed here (2026-11-25: only #288); running it twice changes
+   nothing. A running instance first gets the same listener listing over SSH
+   from runner-1; anything outside 22, 5901 and 49528 is reported before its
+   switch.
+7. Item 2, in this order: runner-2, the join VM, then runner-1 last (losing
+   runner-1 would also lose the path used to repair the others; the maintainer's
+   Mac, with its own OpenStack credentials, is the fallback). For each, in two
+   calls with no gap: `openstack port set --security-group mc-runner <port>`
+   (adds; both groups attached), check SSH, then
    `openstack port set --no-security-group --security-group mc-runner <port>`
    (only the new group). The open SSH session survives (security groups are
-   stateful). Check SSH from the Mac, runner-1 → runner-2/join (`mcjournal`),
-   and the join site.
+   stateful). If the second call fails, the server stays on both groups: safe,
+   not yet tightened; re-running is harmless. If SSH fails after it, the
+   rollback below is run from another working session. Check SSH from the Mac,
+   runner-1 → runner-2/join (`mcjournal`), and the join site.
 8. Item 3: remove the `mc-jump` rule from `mc-portal` (k8s session told first).
 9. Install the hourly proxy-address check on runner-1; run it once by hand, and
    once with a deliberately wrong address in the rule to see it correct the rule
    and send the email.
-10. The docs FAQ entry on SSH port forwarding; the chatbot's knowledge rebuilt.
 
 **Rollback:**
 
@@ -223,7 +250,9 @@ their four rules.
   Exosphere may have rewritten that group's rules in the meantime; its defaults
   still open every port these servers need, but look at its rules before relying
   on it.
-- New instances: delete the repository variable on Instances.
+- New instances: delete the repository variable on Instances. This affects only
+  instances created afterwards; instances already switched go back with the
+  first bullet.
 - Item 3: re-add `tcp 22 from 149.165.149.15/32` to `mc-portal`.
 - The new groups can stay.
 
