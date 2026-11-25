@@ -4,10 +4,10 @@
 Runs on runner-1 (BIO180006), never inside a workflow:
 
     network-security.py groups            # dry run: prints what --apply would change
-    network-security.py groups --apply    # creates/updates mc-instance, mc-runner, mc-join
+    network-security.py groups --apply    # creates/updates mc-instance, mc-join
     network-security.py proxy-check       # hourly from the crontab
 
-`groups` is declarative for its three groups only: it creates each group, adds
+`groups` is declarative for its two groups only: it creates each group, adds
 the rules in GROUPS and removes every other rule in them. It never touches any
 other group (exosphere, default, mc-portal, the k8s groups).
 
@@ -98,12 +98,8 @@ EGRESS4 = Rule("egress", "IPv4", None, None, None, ANY4)
 # from the proxy's resolved addresses (proxy_rules), never from a fixed value.
 GROUPS: dict[str, tuple[str, list[Rule]]] = {
     "mc-instance": (
-        "MorphoCloud member instances: SSH, TurboVNC; web desktop only from Exosphere's proxy (NETWORK_SECURITY_PLAN.md)",
+        "MorphoCloud member instances and runners: SSH, TurboVNC; web desktop only from Exosphere's proxy (NETWORK_SECURITY_PLAN.md)",
         [tcp_in(22), tcp_in(5901), ICMP_IN, EGRESS4],
-    ),
-    "mc-runner": (
-        "MorphoCloud runners: SSH only (NETWORK_SECURITY_PLAN.md)",
-        [tcp_in(22), ICMP_IN, EGRESS4],
     ),
     "mc-join": (
         "MorphoCloud join site: SSH, HTTP, HTTPS (NETWORK_SECURITY_PLAN.md)",
@@ -517,7 +513,7 @@ def cmd_proxy_check() -> int:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
-    g = sub.add_parser("groups", help="create/update mc-instance, mc-runner, mc-join")
+    g = sub.add_parser("groups", help="create/update mc-instance, mc-join")
     g.add_argument(
         "--apply", action="store_true", help="make the changes (default: dry run)"
     )
