@@ -924,7 +924,7 @@ runs:
               printf '%s\n\n' "Unshelve request ${failed_req} failed at scheduling (schedule_instances Error); no admin action needed."
               printf '%s\n' "Run: https://github.com/${GH_REPO}/actions/runs/${RUN_ID}"
               printf '%s\n' '</details>'
-            } > /tmp/unshelve_failure_body.md
+            } > "$RUNNER_TEMP/unshelve_failure_body.md"
             echo "::error ::no ${flavor:-flavor} capacity on Jetstream2 (unshelve request $failed_req failed at scheduling)."
             exit 1
         fi
@@ -954,7 +954,7 @@ runs:
               printf '%s\n\n' '```'
               printf '%s\n\n' "Run: https://github.com/${GH_REPO}/actions/runs/${RUN_ID}"
               printf '%s\n' '</details>'
-            } > /tmp/unshelve_failure_body.md
+            } > "$RUNNER_TEMP/unshelve_failure_body.md"
             echo "::error ::unshelve failed on the compute host after $attempt attempt(s) this run ($total_failures recent failures total)."
             exit 1
         fi
@@ -1001,8 +1001,8 @@ runs:
       continue-on-error: true
       shell: bash
       run: |
-        printf '\n' >> /tmp/unshelve_failure_body.md
-        cat "$DIAG_FILE" >> /tmp/unshelve_failure_body.md
+        printf '\n' >> "$RUNNER_TEMP/unshelve_failure_body.md"
+        cat "$DIAG_FILE" >> "$RUNNER_TEMP/unshelve_failure_body.md"
       env:
         DIAG_FILE: ${{ steps.command_diagnostics.outputs.file }}
 
@@ -1014,7 +1014,7 @@ runs:
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
-        body-path: /tmp/unshelve_failure_body.md
+        body-path: ${{ runner.temp }}/unshelve_failure_body.md
 
     # Decision 30: no host for the flavor. The member retries; no admin
     # email (decision 27) and no follow-through marker (a retry minutes
@@ -1027,7 +1027,7 @@ runs:
       uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
       with:
         issue-number: ${{ inputs.issue_number }}
-        body-path: /tmp/unshelve_failure_body.md
+        body-path: ${{ runner.temp }}/unshelve_failure_body.md
 
     # Two variants of the same timeout report, split on the command. Only
     # unshelve has a safe self-serve recovery: delete + create rebuilds the

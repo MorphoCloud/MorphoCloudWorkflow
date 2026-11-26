@@ -34,7 +34,7 @@ runs:
       run: |
         echo "Checking if '$USERNAME' is a member of '$ORG/teams/$TEAM_SLUG'"
 
-        HTTP_CODE=$(curl -s --retry 3 --retry-delay 5 --retry-all-errors -o /tmp/membership_response.json -w "%{http_code}" \
+        HTTP_CODE=$(curl -s --retry 3 --retry-delay 5 --retry-all-errors -o "$RUNNER_TEMP/membership_response.json" -w "%{http_code}" \
           -H "Authorization: Bearer $TOKEN" \
           -H "Accept: application/vnd.github+json" \
           -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -46,7 +46,7 @@ runs:
         # or pending) and 404 (documented "not a member" response). Anything
         # else is GitHub failing to answer, not the user failing the check.
         if [[ "$HTTP_CODE" == "200" ]]; then
-          STATE=$(jq -r '.state' /tmp/membership_response.json)
+          STATE=$(jq -r '.state' "$RUNNER_TEMP/membership_response.json")
           if [[ "$STATE" == "active" ]]; then
             echo "is_member=true" >> $GITHUB_OUTPUT
             echo "User '$USERNAME' is an active member of '$ORG/teams/$TEAM_SLUG'"
@@ -62,7 +62,7 @@ runs:
           echo "::warning::Could not verify membership of '$USERNAME' in '$ORG/teams/$TEAM_SLUG': GitHub API returned HTTP $HTTP_CODE"
         fi
 
-        rm -f /tmp/membership_response.json
+        rm -f "$RUNNER_TEMP/membership_response.json"
       env:
         TOKEN: ${{ inputs.token }}
         ORG: ${{ inputs.org }}
