@@ -235,6 +235,10 @@ configure the necessary infrastructure:
        on it (the fallback). See the **Runner Architecture** section of
        `SYSTEM-OVERVIEW.md`.
 
+       A runner agent runs one job at a time. To serve several members' creates
+       at once, register more `acquire` agents on the same VM, each in its own
+       directory (`INSTANCES_RUNNER_REBUILD.md`, "Several agents per host").
+
     6. Start the runner and ensure it's connected to GitHub:
 
        ```bash

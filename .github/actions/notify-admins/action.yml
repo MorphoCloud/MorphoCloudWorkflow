@@ -68,8 +68,42 @@ runs:
           file://${{ runner.temp }}/notify-admins-${{ github.run_id }}-${{
           github.run_attempt }}-body.md
 
+    # The mail account refuses a send made just after several others
+    # ("524 You sent it too frequently", clear about 30 s later); see
+    # ../send-email/action.yml. One more try before the notification is kept
+    # for the catch-up.
+    - name: Wait before the second try
+      if: ${{ steps.send.outcome == 'failure' }}
+      shell: bash
+      run: |
+        pause=$((35 + RANDOM % 30))
+        echo "The mail server refused the first send; trying once more in ${pause}s."
+        sleep "$pause"
+
+    - name: Send (second try)
+      id: send_retry
+      if: ${{ steps.send.outcome == 'failure' }}
+      continue-on-error: true
+      uses: dawidd6/action-send-mail@27bf7a883db6de205849f760badd38a1a3ce0dd0 # v24
+      with:
+        server_address: webhost.dynadot.com
+        server_port: 587
+        secure: false
+        username: ${{ inputs.mail_server_username }}
+        password: ${{ inputs.mail_server_password }}
+        from: MorphoCloudPortal <no-reply@morphocloud.org>
+        to: ${{ inputs.admin_emails }}
+        subject: "[${{ github.repository }}] ${{ inputs.subject }}"
+        # Per-run file names: two jobs on one runner must not read each
+        # other's diagnosis.
+        body:
+          file://${{ runner.temp }}/notify-admins-${{ github.run_id }}-${{
+          github.run_attempt }}-body.md
+
     - name: Keep the undelivered notification
-      if: ${{ inputs.admin_emails == '' || steps.send.outcome == 'failure' }}
+      if:
+        ${{ inputs.admin_emails == '' || (steps.send.outcome == 'failure' &&
+        steps.send_retry.outcome != 'success') }}
       shell: bash
       run: |
         if [[ -z "$ADMIN_EMAILS" ]]; then

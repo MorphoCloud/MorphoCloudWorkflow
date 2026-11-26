@@ -64,6 +64,13 @@ outputs:
   error_message:
     description: "Error message describing which steps failed"
     value: ${{ steps.set_error_message.outputs.error_message }}
+  send_refused:
+    description:
+      "'true' when the email was built and the mail server refused it on both
+      tries; 'false' when the action succeeded or failed earlier (lookup,
+      metadata, connection URL, template)"
+    value:
+      ${{ steps.send_mail_retry.outcome == 'failure' && 'true' || 'false' }}
 runs:
   using: "composite"
   steps:
@@ -193,6 +200,40 @@ runs:
         PASSPHRASE: ${{ steps.instance_metadata.outputs.instance_pwd }}
 
     - name: Send mail
+      id: send_mail
+      # A refused send is tried once more below; only the second try's
+      # failure fails the step sequence.
+      continue-on-error: true
+      uses: dawidd6/action-send-mail@27bf7a883db6de205849f760badd38a1a3ce0dd0 # v24
+      with:
+        server_address: webhost.dynadot.com
+        server_port: 587
+        secure: false
+        username: ${{ inputs.mail_server_username }}
+        password: ${{ inputs.mail_server_password }}
+        from: MorphoCloudPortal <no-reply@morphocloud.org>
+        to: ${{ steps.lookup_email.outputs.email }}
+        subject: ${{ steps.render.outputs.subject }}
+        convert_markdown: true
+        html_body: ${{ steps.render.outputs.body }}
+    # Dynadot refuses a send when the account has just sent several
+    # ("524 You sent it too frequently": about 6 messages in 30 s, clear about
+    # 30 s later; morphocloud-intake app/email_client.py has the measurement).
+    # Creates that finish together send together, and so did lose their
+    # emails (ten at once on 2026-11-26: 3 of 9, then 1 of 10). One more try
+    # after the block has cleared; the random part keeps jobs that were
+    # refused together from trying again together.
+    - name: Wait before the second try
+      if: ${{ steps.send_mail.outcome == 'failure' }}
+      shell: bash
+      run: |
+        pause=$((35 + RANDOM % 30))
+        echo "The mail server refused the first send; trying once more in ${pause}s."
+        sleep "$pause"
+
+    - name: Send mail (second try)
+      id: send_mail_retry
+      if: ${{ steps.send_mail.outcome == 'failure' }}
       uses: dawidd6/action-send-mail@27bf7a883db6de205849f760badd38a1a3ce0dd0 # v24
       with:
         server_address: webhost.dynadot.com
@@ -216,6 +257,8 @@ runs:
           error_message="Failed to generate connection URL"
         elif [[ $RENDER_OUTCOME == "failure" ]]; then
           error_message="Failed to fetch or render the email template"
+        elif [[ $SEND_RETRY_OUTCOME == "failure" ]]; then
+          error_message="The mail server refused it twice."
         fi
         echo "error_message=$error_message" >> $GITHUB_OUTPUT
       env:
@@ -223,3 +266,4 @@ runs:
         INSTANCE_METADATA_OUTCOME: ${{ steps.instance_metadata.outcome }}
         GUACAMOLE_OUTCOME: ${{ steps.guacamole.outcome }}
         RENDER_OUTCOME: ${{ steps.render.outcome }}
+        SEND_RETRY_OUTCOME: ${{ steps.send_mail_retry.outcome }}

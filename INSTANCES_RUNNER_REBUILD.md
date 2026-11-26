@@ -45,8 +45,9 @@ Two runners back `Instances` (see `SYSTEM-OVERVIEW.md` → Runner Architecture):
 
 ### 1. Build the VM
 
-Exosphere → correct allocation → `m3.tiny`, custom root disk **30 GB**, upload
-your SSH key, **disable web desktop + Guacamole**. (Same as MWF README →
+Exosphere → correct allocation → `m3.small` (2 cores; both runners since
+2026-11-26, see "Several agents per host" below), custom root disk **30 GB**,
+upload your SSH key, **disable web desktop + Guacamole**. (Same as MWF README →
 "Setting Up a MorphoCloud GitHub Runner".) SSH in as `exouser`.
 
 ### 2. Base host setup (both runners)
@@ -99,6 +100,45 @@ sudo ./svc.sh install && sudo ./svc.sh start && sudo ./svc.sh status
 
 Repo variables: `MORPHOCLOUD_ACQUIRE_RUNNER=acquire`,
 `MORPHOCLOUD_CONTROL_RUNNER=control`.
+
+#### Several agents per host (since 2026-11-26)
+
+One runner agent runs one job at a time, and a member's create holds its agent
+for the whole create (5 to 8 minutes), so with one `acquire` agent ten members
+creating together were served one after another: the tenth waited about an hour.
+Each host therefore runs several agents, each in its own directory with its own
+service:
+
+| Host                 | Directory                    | Runner name                   | Label     |
+| -------------------- | ---------------------------- | ----------------------------- | --------- |
+| acquire runner (r-1) | `~/actions-runner`           | `js2-bio180006-runner`        | `acquire` |
+| acquire runner (r-1) | `~/actions-runner-a2` … `a5` | `js2-bio180006-runner-a2…5`   | `acquire` |
+| control runner (r-2) | `~/actions-runner`           | `js2-bio180006-runner-2`      | `control` |
+| control runner (r-2) | `~/actions-runner-c2`        | `js2-bio180006-runner-2-c2`   | `control` |
+| control runner (r-2) | `~/actions-runner-a1` … `a5` | `js2-bio180006-runner-2-a1…5` | `acquire` |
+
+Five `acquire` agents per host serve ten creates at once; measured on 2026-11-26
+with both hosts at 2 cores: ten of ten built in 6.5 to 8 minutes, each host at
+26-28% CPU. The second `control` agent lets two scheduled jobs run side by side.
+The clock (crontab) still lives on the acquire runner only.
+
+An extra agent is the same registration in another directory. The `.env` and
+`.path` files are copied from the first agent so every agent runs jobs with the
+same environment:
+
+```bash
+k=a2                                   # the directory and name suffix
+mkdir -p ~/actions-runner-$k && cd ~/actions-runner-$k
+# download and extract the same runner version as ~/actions-runner, then:
+./config.sh --unattended --url https://github.com/MorphoCloud/Instances \
+  --token <REG_TOKEN> --name js2-bio180006-runner-$k --labels acquire --work _work
+cp ~/actions-runner/.env ~/actions-runner/.path .
+sudo ./svc.sh install exouser && sudo ./svc.sh start
+```
+
+Jobs on one host share the host: anything a job writes outside its own
+`$RUNNER_TEMP` (a fixed `/tmp` path, for example) is shared with the jobs beside
+it.
 
 ### 5. Restore the clock — **ACQUIRE runner ONLY**
 
