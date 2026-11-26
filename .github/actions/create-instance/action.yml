@@ -506,27 +506,19 @@ runs:
 
         echo "Waiting for instance to reach stable state..."
 
-        max_wait_time=300  # Wait up to 5 min — full-A100-passthrough flavors (g3.xl) spawn slower than the smaller ones (loop still breaks early on ACTIVE/ERROR)
-        wait_interval=3
-        total_wait_time=0
-
-        while [ $total_wait_time -lt $max_wait_time ]; do
-            instance_json=$(openstack server show "$INSTANCE_NAME" -f json)
-            status=$(echo "$instance_json" | jq -r '.status')
-
-            echo "Current status: $status (waited ${total_wait_time}s)"
-
-            # Check if reached a stable state (ACTIVE or ERROR)
-            if [[ "$status" == "ACTIVE" || "$status" == "ERROR" ]]; then
-                echo "Instance reached stable state: $status"
-                break
-            fi
-
-            sleep $wait_interval
-            total_wait_time=$((total_wait_time + wait_interval))
-        done
-
-        echo "final_status=$status" >> $GITHUB_OUTPUT
+        # One process that stays signed in, not one `openstack` command per
+        # look: the commands were 19% of the runner's one core for the length
+        # of this wait (see ../poll/poll.py), which is what limits how many
+        # creates can run side by side.
+        #
+        # 480 s by the clock. The loop this replaces counted only its own 3 s
+        # sleeps up to 300, and each `openstack server show` between them
+        # took about 2 s, so it really waited about 8 minutes. Full-A100
+        # flavors (g3.xl) spawn slower than the smaller ones; the wait still
+        # ends at once on ACTIVE or ERROR.
+        out=$(python "$GITHUB_ACTION_PATH/../poll/poll.py" server-status \
+          --server "$INSTANCE_NAME" --until ACTIVE,ERROR --timeout 480 --interval 3)
+        echo "$out" >> "$GITHUB_OUTPUT"
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}

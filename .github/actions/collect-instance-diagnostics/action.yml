@@ -13,9 +13,12 @@ inputs:
     description: "Name of the instance"
     required: true
   output_file:
-    description: "Path the markdown block is written to"
+    description:
+      "Path the markdown block is written to. Empty (the default): a file in the
+      job's own temporary directory, so two jobs on one runner host never share
+      it."
     required: false
-    default: "/tmp/instance_diagnostics.md"
+    default: ""
   max_actions:
     description: "How many of the most recent instance actions to expand"
     required: false
@@ -41,6 +44,9 @@ runs:
       shell: bash
       run: |
         source ~/venv/bin/activate
+        # A file of this job's own: with several runner agents on one host, a
+        # fixed /tmp path let one failed command post another instance's block.
+        OUTPUT_FILE="${OUTPUT_FILE:-$RUNNER_TEMP/instance_diagnostics.md}"
 
         # Why this exists: Nova's per-instance action log is the only record of
         # WHY a build or unshelve failed (fault message, which step errored, on

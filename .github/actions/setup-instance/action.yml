@@ -89,59 +89,62 @@ runs:
             | grep -oE 'TASK \[[^]]+\]' | tail -1 | sed -E 's/^TASK \[//; s/\]$//'
         }
 
-        while (( SECONDS - start_time < max_wait_time )); do
+        # One process that stays signed in, not one `openstack console log
+        # show` every 5 s: those commands were 12% of the runner's one core
+        # for the length of this wait (see ../poll/poll.py), which is what
+        # limits how many creates can run side by side. The helper returns
+        # when the instance's own setup reports complete or error, or the
+        # time is up; it prints the last {"status":"..."} line of the console
+        # (nothing when there is none) and leaves the console log in a file
+        # for the failure report below. It fails only when Jetstream2 could
+        # not be asked.
+        log_file="$RUNNER_TEMP/console-$INSTANCE_NAME.log"
+        status_line=$(python "$GITHUB_ACTION_PATH/../poll/poll.py" console-status \
+          --server "$INSTANCE_NAME" --log-file "$log_file" \
+          --timeout "$max_wait_time" --interval "$wait_interval") || {
+          set_failure_detail "setup status could not be read: the instance console log could not be fetched (OpenStack error)"
+          echo "::error ::failed to fetch console log for $INSTANCE_NAME"
+          exit 1
+        }
+        log_output=$(cat "$log_file")
+        rm -f "$log_file"
 
-            # Get the log; bail if openstack itself fails
-            log_output=$(openstack console log show "$INSTANCE_NAME") || {
-              set_failure_detail "setup status could not be read: the instance console log could not be fetched (OpenStack error)"
-              echo "::error ::failed to fetch console log for $INSTANCE_NAME"
-              exit 1
-            }
+        # Default to pending when the console carries no status line yet.
+        status=$(
+          { [ -n "$status_line" ] && printf '%s\n' "$status_line" | tail -n1 || echo '{"status":"pending"}'; } \
+          | jq -r '.status // "pending"'
+        )
 
-            # Extract the last {"status":"..."} line; default to pending if none
-            status_line=$(printf '%s\n' "$log_output" | grep -E '^\{"status":"' || true)
-            status=$(
-              { [ -n "$status_line" ] && printf '%s\n' "$status_line" | tail -n1 || echo '{"status":"pending"}'; } \
-              | jq -r '.status // "pending"'
-            )
+        echo "setup status [$status] (waited $((SECONDS - start_time))s)."
 
-            echo -n "setup status [$status] (waited $((SECONDS - start_time))s). "
-
-            if [[ "$status" == "complete" ]]; then
-                echo "Setup complete."
-                break
-            elif [[ "$status" == "error" ]]; then
-                # A failure raised before/outside ansible (no outbound network, a
-                # missing precondition, an incomplete checkout) carries an
-                # explicit reason. Prefer it: those failures happen with no
-                # ansible task on the console, so the task-name path below would
-                # report `unknown`, or -- after a mid-clone drop -- a real task
-                # name that misattributes a network fault to an ansible bug.
-                reason=$(printf '%s\n' "$status_line" | tail -n1 | jq -r '.reason // empty' || true)
-                if [ -n "$reason" ]; then
-                    detail="setup FAILED: $reason"
-                else
-                    # Real setup failure. Extract the failed ansible task (and loop
-                    # item, e.g. the extension name) from the console so the comment
-                    # says exactly where it failed -- not a generic timeout message.
-                    failed_task=$(last_ansible_task "$log_output")
-                    failed_item=$(printf '%s\n' "$log_output" | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E 'failed:' | grep -oE '\(item=[^)]+\)' | tail -1 | sed -E 's/^\(item=//; s/\)$//')
-                    detail="setup FAILED at ansible task \`${failed_task:-unknown}\`"
-                    if [ -n "$failed_item" ]; then detail="$detail (item \`$failed_item\`)"; fi
-                fi
-                set_failure_detail "$detail"
-                echo "outcome=error" >> "$GITHUB_OUTPUT"
-                # Decision 33: the instance's own error line is the one real
-                # failure; the status sweep turns this marker into status:error.
-                openstack server set --property 'exoSetup={"status":"error","epoch":'"$(date +%s)"'000}' "$INSTANCE_NAME" \
-                  || echo "::warning ::could not mark exoSetup=error on $INSTANCE_NAME"
-                echo "::error ::$detail"
-                exit 1
+        if [[ "$status" == "error" ]]; then
+            # A failure raised before/outside ansible (no outbound network, a
+            # missing precondition, an incomplete checkout) carries an
+            # explicit reason. Prefer it: those failures happen with no
+            # ansible task on the console, so the task-name path below would
+            # report `unknown`, or -- after a mid-clone drop -- a real task
+            # name that misattributes a network fault to an ansible bug.
+            reason=$(printf '%s\n' "$status_line" | tail -n1 | jq -r '.reason // empty' || true)
+            if [ -n "$reason" ]; then
+                detail="setup FAILED: $reason"
             else
-                echo "Waiting for completion..."
-                sleep $wait_interval
+                # Real setup failure. Extract the failed ansible task (and loop
+                # item, e.g. the extension name) from the console so the comment
+                # says exactly where it failed -- not a generic timeout message.
+                failed_task=$(last_ansible_task "$log_output")
+                failed_item=$(printf '%s\n' "$log_output" | sed -E 's/\x1b\[[0-9;]*m//g' | grep -E 'failed:' | grep -oE '\(item=[^)]+\)' | tail -1 | sed -E 's/^\(item=//; s/\)$//')
+                detail="setup FAILED at ansible task \`${failed_task:-unknown}\`"
+                if [ -n "$failed_item" ]; then detail="$detail (item \`$failed_item\`)"; fi
             fi
-        done
+            set_failure_detail "$detail"
+            echo "outcome=error" >> "$GITHUB_OUTPUT"
+            # Decision 33: the instance's own error line is the one real
+            # failure; the status sweep turns this marker into status:error.
+            openstack server set --property 'exoSetup={"status":"error","epoch":'"$(date +%s)"'000}' "$INSTANCE_NAME" \
+              || echo "::warning ::could not mark exoSetup=error on $INSTANCE_NAME"
+            echo "::error ::$detail"
+            exit 1
+        fi
 
         if [[ "$status" != "complete" ]]; then
             last_task=$(last_ansible_task "$log_output")

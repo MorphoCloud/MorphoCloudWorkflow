@@ -48,7 +48,7 @@ jobs:
         shell: bash
         run: |
           curl -sfL --retry 3 --retry-delay 5 --retry-all-errors \
-            -o /tmp/storage-term.json "$TEMPLATE_URL"
+            -o "$RUNNER_TEMP/storage-term.json" "$TEMPLATE_URL"
         env:
           TEMPLATE_URL:
             https://raw.githubusercontent.com/MorphoCloud/MorphoCloudPortalContent/${{
@@ -63,7 +63,7 @@ jobs:
           source ~/venv/bin/activate
           python3 .github/actions/expire-shares/scrub.py
         env:
-          TEMPLATE_FILE: /tmp/storage-term.json
+          TEMPLATE_FILE: ${{ runner.temp }}/storage-term.json
           SHELVED_DAYS: ${{ vars.MORPHOCLOUD_SHELVED_DELETE_DAYS }}
           OS_CLOUD: ${{ vars.MORPHOCLOUD_OS_CLOUD }}
           # The runner reads these: the instance names, and MyDrive's end date.

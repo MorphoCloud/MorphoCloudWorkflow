@@ -122,9 +122,9 @@ runs:
         echo "upload_url=" >> "$GITHUB_OUTPUT"
         echo "::warning ::Upload page not reachable at $UPLOAD_URL (last HTTP status $code); the email omits it."
         if [[ "$EXPECT" == "true" ]]; then
-          printf 'The upload page on **%s** did not respond (HTTP %s), so the email does not include its link. Run `/email` later to try again.\n' "$INSTANCE_NAME" "$code" > "/tmp/upload-page-${ISSUE_NUMBER}.md"
-          gh issue comment "$ISSUE_NUMBER" --body-file "/tmp/upload-page-${ISSUE_NUMBER}.md" || true
-          rm -f "/tmp/upload-page-${ISSUE_NUMBER}.md"
+          printf 'The upload page on **%s** did not respond (HTTP %s), so the email does not include its link. Run `/email` later to try again.\n' "$INSTANCE_NAME" "$code" > "$RUNNER_TEMP/upload-page-${ISSUE_NUMBER}.md"
+          gh issue comment "$ISSUE_NUMBER" --body-file "$RUNNER_TEMP/upload-page-${ISSUE_NUMBER}.md" || true
+          rm -f "$RUNNER_TEMP/upload-page-${ISSUE_NUMBER}.md"
         fi
       env:
         UPLOAD_URL: ${{ steps.guacamole.outputs.upload_url }}
@@ -145,8 +145,8 @@ runs:
       shell: bash
       run: |
         curl -sfL --retry 3 --retry-delay 5 --retry-all-errors \
-          -o /tmp/instance-credentials.json "$TEMPLATE_URL"
-        python3 "$GITHUB_ACTION_PATH/render.py" /tmp/instance-credentials.json
+          -o "$RUNNER_TEMP/instance-credentials.json" "$TEMPLATE_URL"
+        python3 "$GITHUB_ACTION_PATH/render.py" "$RUNNER_TEMP/instance-credentials.json"
       env:
         TEMPLATE_URL:
           https://raw.githubusercontent.com/MorphoCloud/MorphoCloudPortalContent/${{
