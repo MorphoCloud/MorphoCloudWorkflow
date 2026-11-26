@@ -155,8 +155,35 @@ jobs:
           template_ref: ${{ vars.MORPHOCLOUD_TEMPLATE_REF || 'main' }}
           portal_url: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
 
+      # Only a refused send is the member's "ready, email not sent". When the
+      # email could not be built (no address, no metadata, no connection URL,
+      # no template) something is wrong with the instance or the request, and
+      # that stays a failure, reported as before.
+      - name: Fail when the email could not be built
+        if:
+          ${{ !cancelled() && steps.send_email.outcome == 'failure' &&
+          steps.send_email.outputs.send_refused != 'true' }}
+        shell: bash
+        run: |
+          echo "::error ::The access email could not be built: ${ERROR_MESSAGE:-see the Send email step}"
+          exit 1
+        env:
+          ERROR_MESSAGE: ${{ steps.send_email.outputs.error_message }}
+
+      - name: comment (failed to send email)
+        if: ${{ steps.send_email.outcome == 'failure' && failure() }}
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          issue-number: ${{ inputs.issue_number }}
+          body: |
+            Failed to send connection email for instance **${{ steps.resolve.outputs.instance_name }}**. ${{ steps.send_email.outputs.error_message }}
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
       - name: comment (instance ready, email not sent)
-        if: ${{ !cancelled() && steps.send_email.outcome == 'failure' }}
+        if:
+          ${{ !cancelled() && steps.send_email.outcome == 'failure' &&
+          steps.send_email.outputs.send_refused == 'true' }}
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ inputs.issue_number }}
@@ -169,7 +196,9 @@ jobs:
 
       - name: Describe the unsent email for the admins
         id: describe_unsent
-        if: ${{ !cancelled() && steps.send_email.outcome == 'failure' }}
+        if:
+          ${{ !cancelled() && steps.send_email.outcome == 'failure' &&
+          steps.send_email.outputs.send_refused == 'true' }}
         shell: bash
         run: |
           printf 'Command:  resume-setup\nInstance: %s\n\nWhat happened: The instance is ready, but the email with its access details could not be sent to the member; the send was tried twice, about a minute apart. The resume is reported as successful.\n\nWhat to do: The portal shows the member the access details. `/email` on the issue sends the email again; check the mail account if this repeats.\n' \

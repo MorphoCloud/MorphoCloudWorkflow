@@ -64,6 +64,13 @@ outputs:
   error_message:
     description: "Error message describing which steps failed"
     value: ${{ steps.set_error_message.outputs.error_message }}
+  send_refused:
+    description:
+      "'true' when the email was built and the mail server refused it on both
+      tries; 'false' when the action succeeded or failed earlier (lookup,
+      metadata, connection URL, template)"
+    value:
+      ${{ steps.send_mail_retry.outcome == 'failure' && 'true' || 'false' }}
 runs:
   using: "composite"
   steps:
@@ -250,6 +257,8 @@ runs:
           error_message="Failed to generate connection URL"
         elif [[ $RENDER_OUTCOME == "failure" ]]; then
           error_message="Failed to fetch or render the email template"
+        elif [[ $SEND_RETRY_OUTCOME == "failure" ]]; then
+          error_message="The mail server refused it twice."
         fi
         echo "error_message=$error_message" >> $GITHUB_OUTPUT
       env:
@@ -257,3 +266,4 @@ runs:
         INSTANCE_METADATA_OUTCOME: ${{ steps.instance_metadata.outcome }}
         GUACAMOLE_OUTCOME: ${{ steps.guacamole.outcome }}
         RENDER_OUTCOME: ${{ steps.render.outcome }}
+        SEND_RETRY_OUTCOME: ${{ steps.send_mail_retry.outcome }}

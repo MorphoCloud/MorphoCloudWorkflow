@@ -493,8 +493,37 @@ jobs:
           template_ref: ${{ vars.MORPHOCLOUD_TEMPLATE_REF || 'main' }}
           portal_url: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
 
+      # Only a refused send is the member's "ready, email not sent". When the
+      # email could not be built (no address, no metadata, no connection URL,
+      # no template) something is wrong with the instance or the request, and
+      # that stays a failure, reported as before.
+      - name: Fail when the email could not be built
+        if:
+          ${{ !cancelled() && steps.send_email.outcome == 'failure' &&
+          steps.send_email.outputs.send_refused != 'true' }}
+        shell: bash
+        run: |
+          echo "::error ::The access email could not be built: ${ERROR_MESSAGE:-see the Send email step}"
+          exit 1
+        env:
+          ERROR_MESSAGE: ${{ steps.send_email.outputs.error_message }}
+
+      - name: comment (failed to send email)
+        if: ${{ steps.send_email.outcome == 'failure' && failure() }}
+        uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          body: |
+            ### Instance Creation Results ❌
+
+            Failed to send connection email for instance **${{ steps.provision.outputs.instance_name }}**. ${{ steps.send_email.outputs.error_message }}
+
+            See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
       - name: comment (instance ready, email not sent)
-        if: ${{ !cancelled() && steps.send_email.outcome == 'failure' }}
+        if:
+          ${{ !cancelled() && steps.send_email.outcome == 'failure' &&
+          steps.send_email.outputs.send_refused == 'true' }}
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ github.event.issue.number }}
@@ -507,7 +536,9 @@ jobs:
 
       - name: Describe the unsent email for the admins
         id: describe_unsent
-        if: ${{ !cancelled() && steps.send_email.outcome == 'failure' }}
+        if:
+          ${{ !cancelled() && steps.send_email.outcome == 'failure' &&
+          steps.send_email.outputs.send_refused == 'true' }}
         shell: bash
         run: |
           printf 'Command:  create\nInstance: %s\n\nWhat happened: The instance is ready, but the email with its access details could not be sent to the member; the send was tried twice, about a minute apart. The create is reported as successful.\n\nWhat to do: The portal shows the member the access details. `/email` on the issue sends the email again; check the mail account if this repeats.\n' \
@@ -612,6 +643,9 @@ jobs:
           elif [[ "$SETUP" == "failure" || "$SETUP_STATUS" != "complete" ]]; then
             what="The server is up but its setup did not finish (status: ${SETUP_STATUS:-unknown}); the setup comment on the issue says which step. A setup that could not reach GitHub or PyPI is a network orphan: the address is dead."
             todo="The member was told to delete and create again. A fresh placement fixes an orphan; if setup fails the same way twice, look at the image or Jetstream2."
+          elif [[ "$SEND_EMAIL" == "failure" ]]; then
+            what="The instance is ready but the email with its access details could not be built (address lookup, instance metadata, connection URL or template); the issue carries the details."
+            todo="Make sure the member has the access details (the portal shows them); the Send email step in the run log names what failed."
           else
             what="An unhandled failure; the run log has the step."
             todo="Read the run log."
@@ -623,6 +657,7 @@ jobs:
           PROVISION: ${{ steps.provision.outcome }}
           SETUP: ${{ steps.setup.outcome }}
           SETUP_STATUS: ${{ steps.setup.outputs.setup_status }}
+          SEND_EMAIL: ${{ steps.send_email.outcome }}
 
       - name: Notify admins by email (create failed)
         if: ${{ failure() && steps.describe_failure.outcome == 'success' }}
