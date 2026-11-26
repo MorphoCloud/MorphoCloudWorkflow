@@ -90,6 +90,75 @@ runs:
         instance_ip: ${{ steps.instance_metadata.outputs.instance_ip }}
 
     - name: Send mail
+      id: send_mail
+      # A refused send is tried once more below; only the second try's
+      # failure fails the step sequence.
+      continue-on-error: true
+      uses: dawidd6/action-send-mail@27bf7a883db6de205849f760badd38a1a3ce0dd0 # v24
+      with:
+        server_address: webhost.dynadot.com
+        server_port: 587
+        secure: false
+        username: ${{ inputs.mail_server_username }}
+        password: ${{ inputs.mail_server_password }}
+        from: MorphoCloudPortal <no-reply@morphocloud.org>
+        to: ${{ steps.lookup_email.outputs.email }}
+        subject:
+          "[${{ github.event.repository.name }}] Instance ${{
+          inputs.instance_name }} active"
+        convert_markdown: true
+        html_body: |
+          Your MorphoCloud course instance is up and running:
+
+          * **Graphical User Interface (GUI)**: Use the URL provided to connect from a web browser. For improved performance and responsiveness, you may also use a dedicated TurboVNC client.
+          * **Command Line Access**: Use the SSH information provided below to access your instance from the command line.
+
+          In both cases, username is **exouser** and the passphrase is provided.
+
+          **Important Notes:**
+
+          - Each session is limited to 4 hours. **Without explicit action, your instance will be automatically shelved after this time.** Around 3h30m into your session,
+            a popup will appear in the graphical interface asking whether you'd like to extend your session — clicking "Yes" will delay shelving by another 4 hours.
+            If no action is taken, the instance will be shelved and all GUI or SSH connections will be disconnected. Your data will be preserved and the instance can
+            later be unshelved.
+          - To create an instance, use the `/create` command.
+          - To unshelve an existing instance, use the `/unshelve` command.
+          - To shelve an instance and preserve your allocation, use the `/shelve` command.
+          - To obtain the latest set of access credentials, use the `/email` command.
+          - To delete an instance and/or its volume, use the `/delete_instance`, `/delete_volume`, or `/delete_all` commands.
+          - Commands should be added as comments to issue [${{ github.repository }}#${{ inputs.instance_issue_number }}](https://github.com/${{ github.repository }}/issues/${{ inputs.instance_issue_number }})
+
+          If you have questions, please contact your instructor or [portal@morphocloud.org](mailto:portal@morphocloud.org).
+
+          **Connection Methods:**
+
+          - TurboVNC: `${{ steps.instance_metadata.outputs.instance_ip }}:1`
+          - Web connect: [${{ steps.guacamole.outputs.connection_url }}](${{ steps.guacamole.outputs.connection_url }})
+          - SSH: `ssh exouser@${{ steps.instance_metadata.outputs.instance_ip }}`
+
+          **Credentials:**
+
+          - Username: **exouser**
+          - Passphrase: `${{ steps.instance_metadata.outputs.instance_pwd }}`
+
+    # Dynadot refuses a send when the account has just sent several
+    # ("524 You sent it too frequently": about 6 messages in 30 s, clear about
+    # 30 s later; morphocloud-intake app/email_client.py has the measurement).
+    # Creates that finish together send together, and so did lose their
+    # emails (ten at once on 2026-11-26: 3 of 9, then 1 of 10). One more try
+    # after the block has cleared; the random part keeps jobs that were
+    # refused together from trying again together.
+    - name: Wait before the second try
+      if: ${{ steps.send_mail.outcome == 'failure' }}
+      shell: bash
+      run: |
+        pause=$((35 + RANDOM % 30))
+        echo "The mail server refused the first send; trying once more in ${pause}s."
+        sleep "$pause"
+
+    - name: Send mail (second try)
+      id: send_mail_retry
+      if: ${{ steps.send_mail.outcome == 'failure' }}
       uses: dawidd6/action-send-mail@27bf7a883db6de205849f760badd38a1a3ce0dd0 # v24
       with:
         server_address: webhost.dynadot.com

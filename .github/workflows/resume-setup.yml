@@ -130,9 +130,15 @@ jobs:
           github_id: ${{ steps.resolve.outputs.github_id }}
           github_login: ${{ steps.resolve.outputs.github_login }}
 
+      # An instance that is ready stays a successful resume when only its
+      # email could not be sent (the action has already tried twice): the
+      # portal shows the member the access details, and a ready instance
+      # reported as a failed one sends the member to delete it. The member
+      # is told here and the admins by email below; nothing is silent.
       - name: Send email
         id: send_email
         if: ${{ steps.setup.outputs.setup_status == 'complete' }}
+        continue-on-error: true
         uses: ./.github/actions/send-email
         with:
           storage_mode: ${{ steps.resolve.outputs.storage_mode }}
@@ -149,15 +155,43 @@ jobs:
           template_ref: ${{ vars.MORPHOCLOUD_TEMPLATE_REF || 'main' }}
           portal_url: ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL }}
 
-      - name: comment (failed to send email)
-        if: ${{ steps.send_email.outcome == 'failure' && failure() }}
+      - name: comment (instance ready, email not sent)
+        if: ${{ !cancelled() && steps.send_email.outcome == 'failure' }}
         uses: peter-evans/create-or-update-comment@e8674b075228eee787fea43ef493e45ece1004c9 # v5.0.0
         with:
           issue-number: ${{ inputs.issue_number }}
           body: |
-            Failed to send connection email for instance **${{ steps.resolve.outputs.instance_name }}**. ${{ steps.send_email.outputs.error_message }}
+            ### Instance ready, email not sent ⚠️
+
+            Your instance **${{ steps.resolve.outputs.instance_name }}** is ready, but the email with its access details could not be sent. ${{ steps.send_email.outputs.error_message }} ${{ vars.MORPHOCLOUD_DATA_PORTAL_URL != '' && format('The access details are on the portal: {0}', vars.MORPHOCLOUD_DATA_PORTAL_URL) || 'Comment `/email` to have it sent again.' }}
 
             See details at https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Describe the unsent email for the admins
+        id: describe_unsent
+        if: ${{ !cancelled() && steps.send_email.outcome == 'failure' }}
+        shell: bash
+        run: |
+          printf 'Command:  resume-setup\nInstance: %s\n\nWhat happened: The instance is ready, but the email with its access details could not be sent to the member; the send was tried twice, about a minute apart. The resume is reported as successful.\n\nWhat to do: The portal shows the member the access details. `/email` on the issue sends the email again; check the mail account if this repeats.\n' \
+            "$INSTANCE_NAME" > "$RUNNER_TEMP/admin-unsent-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.md"
+        env:
+          INSTANCE_NAME: ${{ steps.resolve.outputs.instance_name }}
+
+      - name: Notify admins by email (access email not sent)
+        if: ${{ !cancelled() && steps.describe_unsent.outcome == 'success' }}
+        uses: ./.github/actions/notify-admins
+        with:
+          admin_emails: ${{ vars.MORPHOCLOUD_GITHUB_ADMIN_EMAILS }}
+          mail_server_username: ${{ secrets.MAIL_USERNAME }}
+          mail_server_password: ${{ secrets.MAIL_PASSWORD }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue_number: ${{ inputs.issue_number }}
+          subject:
+            "access email not sent for ${{ steps.resolve.outputs.instance_name
+            }} (issue #${{ inputs.issue_number }})"
+          body_file:
+            ${{ runner.temp }}/admin-unsent-${{ github.run_id }}-${{
+            github.run_attempt }}.md
 
       # Decision 27: a resume that fails needs an admin; one email, with
       # what to look at.
