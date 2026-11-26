@@ -50,3 +50,8 @@ check "GH_MorphoCloud-analytics-dispatcher" "$CFG/analytics-dispatch.pat"
 # The incident harvester's two tokens (INCIDENT_STORE_PHASE1_DESIGN.md).
 check "GH_MorphoCloud-incidents-source"     "$CFG/harvest-source.pat"
 check "GH_MorphoCloud-incidents-store"      "$CFG/harvest-store.pat"
+# The two tokens the portal pickup reads with (MorphoCloudPortal:
+# PORTAL_MESSAGES_PLAN.md, the team messages; CHATBOT_PLAN.md decision 24, the
+# assistant's knowledge files).
+check "GH_MorphoCloud-portal-messages"       "$CFG/portal-messages.pat"
+check "GH_MorphoCloud-portal-knowledge-read" "$CFG/portal-knowledge.pat"
