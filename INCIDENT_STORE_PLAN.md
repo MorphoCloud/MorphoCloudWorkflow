@@ -891,7 +891,7 @@ files.
   `portal_events` keeps its rows for 400 days, so nothing is lost; the watchdog
   also checks the newest portal record, at one day.
 
-### Storage usage (weekly snapshot)
+### Storage usage (daily snapshot, weekly report)
 
 Asked for by the maintainer on 2026-11-24: is 100 GB per member (decision 1 of
 STORAGE_REDESIGN_PLAN.md) too large or too small? The answer comes from one more
@@ -931,9 +931,11 @@ from before it went down.
 `platform`, for a source that sets `storage_usage: true` in
 `incident-sources.yml` (production only):
 
-- **When:** the first cycle after Monday 13:00 UTC of each ISO week. The
+- **When:** **(amended 2026-11-27, maintainer's decision for the admin
+  dashboard; was weekly)** the first cycle after 13:00 UTC of each UTC day. The
   harvester's 5-minute cycle is the clock, so there is no new cron line.
-  `state/storage-usage.json` records the last week taken.
+  `state/storage-usage.json` records the last day taken (`day`, `YYYY-MM-DD`). A
+  state file from the weekly build (`week` only) counts as "no day taken".
 - **How:** SSH to the target named in `~/mc-data/portal_target` (the file the
   workflows already read), with the runner's key and `BatchMode`,
   `StrictHostKeyChecking=yes`. No new key or token.
@@ -941,42 +943,50 @@ from before it went down.
   `shares` list. Every row needs a unique integer (not boolean) `github_id`, a
   known `state`, byte counts and `extensions` that are null or not negative, a
   real `start` date, and an `end_date` and `usage_at` that are null or well
-  formed. An empty list after a week that had shares is refused too, because it
-  would record every share as gone. A large drop is accepted, since shares
-  created in the same migration week end in the same week. A failed SSH call, a
-  timeout, or truncated or non-JSON output is a failed attempt, never an empty
-  snapshot. The week stays untaken and the next cycle tries again. The error in
-  the store names the failure only. SSH's own message, which carries the
-  portal's address, goes to the harvester's local log.
-- **Stored:** `storage/YYYY/MM/DD.jsonl` (the snapshot's day). There is one line
-  per share: `schema`, `week` (ISO week, `2026-W48`), `taken_at`, plus the
-  fields above. A row whose `usage_at` is null or more than 24 hours old gets
-  `stale: true`.
+  formed. An empty list after a day whose snapshot had shares is refused too,
+  because it would record every share as gone. A large drop from one day to the
+  next is accepted, since shares created on the same day end on the same day
+  (the 44 shares of the 2026-11-23 migration all end on 2027-03-23). A failed
+  SSH call, a timeout, or truncated or non-JSON output is a failed attempt,
+  never an empty snapshot. The day stays untaken and the next cycle tries again.
+  The error in the store names the failure only. SSH's own message, which
+  carries the portal's address, goes to the harvester's local log.
+- **Stored:** `storage/YYYY/MM/DD.jsonl` (the snapshot's UTC day; the same
+  layout as the weekly build, which already wrote one file per snapshot day).
+  There is one line per share: `schema`, `day` (`YYYY-MM-DD`), `week` (the ISO
+  week of that day, `2026-W48`), `taken_at`, plus the fields above. A row whose
+  `usage_at` is null or more than 24 hours old gets `stale: true`. Files from
+  the weekly build have no `day`; their file name gives it.
 - **Final use:** a share in one stored snapshot that is missing from the next
   stored snapshot, and is not in the latest one, has left the states that hold
   data (a reset empties a share but keeps it, so it stays). A share that comes
   back was not gone and gets no final row. Each share has one final row, at its
   last departure. That row is its last stored row with `gone_by` (the next
-  snapshot's time), so it is up to a week older than the departure. It goes in
+  snapshot's time), so it is up to a day older than the departure. It goes in
   `storage/final.jsonl`. This keeps the use of shares that left, which the
-  latest weekly file alone would not show.
+  latest file alone would not show. Snapshots are compared in `taken_at` order,
+  daily and weekly files alike.
 - **Order:** the snapshot goes into the store in one write, whole or not at all.
   `final.jsonl` and the report are then rewritten from all the snapshots, so
   they are fully derived, and `state/storage-usage.json` comes last. All of it
   goes out in that cycle's one store commit; if the push fails, the next cycle's
-  commit carries it. If a snapshot for the week is already in the store (its
+  commit carries it. If a snapshot for the day is already in the store (its
   state write was lost), the step does not call the portal again. It rewrites
   `final.jsonl`, the report and the state from the snapshots. A crash between
-  writes can therefore neither lose a final row nor repeat one. The analysis
-  keeps only the last snapshot of each ISO week. A week taken with a bad
-  snapshot (a bug) is taken again by hand: delete that snapshot's file
-  (`storage/YYYY/MM/DD.jsonl` for its day) and `state/storage-usage.json` from
-  the store. The step checks the state first, then the store, so both must go.
-  The next cycle then takes the week afresh.
+  writes can therefore neither lose a final row nor repeat one. A day taken with
+  a bad snapshot (a bug) is taken again by hand: delete that day's file
+  (`storage/YYYY/MM/DD.jsonl`) and `state/storage-usage.json` from the store.
+  The step checks the state first, then the store, so both must go. The next
+  cycle then takes the day afresh.
+- **Which snapshot the weekly report uses:** the report below stays weekly. For
+  each ISO week it uses the snapshot with the latest `taken_at` among that
+  week's files (Sunday's, once the week is complete; for the current week, the
+  latest day so far). Final use (item 3 of the report) uses `final.jsonl`, which
+  is built from every daily snapshot.
 - **Errors:** as for every step. The error goes into `last_error`, the watchdog
   emails the admins, and the other steps go on.
 - **Size and retention:** about 90 rows (the 89 member shares planned in
-  STORAGE_REDESIGN_PLAN.md) × 250 bytes × 52 weeks, about 1 MB a year. It is
+  STORAGE_REDESIGN_PLAN.md) × 250 bytes × 365 days, about 8 MB a year. It is
   kept with the rest of the store, with no pruning.
 - **Test-Instances:** no step (`storage_usage` is not set), because its portal
   is shelved. See "Testing" below.
@@ -1052,14 +1062,399 @@ the live test is on production, where this is being built. The gate's `usage`
 command is run once by hand from runner-1. The harvester is then reinstalled
 from main, and nothing is forced: the build lands after Monday 13:00 UTC of
 2026-W48, so the first cycle takes that week's real snapshot. The store's new
-files are read back.
+files are read back. **(2026-11-27)** The daily change is tested the same way:
+unit tests for the day rule, a state file from the weekly build, the weekly
+report's choice of the latest snapshot in each week, and final rows across mixed
+weekly and daily files; live, the first cycle after 13:00 UTC on the day after
+the install takes that day's snapshot.
 
 **Out of scope:** a breakdown by folder, which would mean reading members'
 files.
 
-**Confirmed by the maintainer:** the snapshot time (Monday 13:00 UTC) and the
-thresholds (80% of the size, 5 GB and 10 GB). The 95% count was added from the
-review.
+**Confirmed by the maintainer:** the snapshot time (Monday 13:00 UTC; daily at
+13:00 UTC from 2026-11-27) and the thresholds (80% of the size, 5 GB and 10 GB).
+The 95% count was added from the review.
+
+### Admin dashboard (design note, 2026-11-27)
+
+Asked for by the maintainer on 2026-11-27: one page that shows who is using
+MorphoCloud now, the failures and problems, and running tallies. It is built on
+this harvester, not as a separate pipeline. The harvester collects, stores and
+counts. The portal only shows what the harvester hands it.
+
+**Maintainer's decisions (2026-11-27).**
+
+1. **Online** means a signed-in member with a portal tab visible in the last 5
+   minutes, **or** a member with their instance's desktop open. **On a desktop**
+   means the desktop is open, checked on the instance alone; it is a subset of
+   online. The page splits online into "portal only" and "on a desktop". Why the
+   desktop counts on its own (found in review of #477): the portal opens the web
+   desktop in a new tab (`/instances/N/web`, `target="_blank"`) and TurboVNC is
+   a separate program, so a member working on the desktop has the portal tab in
+   the background, and a hidden tab does not poll. Counting the portal tab alone
+   would drop exactly those members. (The first wording, "a portal tab visible;
+   on a desktop is the subset of those", was changed by the maintainer on
+   2026-11-27.)
+2. **Storage** is snapshotted daily (see "Storage usage" above, now "daily
+   snapshot, weekly report").
+3. The dashboard is a product of the harvester and its store, like
+   `storage/report.md`. Nothing is collected only for the page.
+
+**How it fits.**
+
+```
+ portal (mc-portal)           member instances (ACTIVE)
+  presence table               port 5901 (VNC server)
+       │ gate: presence              │ SSH as exouser, metadata uuid check
+       ▼                             ▼
+ harvester, runner-1, every 5 minutes: activity step ─► activity/YYYY/MM/DD.jsonl
+       │                                                  (one line per change)
+       │ dashboard step: counts from the store + this cycle
+       ▼
+ gate: dashboard (stdin JSON) ─► portal table `dashboard` ─► /admin (admins only)
+```
+
+The portal gets no store credential. The alternative, a token on the portal to
+read `MorphoCloud/Incidents`, would put a credential that reads every incident
+on the one VM that faces the internet. The harvester instead sends the portal a
+document of counts and GitHub ids through the gate it already calls (`usage`,
+`export-events`), with the runner's key.
+
+#### New source 1: presence (the portal)
+
+Portal sign-in sessions are kept in the web process's memory (decision 13 of
+INSTANCE_DASHBOARD_PLAN.md). A session lasts days and does not show use, and a
+restart forgets them all. So they are not the source.
+
+The member dashboard reloads itself with `GET /` every 10 seconds while a
+request is busy and every 60 seconds otherwise, and only while its tab is
+visible; a hidden tab does not poll (decision 36 of INSTANCE_DASHBOARD_PLAN.md).
+A signed-in `GET /` is therefore the sign of use. On each one the portal writes
+the member's `last_seen` into a new table, at most once a minute per member (an
+in-memory throttle, so the poll does not add a write every 10 seconds to a
+database that has had lock errors). Worst case between two writes for a member
+whose tab stays visible: 60 seconds of idle polling plus 60 seconds of throttle,
+120 seconds, against the 300-second window (180 seconds to spare: three missed
+60-second polls, or about 18 missed 10-second polls):
+
+| Column      | Meaning                                                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------------------------------- |
+| `github_id` | primary key                                                                                                          |
+| `since`     | start of the current visit: set to the time of a `GET /` whose previous `last_seen` was more than 300 seconds before |
+| `last_seen` | time of the last signed-in `GET /`                                                                                   |
+
+The rows hold the times themselves, so the 5-minute cycle does not miss short
+visits: a member seen for 3 minutes between two cycles still has a `last_seen`
+less than 300 seconds old at the next cycle. The `portal` on line carries
+`since` as its time and the off line carries `last_seen`, so portal hours are
+correct to about a minute, not to a cycle.
+
+Admins count like any member when they have the member dashboard open. `/admin`
+itself does not write `last_seen`.
+
+A new read-only gate command, `presence`, takes no arguments and prints
+`{"schema": 1, "at": <time>, "rows": [{"github_id": …, "last_seen": …}]}` for
+the rows seen in the last 24 hours. Same gate line, sudoers rule and
+gate-and-sudoers test as `usage`.
+
+#### New source 2: desktops (the instances)
+
+Both ways to the desktop end at the instance's VNC server on port 5901
+(exosphere `ansible/roles/guacamole/templates/user-mapping.xml.j2`, connection
+`desktop`): the web desktop through `guacd` in its Docker container, which
+connects to `172.17.0.1:5901`; and TurboVNC through an SSH tunnel, which
+connects from the instance itself. An established TCP connection to port 5901
+means a desktop is open.
+
+Each cycle, for each `ACTIVE` server named `instance-N` in the source's project
+whose setup is finished:
+
+- **List:** the `server list --long` the `platform` step already reads (it
+  returns every server, not only the hosts in `hosts:`). One call serves both. A
+  server whose `exoSetup` property does not say it is complete (still in setup,
+  or in the setup reboot that #476 waits for) is not checked: it has no desktop
+  yet, and checking it would only produce `unknown` lines.
+- **Address:** from Neutron (`port list --server`, `floating ip list --port`),
+  never Nova's cached `addresses` (decision 29 of INSTANCE_DASHBOARD_PLAN.md).
+  Both are already allowed by `openstack-ro`.
+- **One SSH call** as `exouser` with the runner's key, the login the portal
+  runner already uses on instances. Options: `-T` (no TTY), `BatchMode=yes`,
+  `ConnectTimeout=10`, `ForwardAgent=no`, `ForwardX11=no`,
+  `ClearAllForwardings=yes`, `LogLevel=ERROR`, and `UserKnownHostsFile` set to
+  one file per server id under `~/.config/morphocloud/desktop-known-hosts/` with
+  `StrictHostKeyChecking=accept-new`. The server id comes from Nova and is
+  checked against
+  `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$` before it is
+  used as a file name; anything else is `unknown`.
+- **Host keys:** addresses are recycled between servers. A file per server id
+  keeps a recycled address from failing on a new server's key. The first key for
+  a server id is trusted as it comes (`accept-new`); the `uuid` check runs over
+  that same connection, so first contact is not verified independently. That is
+  accepted for a result used only for counts. A changed key for the same server
+  id fails (`unknown`, and the step's log names the server). No MorphoCloud
+  workflow rebuilds a server in place (MWF `main` has no `server rebuild`; a
+  recreate makes a new server with a new id), so a changed key for the same id
+  is not expected. If one appears, the admin deletes that one file by hand.
+  Files of servers that no longer exist are removed by the step.
+- **Command:** one fixed string, the same every time, with no value from Nova or
+  the store in it, so nothing is quoted per call. The harvester passes it as one
+  argument to `ssh`, and the instance's login shell runs it:
+
+  ```
+  echo MC-DESK-BEGIN; curl --silent --max-time 5 http://169.254.169.254/openstack/latest/meta_data.json | python3 -c 'import json,sys; print("uuid=" + json.load(sys.stdin)["uuid"])'; echo MC-DESK-SS; ss -Htn state established '( sport = :5901 )'; echo MC-DESK-END
+  ```
+
+  A unit test checks the exact argument list.
+
+- **Output is untrusted.** Members have sudo, so they control everything their
+  instance prints (login messages, `uuid`, `ss`). The step reads at most 64 KB
+  and only the lines between `MC-DESK-BEGIN` and `MC-DESK-END`. It accepts one
+  `uuid=` line matching the pattern above and `ss` lines of the form
+  `<recv-q> <send-q> <local address>:5901 <peer address>:<port>`. An address is
+  IPv4 (`172.19.0.2:60394`) or IPv6 in brackets (`[::1]:41234`), with an
+  optional `%<interface>` scope after the address, which is dropped. An
+  IPv4-mapped IPv6 address (`[::ffff:127.0.0.1]`) is read as its IPv4 address
+  before the kind is decided, so a TurboVNC tunnel over `::1` or a mapped
+  `127.0.0.1` is `turbovnc`. Anything else, a missing marker, or more than 50
+  connection lines is `unknown`. Only standard output is parsed; standard error
+  (a `python3` traceback, an `ss` warning) is never read as a result. Nothing
+  from the output is stored except the result and kind.
+- **Identity:** the `uuid` must equal the server id, or the instance's result is
+  `unknown` and the connection list is not read (class 5 of
+  AUTOMATION_AUDIT_2026-11.md). This stops a recycled address from being counted
+  for the wrong member. It is not a trust boundary against the member: a member
+  can make their own instance report a desktop open or closed. The result is
+  used for counts only. Nothing acts on it (no shelve, no email).
+- **Result:** `open`, `closed` or `unknown`. `open` carries a kind from the peer
+  address: `web` (172.16.0.0/12, where Docker puts its networks), `turbovnc`
+  (127.0.0.1 or ::1) or `other`. The address itself is dropped. A failed or
+  timed-out SSH call, or a server shelved while it is checked, is `unknown`,
+  never `closed`. The `web` range comes from one measurement (below); Docker or
+  an exosphere update could move Guacamole's network. A rise in `other` on the
+  page is the sign, and the range is measured again after each exosphere update
+  of the Guacamole role.
+- **Owner:** the GitHub id of the instance's request issue author (Instances
+  issue N, read with the harvester's Issues read; cached per issue).
+- **Load:** up to 8 instances at once; the whole check stops at 60 seconds, and
+  any instance not reached by then is `unknown`. On runner-1 this is one SSH
+  login per running instance every 5 minutes (2 running on 2026-11-27; at 30
+  running, 30 logins per 5 minutes, at most 8 at a time). The portal's `pickup`
+  on the same runner makes a TCP connection to port 22 each minute, not a login,
+  and logs in only to read a password. The step's own time goes into
+  `harvester.json` like every step's, and the live tests read it.
+
+Each check is one SSH login on the member's instance every 5 minutes. sshd logs
+it in the instance's journal, which the member can read (members have sudo).
+
+**Measured before writing (2026-11-27, read-only, from runner-1).** On #356
+(amm554, g3.large, ACTIVE): Neutron gave 149.165.150.75; the runner's key logged
+in as exouser; metadata `uuid` = server id
+`0955d469-2bbc-451b-8c5e-d1033dba7f59`; ports 5901 and 49528 listening; with
+nobody on the desktop, 0 established connections on 5901. With the maintainer on
+amm554's web desktop: exactly one, `172.17.0.1:5901` ← `172.19.0.2`, the `guacd`
+container on Guacamole's compose network (172.19.0.0/16; the instance also has
+`docker0` 172.17.0.0/16 and 172.18.0.0/16). The Docker networks differ, so the
+`web` rule is the whole 172.16.0.0/12 range, not one subnet. TurboVNC is not
+measured yet (test T-A3).
+
+#### The `activity` step
+
+One step, after `platform`, for a source with `activity: true` (production only;
+the harvester's default for both `activity` and `dashboard` is off, with a test,
+so Test-Instances and any other source are unaffected). It reads presence (gate)
+and desktops (above) and keeps the current picture in `state/activity.json`: per
+GitHub id, `portal` (`last_seen` within 300 seconds of the gate's `at`), the
+desktop result and kind of each of that member's instances, and `online`
+(decision 1: `portal` or a desktop `open`).
+
+Like `platform`, it writes a line to `activity/YYYY/MM/DD.jsonl` only when the
+picture changes. Each line has `at` plus who changed and how: `portal` on or
+off, a desktop `open` (with kind), `closed` or `unknown`. To keep a short outage
+from writing pairs of lines, a desktop goes to `unknown` only after two cycles
+in a row without a result; `open` and `closed` are written at once. The miss
+count and the time of the last successful check are kept per instance in
+`state/activity.json`. The `unknown` line carries the time of the first missed
+check, not the second, so the delay affects only when the line is written: the
+tallies count the missed cycle as unknown, never as `open` or `closed`. A single
+miss followed by a result writes nothing, and the tallies count that cycle as
+unknown too. A failed presence call writes `presence: unknown` once, and its
+return writes the picture again. Tallies never count unknown time as nobody
+online. GitHub ids only; no login, name, email or address.
+
+If `platform` failed this cycle, there is no server list: the step writes
+nothing and keeps the last picture, marked with the time it was taken. No
+instance is checked, so the two-cycle `unknown` count does not move; a long
+`platform` failure leaves the desktops as they were, shown as not current since
+that time.
+
+**What the cycle can and cannot see.** Desktops are checked once per cycle, so
+desktop times are correct to one cycle (5 minutes), and a desktop open for less
+than 5 minutes between two checks can be missed: desktop counts and hours are a
+lower bound. Portal presence has no such gap (above).
+
+Size: with tens of members, a few hundred change lines a day at about 150 bytes,
+under 20 MB a year. Kept with the rest of the store, no pruning.
+
+#### The `dashboard` step
+
+Last in the cycle, for a source with `dashboard: true`. It reads the store and
+this cycle's results and builds one JSON document (`schema` 1). It is fully
+derived, so it is not committed to the store. A copy is kept on the runner
+(`~/.cache/morphocloud/dashboard.json`) for debugging.
+
+| Part           | Contents                                                                                                                                                                                                                                                                                        | From                                                                    |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **Collection** | time of this cycle; each step's last result and `last_error`                                                                                                                                                                                                                                    | `harvester.json`                                                        |
+| **Now**        | online ids with `since`; desktop ids with kind and instance; count of `unknown` desktops; member instances by Nova status; listed hosts not `ACTIVE`                                                                                                                                            | `state/activity.json`, `state/platform.json`, this cycle                |
+| **Problems**   | for the last 24 hours and 7 days: failed and refused commands by workflow and signature; no-capacity events by cause and flavor; portal failure events; journal `ERR` lines by host; VM state changes; incidents waiting for a verdict (count, and the latest 20 with id and time)              | `outcomes/`, `rollups/`, `incidents/`, `portal/`, journals, `platform/` |
+| **Tallies**    | for today (UTC), 7 days, 30 days and since the start date: distinct members online; distinct members on a desktop; hours online and on a desktop (summed from the change lines); instances created, shelved, unshelved and deleted (command outcomes `ok`); failed commands; no-capacity events | `activity/`, `outcomes/`, `incidents/`                                  |
+| **Storage**    | from the latest daily snapshot: total used, total size, against the allocation's 10,000 GB; number of shares; median and 90th percentile of GB used; counts above 80% and at 95% or more; shares whose end date is within 14 days; the daily total for the last 30 days                         | `storage/`                                                              |
+| **Series**     | per hour for 7 days: members online and on a desktop; per day for 30 days: failed commands, no-capacity events, storage total                                                                                                                                                                   | the same files                                                          |
+
+Hours are summed from the change lines; time marked `unknown` is left out and
+shown as a gap. Each closed UTC day's sums are kept on the runner
+(`~/.cache/morphocloud/activity-days.json`, rebuilt from the store if lost), so
+a cycle reads only today's file, not the whole history.
+
+**When a step failed this cycle.** Every part carries `as_of` (when its data was
+read) and `ok`. A part whose source step failed this cycle keeps its last good
+figures, with `ok: false` and the older `as_of`; the page shows that part as
+"not current since <time>", never as zeros. If no picture was ever taken, the
+part is empty with `ok: false`, and the page says "unknown".
+
+**No free text in the document.** It carries numbers, times, GitHub ids,
+instance numbers, and names from fixed lists the harvester itself defines:
+workflow file names, signature names from `incident-signatures.yml`, host names
+from `incident-sources.yml`, Nova statuses, flavor names, desktop kinds, step
+names. Error text, issue text and anything a member typed stay in the store.
+Incident ids match `^[a-z][a-z0-9-]{0,40}[a-z0-9](-[0-9]+){1,3}$`
+(`<repo short>-<run>-<attempt>-<item>`, or `<source>-<row id>` for portal and
+runner events). Repository short names contain hyphens: the production store
+holds `instances-…` and `morphocloud-monitor-…` incidents (read 2026-11-27), and
+the fixtures include both and a portal-event id. The document carries no URLs.
+
+**What the portal checks.** The gate command `dashboard` reads the document from
+stdin (at most 512 KB) and checks it against a fixed schema before it stores
+anything: every key known, every value of its type, every name in its part's
+pattern (`^[A-Za-z0-9._:/ -]{1,80}$`), every series value a number, every id an
+integer, every incident id the pattern above. A document that fails is refused
+whole, the stored one stays, and the refusal is the step's `last_error`. It is
+stored in a one-row table (`dashboard`: `at`, `body`). A failed send is the
+step's `last_error`, which the watchdog emails like any other step error. The
+send is every cycle, so the page is at most about 5 minutes behind.
+
+#### The page
+
+`/admin` gains the dashboard above its existing tables (requests waiting,
+storage, all requests), which stay as they are. The portal adds login names from
+its own tables (`shares`, and the login it saw at sign-in); the store and the
+document carry GitHub ids only.
+
+- **Rendering:** every string goes through the template's HTML escaping (Jinja
+  autoescape, as on every portal page). The SVG charts are drawn from numbers
+  only. Links to the store's incident issues are built by the portal from the
+  checked incident id (the quoted search link of "Records" above); the document
+  supplies no link.
+- **Labels:** "on a desktop" is labeled "desktop open (not necessarily in use)"
+  on the tile, in the tallies and on the charts. A desktop left open overnight
+  counts as open, and so as online, for as long as its connection lasts; T-A2
+  measures how long `guacd` keeps it after the tab closes, and the measured time
+  is written here when the test has run.
+- **Tiles:** online (portal only / on a desktop); on a desktop (web / TurboVNC);
+  member instances running / shelved; failed commands in 24 hours; no-capacity
+  events in 24 hours; incidents waiting for a verdict; storage used of 10,000
+  GB.
+- **Needs attention:** listed hosts not `ACTIVE`, step errors, storage ending
+  within 14 days, extension requests waiting (the last one from the portal's own
+  table, as today).
+- **Charts:** inline SVG drawn by the portal from the series (no external
+  scripts): online and on a desktop per hour, 7 days; failures per day, 30 days;
+  storage total per day, 30 days.
+- **Tables:** online now (login, since, desktop kind, instance); recent problems
+  (time, what, link to the store's incident issue); tallies (rows by window).
+- **Age:** the page shows the document's time. When it is more than 15 minutes
+  old, a line at the top says so, with the time of the harvester's last cycle,
+  so a stopped harvester does not look like a quiet system.
+- The page reloads every 60 seconds while visible, like the member dashboard.
+
+#### The other actors
+
+| Actor                                  | What it does here                                        | Interleaving and rule                                                                                                                                                                                     |
+| -------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Member's browser                       | `GET /` while the tab is visible                         | Tab hidden or closed: off line after 300 s plus up to one cycle.                                                                                                                                          |
+| Portal web process                     | writes `last_seen`; serves `/admin`                      | A restart signs everyone out; `last_seen` is in the database and survives, and members who are not back drop off after 300 s.                                                                             |
+| Portal runner (`pickup`, runner-1)     | probes port 22 each minute; logs in to read the password | Same key and user; both only read. Its known-hosts file is separate from the step's.                                                                                                                      |
+| Nova (shelve, delete, unshelve)        | changes a server during a check                          | SSH fails or the server is gone: `unknown`, never `closed`.                                                                                                                                               |
+| Neutron (address moved or recycled)    | the address now belongs to another server                | Metadata `uuid` ≠ server id: `unknown`; its connections are not read.                                                                                                                                     |
+| Guacamole (`guacd`) and TurboVNC       | hold the connection to port 5901                         | A desktop left open in a tab is `open` while the connection lasts. Whether the member is at the keyboard is not measured. How long `guacd` keeps the connection after the tab closes is measured in T-A2. |
+| The member, on their own instance      | has sudo; controls what the instance prints              | Can make the desktop look open or closed. Counts only; nothing acts on the result. Output parsed strictly (above).                                                                                        |
+| Harvester (stopped, or a step failing) | no new document                                          | The page shows the age line; the watchdog emails as today.                                                                                                                                                |
+
+#### Privacy
+
+The store gets GitHub ids, times, and the desktop kind. No login, name, email,
+IP address, process list or screen content. The page shows logins to admins
+only, from the portal's own tables. The same rules as "Storage usage" above.
+
+#### Changes this needs
+
+- Portal (`morphocloud-data-portal`):
+  - `presence` table, the throttled write on a signed-in `GET /`;
+  - gate commands `presence` (read-only) and `dashboard` (stdin), their gate
+    lines and sudoers rules; tests (the existing gate-and-sudoers test, a test
+    that `presence` only reads, validation of `dashboard`);
+  - `dashboard` table and the `/admin` section.
+- Harvester (MWF):
+  - the `activity` and `dashboard` steps in `harvest-incidents.py`, with tests
+    (including that both are off unless a source turns them on);
+  - `storage_usage` daily (see "Storage usage" above), and the references in the
+    code and tests to the section's old title "Storage usage (weekly snapshot)";
+  - `activity: true` and `dashboard: true` on the production source in
+    `incident-sources.yml`.
+
+#### Testing
+
+Unit tests run the steps on fixtures: presence replies (short visits between
+cycles, `since` and `last_seen` on the change lines), `ss` output with web,
+TurboVNC and no peers (including `[::1]:…`, `[::ffff:127.0.0.1]:…` and a `%lo`
+scope), a `uuid` mismatch, SSH failure and timeout (`unknown`), hostile output
+(missing markers, extra lines, a bad `uuid`, oversize), the exact `ssh` argument
+list, the two-cycle `unknown` rule, change lines and their tallies, unknown
+gaps, a failed `platform` or presence step (part marked not current, never
+zero), and the document's validation by the portal (unknown keys, wrong types, a
+name outside its pattern, a string in a series). Test-Instances' portal is
+shelved, so the live tests are on production, as amm554 (the maintainer types
+where a command is needed):
+
+| #    | Test                                                                                                                                     | Pass when                                                                                                                                                        |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T-A1 | amm554 opens the portal and keeps the tab visible; then hides it                                                                         | online within one cycle; off line within 300 s plus one cycle                                                                                                    |
+| T-A2 | amm554 opens the web desktop of their instance in the new tab the portal opens, so the portal tab is hidden; then closes the desktop tab | `open`, kind `web`, within one cycle; amm554 stays online with the portal tab hidden; `closed` after (the time `guacd` takes to drop the connection is recorded) |
+| T-A3 | amm554 connects with TurboVNC (Session Manager), portal tab closed                                                                       | `open`, kind `turbovnc`; amm554 online                                                                                                                           |
+| T-A4 | amm554 shelves the instance while the desktop is open                                                                                    | `unknown` (or the server leaves the list), never `closed` while ACTIVE                                                                                           |
+| T-A5 | the harvester's cron line is commented out for 20 minutes                                                                                | `/admin` shows the age line                                                                                                                                      |
+| T-A6 | the portal's `dashboard` gate command is made to fail once                                                                               | step `last_error`; watchdog email; the next cycle recovers                                                                                                       |
+
+The identity mismatch (a recycled address) is tested with fixtures only.
+
+#### Parameters
+
+| Parameter                  | Value                                                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Online window              | 300 seconds                                                                                                         |
+| `last_seen` write throttle | 60 seconds per member                                                                                               |
+| Desktop check              | 8 at once, 60 seconds for the whole check                                                                           |
+| Age line on the page       | document older than 15 minutes                                                                                      |
+| Storage snapshot           | daily, after 13:00 UTC                                                                                              |
+| Tallies' start date        | 2026-11-27 (the first request since the migration by a member other than the test accounts: Instances #357, 19:28Z) |
+| Desktop `unknown`          | after 2 cycles in a row without a result                                                                            |
+| Desktop output             | at most 64 KB, at most 50 connection lines                                                                          |
+
+#### Out of scope
+
+What members do on their desktop or in Slicer; whether someone at an open
+desktop is at the keyboard; page views other than the member dashboard; course
+repositories (their own allocations and runners); Test-Instances.
 
 ### Reconcile with production after the migration (design note, 2026-11-24)
 
@@ -1711,7 +2106,9 @@ Test as amm554 from an approved test plan, then production.
   designed and reviewed like any decision.
 - Any action on shares, data, approval, expiry, or delete, and any free text to
   members.
-- A dashboard. DuckDB and the weekly report cover operators; the portal is for
-  members.
+- ~~A dashboard. DuckDB and the weekly report cover operators; the portal is for
+  members.~~ **(amended 2026-11-27)** Superseded: the maintainer asked for an
+  admin dashboard on the portal's admin page, fed by the harvester. See "Admin
+  dashboard (design note, 2026-11-27)".
 - Reading the mailbox. Every email the system sends already has a GitHub-side
   event, and the store is fed from those.
