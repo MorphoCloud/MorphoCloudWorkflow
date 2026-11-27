@@ -1139,10 +1139,17 @@ whose tab stays visible: 60 seconds of idle polling plus 60 seconds of throttle,
 120 seconds, against the 300-second window (180 seconds to spare, more than one
 5-minute cycle's worth of a missed poll):
 
-| Column      | Meaning                            |
-| ----------- | ---------------------------------- |
-| `github_id` | primary key                        |
-| `last_seen` | time of the last signed-in `GET /` |
+| Column      | Meaning                                                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------------------------------- |
+| `github_id` | primary key                                                                                                          |
+| `since`     | start of the current visit: set to the time of a `GET /` whose previous `last_seen` was more than 300 seconds before |
+| `last_seen` | time of the last signed-in `GET /`                                                                                   |
+
+The rows hold the times themselves, so the 5-minute cycle does not miss short
+visits: a member seen for 3 minutes between two cycles still has a `last_seen`
+less than 300 seconds old at the next cycle. The `portal` on line carries
+`since` as its time and the off line carries `last_seen`, so portal hours are
+correct to about a minute, not to a cycle.
 
 Admins count like any member when they have the member dashboard open. `/admin`
 itself does not write `last_seen`.
@@ -1203,9 +1210,13 @@ whose setup is finished:
   instance prints (login messages, `uuid`, `ss`). The step reads at most 64 KB
   and only the lines between `MC-DESK-BEGIN` and `MC-DESK-END`. It accepts one
   `uuid=` line matching the pattern above and `ss` lines of the form
-  `<recv-q> <send-q> <local address>:5901 <peer address>:<port>`, where the
-  addresses parse as IPv4 or IPv6. Anything else, a missing marker, or more than
-  50 connection lines is `unknown`. Nothing from the output is stored except the
+  `<recv-q> <send-q> <local address>:5901 <peer address>:<port>`. An address is
+  IPv4 (`172.19.0.2:60394`) or IPv6 in brackets (`[::1]:41234`), with an
+  optional `%<interface>` scope after the address, which is dropped. An
+  IPv4-mapped IPv6 address (`[::ffff:127.0.0.1]`) is read as its IPv4 address
+  before the kind is decided, so a TurboVNC tunnel over `::1` or a mapped
+  `127.0.0.1` is `turbovnc`. Anything else, a missing marker, or more than 50
+  connection lines is `unknown`. Nothing from the output is stored except the
   result and kind.
 - **Identity:** the `uuid` must equal the server id, or the instance's result is
   `unknown` and the connection list is not read (class 5 of
@@ -1265,7 +1276,15 @@ again. Tallies never count unknown time as nobody online. GitHub ids only; no
 login, name, email or address.
 
 If `platform` failed this cycle, there is no server list: the step writes
-nothing and keeps the last picture, marked with the time it was taken.
+nothing and keeps the last picture, marked with the time it was taken. No
+instance is checked, so the two-cycle `unknown` count does not move; a long
+`platform` failure leaves the desktops as they were, shown as not current since
+that time.
+
+**What the cycle can and cannot see.** Desktops are checked once per cycle, so
+desktop times are correct to one cycle (5 minutes), and a desktop open for less
+than 5 minutes between two checks can be missed: desktop counts and hours are a
+lower bound. Portal presence has no such gap (above).
 
 Size: with tens of members, a few hundred change lines a day at about 150 bytes,
 under 20 MB a year. Kept with the rest of the store, no pruning.
@@ -1302,9 +1321,11 @@ instance numbers, and names from fixed lists the harvester itself defines:
 workflow file names, signature names from `incident-signatures.yml`, host names
 from `incident-sources.yml`, Nova statuses, flavor names, desktop kinds, step
 names. Error text, issue text and anything a member typed stay in the store.
-Incident ids match `^[a-z][a-z0-9]*(-[0-9]+){1,3}$`
+Incident ids match `^[a-z][a-z0-9-]{0,40}[a-z0-9](-[0-9]+){1,3}$`
 (`<repo short>-<run>-<attempt>-<item>`, or `<source>-<row id>` for portal and
-runner events); the document carries no URLs.
+runner events). Repository short names contain hyphens: the production store
+holds `instances-…` and `morphocloud-monitor-…` incidents (read 2026-11-27), and
+the fixtures include both and a portal-event id. The document carries no URLs.
 
 **What the portal checks.** The gate command `dashboard` reads the document from
 stdin (at most 512 KB) and checks it against a fixed schema before it stores
@@ -1328,6 +1349,10 @@ document carry GitHub ids only.
   only. Links to the store's incident issues are built by the portal from the
   checked incident id (the quoted search link of "Records" above); the document
   supplies no link.
+- **Labels:** "on a desktop" is labeled "desktop open (not necessarily in use)"
+  on the tile, in the tallies and on the charts. A desktop left open overnight
+  counts as open, and so as online, for as long as its connection lasts; T-A2
+  measures how long `guacd` keeps it after the tab closes.
 - **Tiles:** online (portal only / on a desktop); on a desktop (web / TurboVNC);
   member instances running / shelved; failed commands in 24 hours; no-capacity
   events in 24 hours; incidents waiting for a verdict; storage used of 10,000
@@ -1382,15 +1407,17 @@ only, from the portal's own tables. The same rules as "Storage usage" above.
 
 #### Testing
 
-Unit tests run the steps on fixtures: presence replies, `ss` output with web,
-TurboVNC and no peers, a `uuid` mismatch, SSH failure and timeout (`unknown`),
-hostile output (missing markers, extra lines, a bad `uuid`, oversize), the exact
-`ssh` argument list, the two-cycle `unknown` rule, change lines and their
-tallies, unknown gaps, a failed `platform` or presence step (part marked not
-current, never zero), and the document's validation by the portal (unknown keys,
-wrong types, a name outside its pattern, a string in a series). Test-Instances'
-portal is shelved, so the live tests are on production, as amm554 (the
-maintainer types where a command is needed):
+Unit tests run the steps on fixtures: presence replies (short visits between
+cycles, `since` and `last_seen` on the change lines), `ss` output with web,
+TurboVNC and no peers (including `[::1]:…`, `[::ffff:127.0.0.1]:…` and a `%lo`
+scope), a `uuid` mismatch, SSH failure and timeout (`unknown`), hostile output
+(missing markers, extra lines, a bad `uuid`, oversize), the exact `ssh` argument
+list, the two-cycle `unknown` rule, change lines and their tallies, unknown
+gaps, a failed `platform` or presence step (part marked not current, never
+zero), and the document's validation by the portal (unknown keys, wrong types, a
+name outside its pattern, a string in a series). Test-Instances' portal is
+shelved, so the live tests are on production, as amm554 (the maintainer types
+where a command is needed):
 
 | #    | Test                                                                                                                                     | Pass when                                                                                                                                                        |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2072,7 +2099,9 @@ Test as amm554 from an approved test plan, then production.
   designed and reviewed like any decision.
 - Any action on shares, data, approval, expiry, or delete, and any free text to
   members.
-- A dashboard. DuckDB and the weekly report cover operators; the portal is for
-  members.
+- ~~A dashboard. DuckDB and the weekly report cover operators; the portal is for
+  members.~~ **(amended 2026-11-27)** Superseded: the maintainer asked for an
+  admin dashboard on the portal's admin page, fed by the harvester. See "Admin
+  dashboard (design note, 2026-11-27)".
 - Reading the mailbox. Every email the system sends already has a GitHub-side
   event, and the store is fed from those.
