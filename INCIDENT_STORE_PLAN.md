@@ -1162,8 +1162,9 @@ gate-and-sudoers test as `usage`.
 Both ways to the desktop end at the instance's VNC server on port 5901
 (exosphere `ansible/roles/guacamole/templates/user-mapping.xml.j2`, connection
 `desktop`): the web desktop through `guacd` in its Docker container, which
-connects to `172.17.0.1:5901`; and TurboVNC through an SSH tunnel, which
-connects from the instance itself. An established TCP connection to port 5901
+connects to `172.17.0.1:5901`; and TurboVNC, which connects from the member's
+computer straight to `<ip>:1` (as built, item 10 below; an SSH tunnel would
+connect from the instance itself). An established TCP connection to port 5901
 means a desktop is open.
 
 Each cycle, for each `ACTIVE` server named `instance-N` in the source's project
@@ -1502,7 +1503,13 @@ above, this list is the record:
    or the deadline; the member's instance cannot make the runner hold more
    (review of #478). A changed host key is logged with the file to delete, and
    the instance counts as `unknown` on the page meanwhile.
-10. **Checked on real data.** A document built from a clone of the production
+10. **TurboVNC connects straight to the instance** (found in live test T-A1,
+    2026-11-27, on #356). The portal shows `<ip>:1`, so the viewer on the
+    member's computer connects to port 5901 from a public address, not through
+    an SSH tunnel. The rule is: 172.16.0.0/12 = web; a public (global) address
+    or loopback = TurboVNC; anything else = other. The design's "TurboVNC
+    through an SSH tunnel" was wrong for MorphoCloud's portal.
+11. **Checked on real data.** A document built from a clone of the production
     store (2026-11-27) passed the portal's `check()`: 15 KB; problems, tallies
     and storage filled; `now` empty (`as_of` null) until the first presence
     read.

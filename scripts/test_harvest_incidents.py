@@ -3376,8 +3376,13 @@ def test_setup_finished_follows_the_portal_runner(props, done):
         ("[::1]", "turbovnc"),
         ("[::ffff:127.0.0.1]", "turbovnc"),
         ("[::1%lo]", "turbovnc"),
-        ("10.0.16.5", "other"),
-        ("[2001:db8::1]", "other"),
+        (
+            "149.165.150.10",
+            "turbovnc",
+        ),  # the viewer straight to <ip>:1 (measured, #356)
+        ("[2607:f8b0:4005:80b::200e]", "turbovnc"),
+        ("10.0.16.5", "other"),  # private, not Docker's range
+        ("[2001:db8::1]", "other"),  # documentation range: not global
     ],
 )
 def test_desktop_kind_from_the_peer_address(peer, kind):
