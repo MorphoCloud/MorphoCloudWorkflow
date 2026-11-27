@@ -240,33 +240,31 @@ runs:
         # ensure-and-report path posts a truthful success; otherwise a
         # normal attempt proceeds, and for unshelve the in-flight failure
         # is counted by the failure-history step.
+        # One signed-in process does the waiting (poll.py), looking every 20 s
+        # for up to 10 min.
+        #
+        # A delete that finds a delete already in flight has nothing to wait
+        # for: Nova accepts the repeat and ignores it ("already in deleting
+        # state"), so carry on and close the request. Waiting here waited on
+        # itself: Test-Instances#494 sat on a build stuck on its host, whose
+        # cleanup delete never finished, and the user's delete spent the full
+        # 10 min here, holding the runner, before failing as "appears stuck".
         max_wait=600
-        waited=0
-        while :; do
-          task_state=$(openstack server show $INSTANCE_NAME -f json | \
-            jq -r '.["OS-EXT-STS:task_state"]')
-          echo "task_state [$task_state] waited [${waited}s]"
-          if [[ "$task_state" == "null" ]]; then
-            break
-          fi
-          # A delete that finds a delete already in flight has nothing to wait
-          # for: Nova accepts the repeat and ignores it ("already in deleting
-          # state"), so carry on and close the request. Waiting here waited on
-          # itself: Test-Instances#494 sat on a build stuck on its host, whose
-          # cleanup delete never finished, and the user's delete spent the full
-          # 10 min here, holding the runner, before failing as "appears stuck".
-          if [[ "$COMMAND_NAME" == "delete" && "$task_state" == "deleting" ]]; then
-            echo "already_deleting=true" >> $GITHUB_OUTPUT
-            break
-          fi
-          if [ $waited -ge $max_wait ]; then
-            echo "task_state=$task_state" >> $GITHUB_OUTPUT
-            echo "::error ::Server action still in progress after ${max_wait}s (task_state '$task_state')."
-            exit 1
-          fi
-          sleep 20
-          waited=$((waited + 20))
-        done
+        stop_on=()
+        if [[ "$COMMAND_NAME" == "delete" ]]; then
+          stop_on=(--stop-on deleting)
+        fi
+        out=$(python "$GITHUB_ACTION_PATH/../poll/poll.py" task-settled \
+          --server "$INSTANCE_NAME" --timeout "$max_wait" --interval 20 "${stop_on[@]}")
+        task_state=$(sed -n 's/^task_state=//p' <<<"$out")
+        timed_out=$(sed -n 's/^timed_out=//p' <<<"$out")
+        if [[ "$task_state" == "deleting" && "$COMMAND_NAME" == "delete" ]]; then
+          echo "already_deleting=true" >> $GITHUB_OUTPUT
+        elif [[ "$timed_out" == "true" || "$task_state" != "null" ]]; then
+          echo "task_state=$task_state" >> $GITHUB_OUTPUT
+          echo "::error ::Server action still in progress after ${max_wait}s (task_state '$task_state')."
+          exit 1
+        fi
         echo "task_state=null" >> $GITHUB_OUTPUT
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
@@ -563,19 +561,19 @@ runs:
           echo "clean=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        for i in $(seq 1 18); do
-          sleep 10
-          status=$(openstack server show "$INSTANCE_NAME" -f value -c status || echo UNKNOWN)
-          if [[ "$status" == "SHUTOFF" ]]; then
-            echo "Shut down cleanly after $((i * 10))s."
-            echo "clean=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # Anything but still-running means it will not reach SHUTOFF.
-          if [[ "$status" != "ACTIVE" && "$status" != "UNKNOWN" ]]; then
-            break
-          fi
-        done
+        # One signed-in process waits (poll.py): up to 3 min, while the status
+        # is still ACTIVE. A read that fails counts as UNKNOWN and the wait
+        # goes on; anything else but SHUTOFF means it will not get there.
+        start=$SECONDS
+        out=$(python "$GITHUB_ACTION_PATH/../poll/poll.py" server-status \
+          --server "$INSTANCE_NAME" --until SHUTOFF --while ACTIVE \
+          --tolerate-errors --timeout 180 --interval 10) || out="final_status=UNKNOWN"
+        status=$(sed -n 's/^final_status=//p' <<<"$out")
+        if [[ "$status" == "SHUTOFF" ]]; then
+          echo "Shut down cleanly after $((SECONDS - start))s."
+          echo "clean=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
         echo "::warning ::$INSTANCE_NAME did not shut down within 3 minutes (status $status); deleting anyway."
         echo "clean=false" >> "$GITHUB_OUTPUT"
       env:
@@ -735,29 +733,19 @@ runs:
       run: |
         source ~/venv/bin/activate
 
+        # One signed-in process waits (poll.py). It fails closed on a query
+        # error: a listing that cannot be read counts as "still listed" and
+        # the wait goes on, so a transient Nova 5xx does not report a delete
+        # that already succeeded as a failure — the alarming false alarm the
+        # timeout branch below is written to avoid. The timeout bounds it.
         max_wait=180
-        interval=5
-        start=$SECONDS
-        while :; do
-          # Fail closed on a query error. This step runs under `set -eo
-          # pipefail`, so an unguarded assignment would abort the job on any
-          # transient Nova 5xx — reporting a delete that already succeeded as a
-          # failure, which is exactly the alarming false alarm the timeout
-          # branch below is written to avoid. Treating an unanswerable query as
-          # "still listed" just keeps waiting; the timeout bounds it.
-          remaining=$(openstack server list --name "^${INSTANCE_NAME}$" -f json \
-            | jq --arg n "$INSTANCE_NAME" '[.[] | select(.Name == $n)] | length') \
-            || remaining=1
-          if [[ "$remaining" -eq 0 ]]; then
-            echo "Server $INSTANCE_NAME left Nova's listing after $((SECONDS - start))s."
-            break
-          fi
-          if (( SECONDS - start >= max_wait )); then
-            echo "::warning ::Server $INSTANCE_NAME is still listed ${max_wait}s after Nova accepted the delete. The delete itself succeeded; a command issued immediately after this one could still see the stale record."
-            break
-          fi
-          sleep $interval
-        done
+        out=$(python "$GITHUB_ACTION_PATH/../poll/poll.py" server-gone \
+          --server "$INSTANCE_NAME" --timeout "$max_wait" --interval 5) || out="gone=false"
+        if [[ "$(sed -n 's/^gone=//p' <<<"$out")" == "true" ]]; then
+          echo "Server $INSTANCE_NAME left Nova's listing after $(sed -n 's/^waited=//p' <<<"$out")s."
+        else
+          echo "::warning ::Server $INSTANCE_NAME is still listed ${max_wait}s after Nova accepted the delete. The delete itself succeeded; a command issued immediately after this one could still see the stale record."
+        fi
       env:
         OS_CLOUD: ${{ inputs.os_cloud }}
         INSTANCE_NAME: ${{ steps.define.outputs.instance_name }}
@@ -790,111 +778,85 @@ runs:
         fi
         known_error_reqs=",${BASELINE_ERROR_REQS},"
 
-        # Prints the request id of an unshelve action that ended in Error and
-        # is not in the pre-attempt baseline; empty otherwise.
-        # NOTE the '. as $r' binding: piping into '$known | contains(...)'
-        # rebinds '.' to $known, so the naive form compared the list against
-        # itself and never excluded anything — on 127 that re-matched attempt
-        # 1's failure and declared attempt 2 dead while it was still booting
-        # (it succeeded 8s after the report posted).
-        check_new_unshelve_error() {
-          openstack server event list "$INSTANCE_NAME" --long -f json 2>/dev/null | \
-            jq -r --arg known "$known_error_reqs" \
-              '[.[] | select(.Action == "unshelve" and .Message == "Error")
-                   | ."Request ID"
-                   | select(. as $r | ($known | contains("," + $r + ",")) | not)][0] // ""'
-        }
-
         echo "Polling '$INSTANCE_NAME' status [max_wait_time=${max_wait_time}s per attempt, max_attempts=${max_attempts}]"
 
-        wait_interval=5    # Interval between status checks in seconds
-        total_wait_time=0
         capacity_error=false
         failure_mode=""
+        failed_req=""
 
-        while [ $total_wait_time -lt $max_wait_time ]; do
+        # One signed-in process does the waiting (poll.py server-watch): it
+        # looks every 5 s and comes back when there is something to decide.
+        #
+        # - The status is the expected one, or the time ran out.
+        # - Unshelve only: ERROR with no host and no address is a capacity
+        #   error (the server was placed nowhere).
+        # - Unshelve only: a host-side unshelve failure reverts the instance
+        #   to SHELVED_OFFLOADED (never ERROR), which plain status polling
+        #   cannot distinguish from "not started yet" — it used to burn the
+        #   full poll budget and die as a generic timeout. The action log can
+        #   distinguish: a new unshelve action with Message=Error means this
+        #   attempt is dead (Instances#168, #111, #114). poll.py reads the
+        #   action log every 30 s and only while task_state is null: while our
+        #   attempt is mid-flight (spawning/unshelving) any Error found in the
+        #   log cannot belong to it, so declaring failure then would be
+        #   premature (#127: attempt 2 was declared dead while still booting;
+        #   it came up ACTIVE 8s after the failure report posted).
+        watch_args=()
+        if [[ "$COMMAND_NAME" == "unshelve" ]]; then
+          watch_args=(--no-host-error)
+        fi
 
-            instance_json=$(openstack server show $INSTANCE_NAME -f json)
-            status=$(echo "$instance_json" | jq -r '.status // "PENDING"')
-            task_state=$(echo "$instance_json" | jq -r '.["OS-EXT-STS:task_state"] // "null"')
-
-            echo -n "status [$status] task [$task_state]. "
-
-            # Check for capacity error (only for unshelve command)
-            if [[ "$status" == "ERROR" && "$COMMAND_NAME" == "unshelve" ]]; then
-                host=$(echo "$instance_json" | jq -r '.["OS-EXT-SRV-ATTR:host"]')
-                host_id=$(echo "$instance_json" | jq -r '.hostId')
-                addresses=$(echo "$instance_json" | jq -r '.addresses')
-
-                echo ""
-                echo "Detected ERROR status. Checking capacity error conditions..."
-                echo "host: $host"
-                echo "hostId: $host_id"
-                echo "addresses: $addresses"
-
-                # host can be null, "null", or "None" - all indicate no host assigned
-                # addresses can be {} or "" when empty
-                if [[ ( "$host" == "null" || "$host" == "None" || "$host" == "" ) && "$host_id" == "" && ( "$addresses" == "{}" || "$addresses" == "" ) ]]; then
-                    echo "Capacity error detected - no instance available"
-                    capacity_error=true
-                    break
-                fi
+        while :; do
+            known=()
+            if [[ "$COMMAND_NAME" == "unshelve" ]]; then
+              known=(--unshelve-errors-known "$known_error_reqs")
             fi
+            out=$(python "$GITHUB_ACTION_PATH/../poll/poll.py" server-watch \
+              --server "$INSTANCE_NAME" --until "$EXPECTED_STATUS" \
+              --timeout "$max_wait_time" --interval 5 "${watch_args[@]}" "${known[@]}")
+            status=$(sed -n 's/^status=//p' <<<"$out")
+            reason=$(sed -n 's/^reason=//p' <<<"$out")
+            failed_req=$(sed -n 's/^failed_req=//p' <<<"$out")
 
-            if [[ "$status" == "$EXPECTED_STATUS" ]]; then
-                echo "Exiting loop."
+            if [[ "$reason" == "no_host_error" ]]; then
+                echo "Capacity error detected - no instance available"
+                capacity_error=true
                 break
             fi
 
-            # A host-side unshelve failure reverts the instance to
-            # SHELVED_OFFLOADED (never ERROR), which plain status polling
-            # cannot distinguish from "not started yet" — it used to burn
-            # the full poll budget and die as a generic timeout. The action
-            # log can distinguish: a new unshelve action with Message=Error
-            # means this attempt is dead (Instances#168, #111, #114).
-            # Gated on task_state==null: while our attempt is mid-flight
-            # (spawning/unshelving) any Error found in the log cannot belong
-            # to it, so declaring failure then would be premature (#127:
-            # attempt 2 was declared dead while still booting; it came up
-            # ACTIVE 8s after the failure report posted).
-            if [[ "$COMMAND_NAME" == "unshelve" && "$task_state" == "null" && $total_wait_time -gt 0 && $((total_wait_time % 30)) -eq 0 ]]; then
-                failed_req=$(check_new_unshelve_error)
-                if [[ -n "$failed_req" ]]; then
-                    echo ""
-                    known_error_reqs="${known_error_reqs}${failed_req},"
-                    # Which step of the action failed tells a capacity
-                    # shortage from a sick host: schedule_instances Error =
-                    # no host can take the flavor (Nova records no fault on
-                    # a shelved server, so the status never says so —
-                    # Instances#214, 2026-11-04, was reported as a host
-                    # failure with 0 g3.xl free); compute_unshelve_instance
-                    # Error = the chosen host failed. Decision 30.
-                    failed_step=$(openstack server event show "$INSTANCE_NAME" "$failed_req" -f json 2>/dev/null | \
-                      jq -r '[.events[]? | select((.result // "") | ascii_downcase == "error") | .event] | join(",")' 2>/dev/null || true)
-                    if [[ -z "$failed_step" ]]; then
-                        echo "::warning ::Could not read which step of request $failed_req failed; treating it as a host failure."
-                    fi
-                    if [[ "$failed_step" == *schedule_instances* ]]; then
-                        echo "Attempt $attempt found no host for the flavor (request $failed_req): no capacity."
-                        failure_mode="no_capacity"
-                        break
-                    fi
-                    echo "Attempt $attempt failed on the compute host (request $failed_req; failed step: ${failed_step:-unknown})."
-                    if [ $attempt -lt $max_attempts ]; then
-                        attempt=$((attempt + 1))
-                        gh issue comment "$ISSUE_NUMBER" --body "⏳ The first unshelve attempt failed on Jetstream2's side — retrying automatically. A final result will be posted here in a few minutes." || echo "::warning ::Failed to post retry notification comment."
-                        openstack server unshelve "$INSTANCE_NAME"
-                        total_wait_time=0
-                        continue
-                    fi
-                    failure_mode="host_error"
-                    break
-                fi
+            if [[ "$reason" != "unshelve_error" ]]; then
+                # reached, or out of time: the steps below read the status.
+                break
             fi
 
-            echo "Waiting for completion..."
-            sleep $wait_interval
-            total_wait_time=$((total_wait_time + wait_interval))
+            known_error_reqs="${known_error_reqs}${failed_req},"
+            # Which step of the action failed tells a capacity
+            # shortage from a sick host: schedule_instances Error =
+            # no host can take the flavor (Nova records no fault on
+            # a shelved server, so the status never says so —
+            # Instances#214, 2026-11-04, was reported as a host
+            # failure with 0 g3.xl free); compute_unshelve_instance
+            # Error = the chosen host failed. Decision 30.
+            failed_step=$(openstack server event show "$INSTANCE_NAME" "$failed_req" -f json 2>/dev/null | \
+              jq -r '[.events[]? | select((.result // "") | ascii_downcase == "error") | .event] | join(",")' 2>/dev/null || true)
+            if [[ -z "$failed_step" ]]; then
+                echo "::warning ::Could not read which step of request $failed_req failed; treating it as a host failure."
+            fi
+            if [[ "$failed_step" == *schedule_instances* ]]; then
+                echo "Attempt $attempt found no host for the flavor (request $failed_req): no capacity."
+                failure_mode="no_capacity"
+                break
+            fi
+            echo "Attempt $attempt failed on the compute host (request $failed_req; failed step: ${failed_step:-unknown})."
+            if [ $attempt -lt $max_attempts ]; then
+                attempt=$((attempt + 1))
+                gh issue comment "$ISSUE_NUMBER" --body "⏳ The first unshelve attempt failed on Jetstream2's side — retrying automatically. A final result will be posted here in a few minutes." || echo "::warning ::Failed to post retry notification comment."
+                openstack server unshelve "$INSTANCE_NAME"
+                # The second attempt gets its own full wait.
+                continue
+            fi
+            failure_mode="host_error"
+            break
         done
 
         echo "status=$status" >> $GITHUB_OUTPUT
@@ -959,7 +921,7 @@ runs:
             exit 1
         fi
 
-        if [ $total_wait_time -ge $max_wait_time ]; then
+        if [[ "$reason" == "timeout" ]]; then
             echo "::error ::Maximum wait time ($max_wait_time seconds) exceeded."
             exit 1
         fi
