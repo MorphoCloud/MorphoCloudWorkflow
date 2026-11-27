@@ -1358,7 +1358,8 @@ document carry GitHub ids only.
 - **Labels:** "on a desktop" is labeled "desktop open (not necessarily in use)"
   on the tile, in the tallies and on the charts. A desktop left open overnight
   counts as open, and so as online, for as long as its connection lasts; T-A2
-  measures how long `guacd` keeps it after the tab closes.
+  measures how long `guacd` keeps it after the tab closes, and the measured time
+  is written here when the test has run.
 - **Tiles:** online (portal only / on a desktop); on a desktop (web / TurboVNC);
   member instances running / shelved; failed commands in 24 hours; no-capacity
   events in 24 hours; incidents waiting for a verdict; storage used of 10,000
