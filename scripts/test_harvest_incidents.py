@@ -3521,8 +3521,53 @@ def test_desktop_unknown_only_after_two_misses_dated_at_the_first():
     assert lines == [
         {"at": hv.to_iso(DT0 + 900), "issue": 356, "github_id": 7, "desktop": "unknown"}
     ]
-    lines = hv.apply_desktops(st, [], {}, owners, DT0 + 1500)  # shelved: left the list
-    assert lines[0]["desktop"] == "closed"
+    # Already unknown after two misses, then gone from the list: closed at
+    # once, dated at the first miss of the run.
+    lines = hv.apply_desktops(st, [], {}, owners, DT0 + 1500)
+    assert lines == [{"at": hv.to_iso(DT0 + 900), "issue": 356, "github_id": 7,
+                      "desktop": "closed", "why": "not checked (not ACTIVE or setup)"}]  # fmt: skip
+
+
+def test_a_desktop_that_leaves_the_list_closes_after_two_cycles():
+    st: dict = {}
+    inst = [{"id": SID, "issue": 356}]
+    hv.apply_desktops(st, inst, {SID: ("open", "web")}, {356: 7}, DT0)
+    assert hv.apply_desktops(st, [], {}, {}, DT0 + 300) == []
+    lines = hv.apply_desktops(st, [], {}, {}, DT0 + 600)
+    assert [(x["at"], x["desktop"]) for x in lines] == [
+        (hv.to_iso(DT0 + 300), "closed")
+    ]
+
+
+def test_a_short_status_flap_neither_closes_nor_reopens_a_desktop():
+    st: dict = {}
+    inst = [{"id": SID, "issue": 356}]
+    hv.apply_desktops(st, inst, {SID: ("open", "web")}, {356: 7}, DT0)
+    assert hv.apply_desktops(st, [], {}, {}, DT0 + 300) == []  # REBOOT for one cycle
+    assert (
+        hv.apply_desktops(st, inst, {SID: ("open", "web")}, {356: 7}, DT0 + 600) == []
+    )
+    assert st["desktops"]["356"]["since"] == hv.to_iso(DT0)
+
+
+def test_bounded_run_stops_reading_at_the_cap_and_kills():
+    code, out, _ = hv.bounded_run(
+        [sys.executable, "-c", "import sys\nwhile True: sys.stdout.write('x' * 65536)"],
+        20,
+        1000,
+    )
+    assert code is None
+    assert len(out) == 1000 + 1  # the cap plus the byte that shows it was passed
+    code, out, err = hv.bounded_run(
+        [sys.executable, "-c", "print('ok'); import sys; sys.stderr.write('e')"],
+        20,
+        1000,
+    )
+    assert (code, out, err) == (0, b"ok\n", b"e")
+    code, _, _ = hv.bounded_run(
+        [sys.executable, "-c", "import time; time.sleep(30)"], 1, 1000
+    )
+    assert code is None
 
 
 def test_online_is_the_portal_or_a_desktop_and_hours_count_overlap_once():

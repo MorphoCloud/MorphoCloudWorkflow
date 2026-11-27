@@ -2242,6 +2242,48 @@ def server_address(server_id: str) -> str | None:
     return None
 
 
+def bounded_run(
+    argv: list[str], timeout: float, limit: int
+) -> tuple[int | None, bytes, bytes]:
+    """Run `argv`, keeping at most `limit` + 1 bytes of stdout and 4 KB of
+    stderr; the process is killed once stdout passes `limit` or the deadline
+    passes. The far end is a member's instance, so its output is never read
+    whole into memory first. (returncode, or None when killed; stdout; stderr)"""
+    import select  # noqa: PLC0415 — only this reader needs it
+
+    p = subprocess.Popen(
+        argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    out, err = bytearray(), bytearray()
+    caps = {p.stdout: (out, limit + 1), p.stderr: (err, 4096)}
+    end = time.time() + timeout
+    killed = False
+    try:
+        while caps:
+            left = end - time.time()
+            if left <= 0 or len(out) > limit:
+                killed = True
+                break
+            ready, _, _ = select.select(list(caps), [], [], min(left, 1.0))
+            for fh in ready:
+                chunk = os.read(fh.fileno(), 65536)
+                if not chunk:
+                    del caps[fh]
+                    continue
+                buf, cap = caps[fh]
+                buf.extend(chunk[: max(cap - len(buf), 0)])
+    finally:
+        if killed or p.poll() is None:
+            p.kill()
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            log("desktop check: ssh did not exit after kill")
+        for fh in (p.stdout, p.stderr):
+            fh.close()
+    return (None if killed else p.returncode), bytes(out), bytes(err)
+
+
 def check_desktop(server_id: str, deadline: float) -> tuple[str, str | None]:
     """One instance: its address, one SSH call, the parsed result."""
     if not SERVER_ID_RE.fullmatch(server_id):
@@ -2252,24 +2294,23 @@ def check_desktop(server_id: str, deadline: float) -> tuple[str, str | None]:
         return "unknown", None
     DESK_KNOWN_HOSTS.mkdir(parents=True, exist_ok=True)
     try:
-        r = subprocess.run(
-            desk_ssh_argv(ip, server_id),
-            capture_output=True,
-            text=True,
-            timeout=min(left, DESK_CONNECT + 20),
-            check=False,
-            stdin=subprocess.DEVNULL,
+        code, out, err = bounded_run(
+            desk_ssh_argv(ip, server_id), min(left, DESK_CONNECT + 20), DESK_OUTPUT_MAX
         )
-    except (subprocess.TimeoutExpired, OSError):
+    except OSError:
         return "unknown", None
-    if r.returncode != 0:
+    if code != 0:
+        text = err.decode("utf-8", "replace")
         if (
-            "HOST IDENTIFICATION HAS CHANGED" in r.stderr
-            or "Host key verification failed" in r.stderr
+            "HOST IDENTIFICATION HAS CHANGED" in text
+            or "Host key verification failed" in text
         ):
-            log(f"desktop check: host key changed for server {server_id}")
+            log(
+                f"desktop check: host key changed for server {server_id}; delete "
+                f"{DESK_KNOWN_HOSTS / server_id} only if that server is known to be rebuilt"
+            )
         return "unknown", None
-    return parse_desktop(r.stdout[: DESK_OUTPUT_MAX + 1], server_id)
+    return parse_desktop(out.decode("utf-8", "replace"), server_id)
 
 
 def check_desktops(
@@ -2399,10 +2440,20 @@ def apply_desktops(
             if kind:
                 line["kind"] = kind
             lines.append(line)
+    # Not checked this cycle (not ACTIVE, setup not finished, or gone): the
+    # same miss rule, so a short Nova status flap (a reboot) neither closes
+    # nor reopens the desktop; after DESK_MISSES cycles it is closed, dated
+    # at the first miss.
     for issue in [i for i in desks if i not in checked]:
-        d = desks.pop(issue)
-        if d.get("result") == "open" or d.get("result") == "unknown":
-            lines.append({"at": at, "issue": int(issue), "github_id": d.get("github_id"),
+        d = desks[issue]
+        if not d.get("misses"):
+            d["first_miss"] = at
+        d["misses"] = d.get("misses", 0) + 1
+        if d["misses"] < DESK_MISSES:
+            continue
+        del desks[issue]
+        if d.get("result") in ("open", "unknown"):
+            lines.append({"at": d["first_miss"], "issue": int(issue), "github_id": d.get("github_id"),
                           "desktop": "closed", "why": "not checked (not ACTIVE or setup)"})  # fmt: skip
     return lines
 

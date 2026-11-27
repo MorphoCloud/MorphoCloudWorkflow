@@ -1493,9 +1493,19 @@ above, this list is the record:
    the kind is web, then TurboVNC, then other.
 7. **The server list** is read once per cycle by `platform` and reused by
    `activity` and `dashboard`.
-8. **Checked on real data.** A document built from a clone of the production
-   store (2026-11-27) passed the portal's `check()`: 15 KB; problems, tallies
-   and storage filled; `now` empty (`as_of` null) until the first presence read.
+8. **A server that leaves the checked list** (not ACTIVE, setup not finished, or
+   gone) follows the same miss rule: closed after two cycles, dated at the first
+   miss, so a one-cycle Nova status flap (a reboot) neither closes nor reopens a
+   desktop (review of #478).
+9. **Bounded read.** The SSH output is read through a reader that keeps at most
+   64 KB + 1 of stdout and 4 KB of stderr and kills the call past either bound
+   or the deadline; the member's instance cannot make the runner hold more
+   (review of #478). A changed host key is logged with the file to delete, and
+   the instance counts as `unknown` on the page meanwhile.
+10. **Checked on real data.** A document built from a clone of the production
+    store (2026-11-27) passed the portal's `check()`: 15 KB; problems, tallies
+    and storage filled; `now` empty (`as_of` null) until the first presence
+    read.
 
 ### Reconcile with production after the migration (design note, 2026-11-24)
 
