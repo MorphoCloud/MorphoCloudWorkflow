@@ -956,30 +956,41 @@ runs:
           'sudo shutdown -r now'
 
         sleep 10
-        function check_instance_ready {
-          mc_ssh 30 "Probe after reboot" \
+        # Wait for the instance to answer again, for up to 5 min: the same
+        # allowance as the share check that follows. A g3.xl boot has taken
+        # 2 min 52 s (2026-11-26); the three tries this step used to make
+        # ended about 130 s after the reboot command and failed that create.
+        #
+        # ConnectTimeout is shorter than the call's time limit on purpose:
+        # while the instance is down a try ends after 10 s as a plain failed
+        # connection. Without it, the first try always sat out its full 30 s
+        # and logged a time-limit error on every create.
+        max_wait=300
+        start=$SECONDS
+        instance_ready=false
+        attempt=0
+        while :; do
+          attempt=$((attempt + 1))
+          echo "Checking if instance is ready (try $attempt, $((SECONDS - start))s since the first)"
+          if mc_ssh 20 "Probe after reboot" \
+            -o ConnectTimeout=10 \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o LogLevel=ERROR \
             exouser@$INSTANCE_IP \
-            'true'
-        }
-
-        max_attempts=3
-        instance_ready=false
-        for attempt in $(seq 1 $max_attempts); do
-          echo "Checking if instance is ready ($attempt/$max_attempts)"
-          if check_instance_ready; then
+            'true'; then
             instance_ready=true
             echo "Instance '$INSTANCE_NAME' is ready."
             break
-          else
-            echo "Instance '$INSTANCE_NAME' is not ready. Retrying in 5 seconds..."
-            sleep 10
           fi
+          if (( SECONDS - start >= max_wait )); then
+            break
+          fi
+          echo "Instance '$INSTANCE_NAME' is not ready. Retrying in 5 seconds..."
+          sleep 5
         done
         if ! $instance_ready; then
-          echo "::error ::Instance '$INSTANCE_NAME' is not ready after $max_attempts attempts to connect."
+          echo "::error ::Instance '$INSTANCE_NAME' did not answer within ${max_wait}s of the reboot ($attempt tries)."
           exit 1
         fi
         set -e
