@@ -82,7 +82,9 @@ jobs:
           # Prints the start time of the instance's last create, unshelve,
           # start or reboot, as Nova recorded it; nothing when there is none.
           last_start() {  # $1 instance name
-            openstack server event list "$1" -f json \
+            # </dev/null: this runs inside the `while read` loop over the
+            # listing, whose lines the command must not be able to read.
+            openstack server event list "$1" -f json < /dev/null \
               | jq -r '[.[] | select(.Action == "create" or .Action == "unshelve" or .Action == "start" or .Action == "reboot") | ."Start Time"] | max // empty'
           }
           # An instance its create job is still setting up (mcSetup=pending,
@@ -139,7 +141,7 @@ jobs:
           jq -r '.[] | [.Name, .Status,
                         (.Properties
                          | if type == "object" then (.mcSetup // "none" | tostring)
-                           elif type == "string" and test("\\bmcSetup=.pending") then "pending"
+                           elif type == "string" and test("\\bmcSetup='"'"'pending'"'"'") then "pending"
                            else "none" end
                          | if . == "" then "none" else . end),
                         ."OS-EXT-STS:task_state"] | @tsv' | \
