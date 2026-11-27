@@ -1179,8 +1179,12 @@ it in the instance's journal, which the member can read (members have sudo).
 (amm554, g3.large, ACTIVE): Neutron gave 149.165.150.75; the runner's key logged
 in as exouser; metadata `uuid` = server id
 `0955d469-2bbc-451b-8c5e-d1033dba7f59`; ports 5901 and 49528 listening; with
-nobody on the desktop, 0 established connections on 5901. The positive case is
-measured with the desktop open, below.
+nobody on the desktop, 0 established connections on 5901. With the maintainer on
+amm554's web desktop: exactly one, `172.17.0.1:5901` ← `172.19.0.2`, the `guacd`
+container on Guacamole's compose network (172.19.0.0/16; the instance also has
+`docker0` 172.17.0.0/16 and 172.18.0.0/16). The Docker networks differ, so the
+`web` rule is the whole 172.16.0.0/12 range, not one subnet. TurboVNC is not
+measured yet (test T-A3).
 
 #### The `activity` step
 
