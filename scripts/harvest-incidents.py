@@ -2152,8 +2152,10 @@ def setup_finished(raw) -> bool:
 
 
 def desk_kind(peer: str) -> str:
-    """web: the guacd container on a Docker network (172.16.0.0/12);
-    turbovnc: the SSH tunnel on the instance itself (loopback); else other.
+    """web: the guacd container on a Docker network (172.16.0.0/12).
+    turbovnc: a public address (the viewer on the member's computer, connected
+    straight to <ip>:1 as the portal shows it; measured on #356, 2026-11-27)
+    or loopback (an SSH tunnel on the instance). Anything else: other.
     An IPv4-mapped IPv6 address is read as its IPv4 address."""
     import ipaddress  # noqa: PLC0415 — only this check needs it
 
@@ -2168,6 +2170,8 @@ def desk_kind(peer: str) -> str:
         return "turbovnc"
     if ip in ipaddress.ip_network("172.16.0.0/12"):
         return "web"
+    if ip.is_global:
+        return "turbovnc"
     return "other"
 
 
