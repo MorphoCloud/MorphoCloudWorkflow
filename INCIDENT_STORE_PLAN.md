@@ -1134,8 +1134,8 @@ the member's `last_seen` into a new table, at most once a minute per member (an
 in-memory throttle, so the poll does not add a write every 10 seconds to a
 database that has had lock errors). Worst case between two writes for a member
 whose tab stays visible: 60 seconds of idle polling plus 60 seconds of throttle,
-120 seconds, against the 300-second window (180 seconds to spare, more than one
-5-minute cycle's worth of a missed poll):
+120 seconds, against the 300-second window (180 seconds to spare: three missed
+60-second polls, or about 18 missed 10-second polls):
 
 | Column      | Meaning                                                                                                              |
 | ----------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -1187,13 +1187,15 @@ whose setup is finished:
   `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$` before it is
   used as a file name; anything else is `unknown`.
 - **Host keys:** addresses are recycled between servers. A file per server id
-  keeps a recycled address from failing on a new server's key. A changed key for
-  the same server id fails (`unknown`, and the step's log names the server). No
-  MorphoCloud workflow rebuilds a server in place (MWF `main` has no
-  `server rebuild`; a recreate makes a new server with a new id), so a changed
-  key for the same id is not expected. If one appears, the admin deletes that
-  one file by hand. Files of servers that no longer exist are removed by the
-  step.
+  keeps a recycled address from failing on a new server's key. The first key for
+  a server id is trusted as it comes (`accept-new`); the `uuid` check runs over
+  that same connection, so first contact is not verified independently. That is
+  accepted for a result used only for counts. A changed key for the same server
+  id fails (`unknown`, and the step's log names the server). No MorphoCloud
+  workflow rebuilds a server in place (MWF `main` has no `server rebuild`; a
+  recreate makes a new server with a new id), so a changed key for the same id
+  is not expected. If one appears, the admin deletes that one file by hand.
+  Files of servers that no longer exist are removed by the step.
 - **Command:** one fixed string, the same every time, with no value from Nova or
   the store in it, so nothing is quoted per call. The harvester passes it as one
   argument to `ssh`, and the instance's login shell runs it:
@@ -1214,8 +1216,9 @@ whose setup is finished:
   IPv4-mapped IPv6 address (`[::ffff:127.0.0.1]`) is read as its IPv4 address
   before the kind is decided, so a TurboVNC tunnel over `::1` or a mapped
   `127.0.0.1` is `turbovnc`. Anything else, a missing marker, or more than 50
-  connection lines is `unknown`. Nothing from the output is stored except the
-  result and kind.
+  connection lines is `unknown`. Only standard output is parsed; standard error
+  (a `python3` traceback, an `ss` warning) is never read as a result. Nothing
+  from the output is stored except the result and kind.
 - **Identity:** the `uuid` must equal the server id, or the instance's result is
   `unknown` and the connection list is not read (class 5 of
   AUTOMATION_AUDIT_2026-11.md). This stops a recycled address from being counted
@@ -1268,10 +1271,15 @@ Like `platform`, it writes a line to `activity/YYYY/MM/DD.jsonl` only when the
 picture changes. Each line has `at` plus who changed and how: `portal` on or
 off, a desktop `open` (with kind), `closed` or `unknown`. To keep a short outage
 from writing pairs of lines, a desktop goes to `unknown` only after two cycles
-in a row without a result; `open` and `closed` are written at once. A failed
-presence call writes `presence: unknown` once, and its return writes the picture
-again. Tallies never count unknown time as nobody online. GitHub ids only; no
-login, name, email or address.
+in a row without a result; `open` and `closed` are written at once. The miss
+count and the time of the last successful check are kept per instance in
+`state/activity.json`. The `unknown` line carries the time of the first missed
+check, not the second, so the delay affects only when the line is written: the
+tallies count the missed cycle as unknown, never as `open` or `closed`. A single
+miss followed by a result writes nothing, and the tallies count that cycle as
+unknown too. A failed presence call writes `presence: unknown` once, and its
+return writes the picture again. Tallies never count unknown time as nobody
+online. GitHub ids only; no login, name, email or address.
 
 If `platform` failed this cycle, there is no server list: the step writes
 nothing and keeps the last picture, marked with the time it was taken. No
