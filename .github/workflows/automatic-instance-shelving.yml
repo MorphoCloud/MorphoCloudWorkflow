@@ -79,10 +79,33 @@ jobs:
             done
             return 255
           }
+          # Prints the start time of the instance's last create, unshelve,
+          # start or reboot, as Nova recorded it; nothing when there is none.
+          last_start() {  # $1 instance name
+            openstack server event list "$1" -f json \
+              | jq -r '[.[] | select(.Action == "create" or .Action == "unshelve" or .Action == "start" or .Action == "reboot") | ."Start Time"] | max // empty'
+          }
+          # An instance its create job is still setting up (mcSetup=pending,
+          # SETUP_FINISHED_SIGNAL_DESIGN.md) reboots during that setup and does
+          # not answer then; each one cost this sweep about 85 s of connection
+          # tries before the rule above left it alone as "too young". Returns 0
+          # when the instance started less than $unreachable_after_min minutes
+          # ago: the caller skips it without connecting. Older, or with a start
+          # time that cannot be read, it returns 1 and the instance is checked
+          # like any other, so one stuck in setup is still shelved when it does
+          # not answer.
+          young_in_setup() {  # $1 instance name, $2 issue number
+            local since start_epoch age_min
+            since=$(last_start "$1") || return 1
+            [[ -n "$since" ]] || return 1
+            start_epoch=$(date -u -d "${since%%.*}" +%s 2>/dev/null) || return 1
+            age_min=$(( ( $(date -u +%s) - start_epoch ) / 60 ))
+            (( age_min < unreachable_after_min )) || return 1
+            echo "$1 (issue #$2): still being set up, started ${age_min} min ago (< ${unreachable_after_min}): left to its create job"
+          }
           shelve_if_unreachable() {  # $1 instance name, $2 issue number, $3 what failed
             local since age_min
-            since=$(openstack server event list "$1" -f json \
-              | jq -r '[.[] | select(.Action == "create" or .Action == "unshelve" or .Action == "start" or .Action == "reboot") | ."Start Time"] | max // empty')
+            since=$(last_start "$1")
             if [[ -z "$since" ]]; then
               echo "::warning ::$1 (issue #$2): $3, and when it started is unknown; left for the next tick"
               return
@@ -107,10 +130,21 @@ jobs:
             fi
           }
 
-          openstack server list --name "^${instance_basename}-\d+" -f json | \
-          jq -r '.[] | [.Name, .Status, ."OS-EXT-STS:task_state"] | @tsv' | \
-            while IFS=$'\t' read -r instance_name status task_state; do
-              echo "instance_name [$instance_name] status [$status] task_state [$task_state]"
+          # --long adds the server's properties, where the create job keeps
+          # mcSetup. The setup field is never empty ("none" when the property
+          # is absent or unreadable) and comes before task_state: `read` joins
+          # neighbouring tabs, so an empty field in the middle would shift the
+          # ones after it.
+          openstack server list --long --name "^${instance_basename}-\d+" -f json | \
+          jq -r '.[] | [.Name, .Status,
+                        (.Properties
+                         | if type == "object" then (.mcSetup // "none" | tostring)
+                           elif type == "string" and test("\\bmcSetup=.pending") then "pending"
+                           else "none" end
+                         | if . == "" then "none" else . end),
+                        ."OS-EXT-STS:task_state"] | @tsv' | \
+            while IFS=$'\t' read -r instance_name status mc_setup task_state; do
+              echo "instance_name [$instance_name] status [$status] setup [$mc_setup] task_state [$task_state]"
 
               # Skip the instance if it is currently undergoing a status update
               if [[ "$task_state" != "" ]]; then
@@ -190,6 +224,12 @@ jobs:
                 else
                   echo "Workshop instance [$instance_name] (issue #$issue_number) not yet due (now=$now < shelve-at=$shelve_at). Skipping."
                 fi
+                continue
+              fi
+
+              # Still being set up by its create job, and young: nothing to
+              # check yet, and connecting would only wait out its reboot.
+              if [[ "$mc_setup" == "pending" ]] && young_in_setup "$instance_name" "$issue_number"; then
                 continue
               fi
 
@@ -273,6 +313,15 @@ jobs:
                 # for values under 1 ("900/3600" -> ".25"), which the numeric check
                 # below would reject; normalise so sub-hour instances don't trip it.
                 uptime_hours=$(echo "scale=2; $uptime_seconds / 3600" | bc | awk '{printf "%.2f", $1}')
+              fi
+
+              # check-instance-shelve.sh prints bc's form of a value under one
+              # hour, without the leading zero (".83"). The check below rejected
+              # it, so every instance was skipped for the first hour of a
+              # session and the portal got no session age for it. Only this
+              # exact form gets the zero; anything else is still rejected.
+              if [[ "$uptime_hours" =~ ^\.[0-9]+$ ]]; then
+                uptime_hours="0$uptime_hours"
               fi
 
               # $uptime_hours comes from the instance, which the user controls
