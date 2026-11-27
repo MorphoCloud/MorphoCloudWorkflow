@@ -3521,11 +3521,23 @@ def test_desktop_unknown_only_after_two_misses_dated_at_the_first():
     assert lines == [
         {"at": hv.to_iso(DT0 + 900), "issue": 356, "github_id": 7, "desktop": "unknown"}
     ]
-    # Already unknown after two misses, then gone from the list: closed at
-    # once, dated at the first miss of the run.
-    lines = hv.apply_desktops(st, [], {}, owners, DT0 + 1500)
-    assert lines == [{"at": hv.to_iso(DT0 + 900), "issue": 356, "github_id": 7,
+    # Then gone from the list: closed after two cycles out of it, dated at
+    # the first (the same rule as a running desktop, its own count).
+    assert hv.apply_desktops(st, [], {}, owners, DT0 + 1500) == []
+    lines = hv.apply_desktops(st, [], {}, owners, DT0 + 1800)
+    assert lines == [{"at": hv.to_iso(DT0 + 1500), "issue": 356, "github_id": 7,
                       "desktop": "closed", "why": "not checked (not ACTIVE or setup)"}]  # fmt: skip
+
+
+def test_a_flap_then_one_failed_check_writes_nothing():
+    st: dict = {}
+    inst = [{"id": SID, "issue": 356}]
+    hv.apply_desktops(st, inst, {SID: ("open", "web")}, {356: 7}, DT0)
+    assert hv.apply_desktops(st, [], {}, {}, DT0 + 300) == []  # REBOOT for one cycle
+    assert (
+        hv.apply_desktops(st, inst, {SID: ("unknown", None)}, {356: 7}, DT0 + 600) == []
+    )
+    assert st["desktops"]["356"]["result"] == "open"
 
 
 def test_a_desktop_that_leaves_the_list_closes_after_two_cycles():

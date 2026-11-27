@@ -2421,6 +2421,8 @@ def apply_desktops(
     for issue, s in checked.items():
         d = desks.setdefault(issue, {"result": None, "kind": None, "misses": 0})
         d.update(server_id=s["id"], github_id=owners.get(s["issue"]))
+        d.pop("gone", None)  # back in the list: the not-checked count starts over
+        d.pop("gone_since", None)
         result, kind = results.get(s["id"], ("unknown", None))
         base = {"issue": int(issue), "github_id": d["github_id"]}
         if result == "unknown":
@@ -2441,19 +2443,19 @@ def apply_desktops(
                 line["kind"] = kind
             lines.append(line)
     # Not checked this cycle (not ACTIVE, setup not finished, or gone): the
-    # same miss rule, so a short Nova status flap (a reboot) neither closes
+    # same rule with its own count (`gone`, reset when the server is back), so a short Nova status flap (a reboot) neither closes
     # nor reopens the desktop; after DESK_MISSES cycles it is closed, dated
     # at the first miss.
     for issue in [i for i in desks if i not in checked]:
         d = desks[issue]
-        if not d.get("misses"):
-            d["first_miss"] = at
-        d["misses"] = d.get("misses", 0) + 1
-        if d["misses"] < DESK_MISSES:
+        if not d.get("gone"):
+            d["gone_since"] = at
+        d["gone"] = d.get("gone", 0) + 1
+        if d["gone"] < DESK_MISSES:
             continue
         del desks[issue]
         if d.get("result") in ("open", "unknown"):
-            lines.append({"at": d["first_miss"], "issue": int(issue), "github_id": d.get("github_id"),
+            lines.append({"at": d["gone_since"], "issue": int(issue), "github_id": d.get("github_id"),
                           "desktop": "closed", "why": "not checked (not ACTIVE or setup)"})  # fmt: skip
     return lines
 
