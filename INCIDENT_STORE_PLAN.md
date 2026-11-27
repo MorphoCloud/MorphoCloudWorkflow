@@ -1085,18 +1085,16 @@ counts. The portal only shows what the harvester hands it.
 **Maintainer's decisions (2026-11-27).**
 
 1. **Online** means a signed-in member with a portal tab visible in the last 5
-   minutes. **On a desktop** is the subset of the online members who also have
-   their instance's desktop open.
-   - **Found in review (#477), proposed, awaiting the maintainer:** the portal
-     opens the web desktop in a new tab (`/instances/N/web`, `target="_blank"`),
-     and TurboVNC is a separate program. A member working on the desktop
-     therefore has the portal tab in the background, and a hidden tab does not
-     poll. Taken literally, decision 1 would drop them from "online" after 300
-     seconds, and so from "on a desktop": the people the count is for would be
-     the ones it misses. Proposed: **online = a portal tab visible in the last 5
-     minutes OR a desktop open**; **on a desktop = a desktop open**, counted
-     from the instance alone. On a desktop stays a subset of online. The page
-     splits online into "portal only" and "on a desktop".
+   minutes, **or** a member with their instance's desktop open. **On a desktop**
+   means the desktop is open, checked on the instance alone; it is a subset of
+   online. The page splits online into "portal only" and "on a desktop". Why the
+   desktop counts on its own (found in review of #477): the portal opens the web
+   desktop in a new tab (`/instances/N/web`, `target="_blank"`) and TurboVNC is
+   a separate program, so a member working on the desktop has the portal tab in
+   the background, and a hidden tab does not poll. Counting the portal tab alone
+   would drop exactly those members. (The first wording, "a portal tab visible;
+   on a desktop is the subset of those", was changed by the maintainer on
+   2026-11-27.)
 2. **Storage** is snapshotted daily (see "Storage usage" above, now "daily
    snapshot, weekly report").
 3. The dashboard is a product of the harvester and its store, like
@@ -1264,7 +1262,7 @@ so Test-Instances and any other source are unaffected). It reads presence (gate)
 and desktops (above) and keeps the current picture in `state/activity.json`: per
 GitHub id, `portal` (`last_seen` within 300 seconds of the gate's `at`), the
 desktop result and kind of each of that member's instances, and `online`
-(decision 1 as proposed above: `portal` or a desktop `open`).
+(decision 1: `portal` or a desktop `open`).
 
 Like `platform`, it writes a line to `activity/YYYY/MM/DD.jsonl` only when the
 picture changes. Each line has `at` plus who changed and how: `portal` on or
