@@ -2716,7 +2716,7 @@ def test_a_harvested_failure_carries_error_detail_and_rederive_agrees(
     assert again["source"]["error_detail"] == line["source"]["error_detail"]
 
 
-# --- storage usage (INCIDENT_STORE_PLAN.md "Storage usage (weekly snapshot)") ------
+# --- storage usage (INCIDENT_STORE_PLAN.md "Storage usage (daily snapshot, weekly report)") ---
 
 GIB = 2**30
 MON_1300 = hv.parse_ts("2026-11-23T13:00:00Z")  # Monday of ISO week 2026-W48
@@ -2756,12 +2756,13 @@ def _store_lines(tmp_path, rel):
     return [json.loads(x) for x in p.read_text().splitlines()] if p.exists() else []
 
 
-def test_usage_week_is_due_from_monday_1300_utc():
-    assert hv.usage_week(MON_1300 - 1) is None
-    assert hv.usage_week(MON_1300) == "2026-W48"
-    assert hv.usage_week(MON_1300 + 6 * 86400) == "2026-W48"  # Sunday: still this week
-    assert hv.usage_week(MON_1300 + 7 * 86400 - 3600) is None  # next Monday 12:00
-    assert hv.usage_week(hv.parse_ts("2027-01-04T13:00:00Z")) == "2027-W01"
+def test_usage_day_is_due_from_1300_utc_each_day():
+    assert hv.usage_due_day(MON_1300 - 1) is None
+    assert hv.usage_due_day(MON_1300) == "2026-11-23"
+    assert hv.usage_due_day(MON_1300 + 86400) == "2026-11-24"  # Tuesday 13:00
+    assert hv.usage_due_day(MON_1300 + 86400 - 3601) is None  # Tuesday 12:59:59
+    assert hv.iso_week(MON_1300 + 6 * 86400) == "2026-W48"  # Sunday: still this week
+    assert hv.iso_week(hv.parse_ts("2027-01-04T13:00:00Z")) == "2027-W01"
 
 
 @pytest.mark.parametrize(
@@ -2813,7 +2814,7 @@ def test_storage_usage_runs_only_where_the_source_asks_for_it(
     assert cfg.raw["sources"]["MorphoCloud/Instances"]["storage_usage"] is True
 
 
-def test_storage_usage_takes_each_week_once_and_keeps_the_final_use(
+def test_storage_usage_takes_each_day_once_and_keeps_the_final_use(
     tmp_path, cfg, monkeypatch
 ):
     week1 = [_share(1, 40), _share(2, 3), _share(3, None, usage_at=None),
@@ -2823,8 +2824,8 @@ def test_storage_usage_takes_each_week_once_and_keeps_the_final_use(
     h, calls = _usage_h(tmp_path, cfg, monkeypatch, [week1, week2])
     assert h.storage_usage(MON_1300 - 60) == "not due"
     assert calls == []
-    assert h.storage_usage(MON_1300 + 120) == "took 2026-W48: 4 shares, 0 gone"
-    assert h.storage_usage(MON_1300 + 420) == "taken 2026-W48"
+    assert h.storage_usage(MON_1300 + 120) == "took 2026-11-23: 4 shares, 0 gone"
+    assert h.storage_usage(MON_1300 + 420) == "taken 2026-11-23"
     assert len(calls) == 1
     rows = _store_lines(tmp_path, "storage/2026/11/23.jsonl")
     assert [(r["github_id"], r["stale"]) for r in rows] == [
@@ -2833,20 +2834,21 @@ def test_storage_usage_takes_each_week_once_and_keeps_the_final_use(
         (3, True),
         (4, True),
     ]
-    assert {r["week"] for r in rows} == {"2026-W48"}
+    assert {(r["week"], r["day"]) for r in rows} == {("2026-W48", "2026-11-23")}
     assert rows[0]["schema"] == 1
     assert "login" not in json.dumps(rows)
-    assert h.storage_usage(MON_1300 + 7 * 86400) == "took 2026-W49: 2 shares, 2 gone"
+    assert h.storage_usage(MON_1300 + 86400) == "took 2026-11-24: 2 shares, 2 gone"
     final = _store_lines(tmp_path, "storage/final.jsonl")
-    assert [(r["github_id"], r["week"], r["gone_by"]) for r in final] == [
-        (2, "2026-W48", "2026-11-30T13:00:00Z"),
-        (4, "2026-W48", "2026-11-30T13:00:00Z"),
+    assert [(r["github_id"], r["day"], r["gone_by"]) for r in final] == [
+        (2, "2026-11-23", "2026-11-24T13:00:00Z"),
+        (4, "2026-11-23", "2026-11-24T13:00:00Z"),
     ]
     assert (tmp_path / "store/storage/report.md").exists()
-    assert h.store.read_json("state/storage-usage.json")["week"] == "2026-W49"
+    st = h.store.read_json("state/storage-usage.json")
+    assert (st["day"], st["week"]) == ("2026-11-24", "2026-W48")
 
 
-def test_a_failed_usage_call_leaves_the_week_untaken(tmp_path, cfg, monkeypatch):
+def test_a_failed_usage_call_leaves_the_day_untaken(tmp_path, cfg, monkeypatch):
     h, calls = _usage_h(
         tmp_path, cfg, monkeypatch, ["Connection timed out", [_share(1, 4)]]
     )
@@ -2854,14 +2856,14 @@ def test_a_failed_usage_call_leaves_the_week_untaken(tmp_path, cfg, monkeypatch)
         h.storage_usage(MON_1300 + 60)
     assert h.store.read_json("state/storage-usage.json") is None
     assert not (tmp_path / "store/storage").exists()
-    assert h.storage_usage(MON_1300 + 360).startswith("took 2026-W48")
+    assert h.storage_usage(MON_1300 + 360).startswith("took 2026-11-23")
 
 
 def test_a_snapshot_already_in_the_store_is_not_taken_twice(tmp_path, cfg, monkeypatch):
     h, calls = _usage_h(tmp_path, cfg, monkeypatch, [[_share(1, 4)]])
     h.storage_usage(MON_1300)
     (tmp_path / "store/state/storage-usage.json").unlink()  # the state write was lost
-    assert h.storage_usage(MON_1300 + 86400) == "taken 2026-W48"
+    assert h.storage_usage(MON_1300 + 3600) == "taken 2026-11-23"
     assert len(calls) == 1
     assert len(_store_lines(tmp_path, "storage/2026/11/23.jsonl")) == 1
 
@@ -2927,13 +2929,13 @@ def test_a_usage_row_with_a_bad_field_is_refused(change, why):
     assert err.startswith(why)
 
 
-def test_duplicate_ids_and_an_empty_list_after_a_full_week_are_refused():
+def test_duplicate_ids_and_an_empty_list_after_a_full_snapshot_are_refused():
     dup = json.dumps({"schema": 1, "shares": [_share(5, 1), _share(5, 2)]})
     assert hv.validate_usage(dup) == (None, "duplicate github_id")
     empty = json.dumps({"schema": 1, "shares": []})
     assert hv.validate_usage(empty, previous=40) == (
         None,
-        "empty shares list after a week of 40",
+        "empty shares list after a snapshot of 40",
     )
     assert hv.validate_usage(empty)[1] is None  # a portal with no shares yet
 
@@ -2958,34 +2960,86 @@ def test_final_use_is_derived_so_a_crash_between_writes_loses_nothing(
 ):
     h, calls = _usage_h(tmp_path, cfg, monkeypatch, [[_share(1, 4), _share(2, 9)]])
     h.storage_usage(MON_1300)
-    # week 2's snapshot is in the store, but the cycle died before the rest
-    day = tmp_path / "store/storage/2026/11/30.jsonl"
+    # day 2's snapshot is in the store, but the cycle died before the rest
+    day = tmp_path / "store/storage/2026/11/24.jsonl"
     day.write_text(
         json.dumps(
             hv.usage_rows(
-                {"shares": [_share(1, 5)]}, "2026-W49", "2026-11-30T13:00:00Z"
+                {"shares": [_share(1, 5)]}, "2026-W48", "2026-11-24T13:00:00Z"
             )[0]
         )
         + "\n"
     )
-    assert h.storage_usage(MON_1300 + 7 * 86400 + 300) == "taken 2026-W49"
+    assert h.storage_usage(MON_1300 + 86400 + 300) == "taken 2026-11-24"
     assert len(calls) == 1
     final = _store_lines(tmp_path, "storage/final.jsonl")
     assert [(r["github_id"], r["gone_by"]) for r in final] == [
-        (2, "2026-11-30T13:00:00Z")
+        (2, "2026-11-24T13:00:00Z")
     ]
-    assert h.store.read_json("state/storage-usage.json")["week"] == "2026-W49"
-    h.storage_usage(MON_1300 + 7 * 86400 + 600)
+    assert h.store.read_json("state/storage-usage.json")["day"] == "2026-11-24"
+    h.storage_usage(MON_1300 + 86400 + 600)
     assert len(_store_lines(tmp_path, "storage/final.jsonl")) == 1  # never repeated
 
 
-def test_the_previous_week_count_goes_to_the_portal_call(tmp_path, cfg, monkeypatch):
+def test_the_previous_snapshot_count_goes_to_the_portal_call(
+    tmp_path, cfg, monkeypatch
+):
     h, calls = _usage_h(
         tmp_path, cfg, monkeypatch, [[_share(1, 4), _share(2, 9)], [_share(1, 5)]]
     )
     h.storage_usage(MON_1300)
-    h.storage_usage(MON_1300 + 7 * 86400)
+    h.storage_usage(MON_1300 + 86400)
     assert calls == [0, 2]
+
+
+def test_a_state_from_the_weekly_build_counts_as_no_day_taken(
+    tmp_path, cfg, monkeypatch
+):
+    h, calls = _usage_h(tmp_path, cfg, monkeypatch, [[_share(1, 4)]])
+    h.store.write_json(
+        "state/storage-usage.json",
+        {"week": "2026-W48", "taken_at": "2026-11-23T13:00:00Z"},
+    )
+    assert h.storage_usage(MON_1300 + 86400).startswith("took 2026-11-24")
+
+
+def test_the_weekly_report_uses_the_latest_snapshot_of_each_week(tmp_path):
+    days = ("2026-11-23", "2026-11-26", "2026-11-29", "2026-11-30")
+    snaps = {}
+    for i, d in enumerate(days):
+        at = f"{d}T13:00:00Z"
+        snaps[at] = hv.usage_rows(
+            {"shares": [_share(1, 10 + i)]}, hv.iso_week(hv.parse_ts(at)), at
+        )
+    weeks = hv.usage_snapshots(tmp_path, snaps)
+    assert {w: rows[0]["taken_at"] for w, rows in weeks.items()} == {
+        "2026-W48": "2026-11-29T13:00:00Z",  # Sunday: the last of W48
+        "2026-W49": "2026-11-30T13:00:00Z",
+    }
+
+
+def test_final_rows_across_weekly_and_daily_files(tmp_path):
+    weekly = hv.usage_rows(
+        {"shares": [_share(1, 4), _share(2, 9)]}, "2026-W48", "2026-11-23T13:05:00Z"
+    )
+    daily1 = hv.usage_rows(
+        {"shares": [_share(1, 5), _share(2, 9)]}, "2026-W48", "2026-11-28T13:00:00Z"
+    )
+    daily2 = hv.usage_rows(
+        {"shares": [_share(1, 6)]}, "2026-W48", "2026-11-29T13:00:00Z"
+    )
+    for rows in (daily1, daily2):
+        for r in rows:
+            r["day"] = r["taken_at"][:10]
+    store = tmp_path / "storage" / "2026" / "11"
+    store.mkdir(parents=True)
+    for rows in (weekly, daily1, daily2):
+        d = rows[0]["taken_at"][8:10]
+        (store / f"{d}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    finals = hv.usage_finals(hv.usage_all_snapshots(tmp_path))
+    assert [(r["github_id"], r["taken_at"], r["gone_by"]) for r in finals] == [
+        (2, "2026-11-28T13:00:00Z", "2026-11-29T13:00:00Z")
+    ]
 
 
 def _week(week, taken, shares):
@@ -3265,3 +3319,598 @@ def test_a_missing_cursor_row_is_an_error_not_a_restart(tmp_path, cfg, monkeypat
         1,
         2,
     ]
+
+
+# --- admin dashboard (INCIDENT_STORE_PLAN.md "Admin dashboard") ----------------
+
+SID = "0955d469-2bbc-451b-8c5e-d1033dba7f59"
+DT0 = hv.parse_ts("2026-11-28T10:00:00Z")
+
+
+def _desk_out(uuid=SID, conns=(), before="Welcome to Ubuntu\n"):
+    return (
+        before
+        + "MC-DESK-BEGIN\n"
+        + f"uuid={uuid}\n"
+        + "MC-DESK-SS\n"
+        + "".join(f"0      72     {c}\n" for c in conns)
+        + "MC-DESK-END\n"
+    )
+
+
+def test_presence_reply_is_checked():
+    good = {"schema": 1, "at": "2026-11-28T10:00:00Z",
+            "rows": [{"github_id": 7, "since": "2026-11-28T09:50:00Z", "last_seen": "2026-11-28T09:59:00Z"}]}  # fmt: skip
+    assert hv.validate_presence(json.dumps(good))[1] is None
+    for bad in (
+        {**good, "schema": 2},
+        {**good, "rows": [{"github_id": True, "since": "x", "last_seen": "y"}]},
+        {**good, "rows": [{"github_id": 7, "since": "2026-11-28T09:50:00Z"}]},
+        {**good, "rows": good["rows"] * 2},  # the same member twice
+        {**good, "at": None},
+    ):
+        assert hv.validate_presence(json.dumps(bad))[0] is None
+    assert hv.validate_presence("nope")[1] == "presence: not JSON"
+
+
+@pytest.mark.parametrize(
+    ("props", "done"),
+    [
+        ({"mcSetup": "complete"}, True),
+        ({"mcSetup": "pending", "exoSetup": '{"status": "complete"}'}, False),
+        ('exoSetup=\'{"status": "complete"}\'', True),
+        ({"exoSetup": '{"status": "running"}'}, False),
+        (None, False),
+    ],
+)
+def test_setup_finished_follows_the_portal_runner(props, done):
+    assert hv.setup_finished(props) is done
+
+
+@pytest.mark.parametrize(
+    ("peer", "kind"),
+    [
+        ("172.19.0.2", "web"),  # guacd on Guacamole's compose network (measured)
+        ("172.17.0.5", "web"),
+        ("127.0.0.1", "turbovnc"),
+        ("[::1]", "turbovnc"),
+        ("[::ffff:127.0.0.1]", "turbovnc"),
+        ("[::1%lo]", "turbovnc"),
+        ("10.0.16.5", "other"),
+        ("[2001:db8::1]", "other"),
+    ],
+)
+def test_desktop_kind_from_the_peer_address(peer, kind):
+    assert hv.desk_kind(peer) == kind
+
+
+def test_desktop_output_open_closed_and_the_measured_line():
+    measured = "172.17.0.1:5901 172.19.0.2:60394"  # #356, 2026-11-27
+    assert hv.parse_desktop(_desk_out(conns=[measured]), SID) == ("open", "web")
+    assert hv.parse_desktop(_desk_out(), SID) == ("closed", None)
+    assert hv.parse_desktop(_desk_out(conns=["[::1]:5901 [::1]:41234"]), SID) == (
+        "open",
+        "turbovnc",
+    )
+    both = _desk_out(conns=["[::1]:5901 [::1]:41234", measured])
+    assert hv.parse_desktop(both, SID) == ("open", "web")
+
+
+@pytest.mark.parametrize(
+    "out",
+    [
+        _desk_out(
+            uuid="11111111-2222-3333-4444-555555555555"
+        ),  # another server (recycled address)
+        _desk_out(uuid="../../etc/passwd"),
+        _desk_out().replace("MC-DESK-END\n", ""),
+        _desk_out().replace("uuid=", "Traceback (most recent call last):\nuuid="),
+        _desk_out(conns=["0 0 172.17.0.1:22 172.19.0.2:1"]),  # not the shape
+        _desk_out(conns=["172.17.0.1:22 172.19.0.2:1"]),  # another port
+        _desk_out(conns=["172.17.0.1:5901 172.19.0.2:1"] * 51),
+        _desk_out() + "x" * (64 * 1024),
+    ],
+)
+def test_desktop_output_that_is_not_exactly_right_is_unknown(out):
+    assert hv.parse_desktop(out, SID) == ("unknown", None)
+
+
+def test_desktop_ssh_call_is_fixed_and_forwards_nothing():
+    argv = hv.desk_ssh_argv("149.165.150.75", SID)
+    assert argv[:2] == ["ssh", "-T"]
+    opts = [argv[i + 1] for i, a in enumerate(argv) if a == "-o"]
+    for want in ("BatchMode=yes", "ForwardAgent=no", "ForwardX11=no", "ClearAllForwardings=yes",
+                 "StrictHostKeyChecking=accept-new", f"UserKnownHostsFile={hv.DESK_KNOWN_HOSTS / SID}"):  # fmt: skip
+        assert want in opts
+    assert argv[-2:] == ["exouser@149.165.150.75", hv.DESK_COMMAND]
+    assert "{" not in hv.DESK_COMMAND.replace(
+        "'( sport = :5901 )'", ""
+    )  # nothing formatted in
+
+
+def test_a_bad_server_id_is_never_used_as_a_file_name(monkeypatch):
+    monkeypatch.setattr(hv, "server_address", lambda _i: pytest.fail("looked up"))
+    assert hv.check_desktop("../x", time.time() + 60) == ("unknown", None)
+
+
+def test_member_instances_are_active_finished_and_named():
+    done = {"mcSetup": "complete"}
+    servers = [
+        {"Name": "instance-356", "Status": "ACTIVE", "ID": SID, "Properties": done},
+        {
+            "Name": "instance-357",
+            "Status": "SHELVED_OFFLOADED",
+            "ID": SID,
+            "Properties": done,
+        },
+        {
+            "Name": "instance-358",
+            "Status": "ACTIVE",
+            "ID": SID,
+            "Properties": {"mcSetup": "pending"},
+        },
+        {
+            "Name": "legacy-instance-270",
+            "Status": "ACTIVE",
+            "ID": SID,
+            "Properties": done,
+        },
+        {"Name": "mc-portal", "Status": "ACTIVE", "ID": SID, "Properties": done},
+        {"Name": "instance-359", "Status": "ACTIVE", "ID": "nope", "Properties": done},
+    ]
+    assert hv.member_instances(servers, "instance-") == [{"id": SID, "issue": 356}]
+
+
+def _pres(at, rows):
+    return {"schema": 1, "at": hv.to_iso(at),
+            "rows": [{"github_id": g, "since": hv.to_iso(s), "last_seen": hv.to_iso(seen)} for g, s, seen in rows]}  # fmt: skip
+
+
+def test_portal_on_and_off_carry_the_visit_times():
+    st: dict = {}
+    lines = hv.apply_presence(st, _pres(DT0, [(7, DT0 - 200, DT0 - 30)]), DT0)
+    assert lines == [{"at": hv.to_iso(DT0 - 200), "github_id": 7, "portal": "on"}]
+    assert (
+        hv.apply_presence(st, _pres(DT0 + 300, [(7, DT0 - 200, DT0 + 250)]), DT0 + 300)
+        == []
+    )
+    lines = hv.apply_presence(
+        st, _pres(DT0 + 900, [(7, DT0 - 200, DT0 + 400)]), DT0 + 900
+    )
+    assert lines == [{"at": hv.to_iso(DT0 + 400), "github_id": 7, "portal": "off"}]
+
+
+def test_a_presence_gap_is_unknown_and_never_counted_online():
+    st: dict = {}
+    hv.apply_presence(st, _pres(DT0, [(7, DT0 - 60, DT0 - 10)]), DT0)
+    assert hv.apply_presence(st, None, DT0 + 300) == [
+        {"at": hv.to_iso(DT0 + 300), "presence": "unknown"}
+    ]
+    assert hv.apply_presence(st, None, DT0 + 600) == []  # once
+    lines = hv.apply_presence(
+        st, _pres(DT0 + 900, [(7, DT0 - 60, DT0 + 880)]), DT0 + 900
+    )
+    assert lines == [{"at": hv.to_iso(DT0 + 900), "presence": "ok"},
+                     {"at": hv.to_iso(DT0 + 900), "github_id": 7, "portal": "on"}]  # fmt: skip
+    iv = hv.activity_intervals([{"at": hv.to_iso(DT0 - 60), "github_id": 7, "portal": "on"},
+                                {"at": hv.to_iso(DT0 + 300), "presence": "unknown"}, *lines], DT0 + 1200)  # fmt: skip
+    assert iv["portal"] == [[7, DT0 - 60, DT0 + 300], [7, DT0 + 900, DT0 + 1200]]
+
+
+def test_desktop_unknown_only_after_two_misses_dated_at_the_first():
+    st: dict = {}
+    inst = [{"id": SID, "issue": 356}]
+    owners = {356: 7}
+    assert hv.apply_desktops(st, inst, {SID: ("open", "web")}, owners, DT0) == [
+        {
+            "at": hv.to_iso(DT0),
+            "issue": 356,
+            "github_id": 7,
+            "desktop": "open",
+            "kind": "web",
+        }
+    ]
+    assert (
+        hv.apply_desktops(st, inst, {SID: ("unknown", None)}, owners, DT0 + 300) == []
+    )
+    assert (
+        hv.apply_desktops(st, inst, {SID: ("open", "web")}, owners, DT0 + 600) == []
+    )  # one miss: nothing
+    hv.apply_desktops(st, inst, {SID: ("unknown", None)}, owners, DT0 + 900)
+    lines = hv.apply_desktops(st, inst, {SID: ("unknown", None)}, owners, DT0 + 1200)
+    assert lines == [
+        {"at": hv.to_iso(DT0 + 900), "issue": 356, "github_id": 7, "desktop": "unknown"}
+    ]
+    # Then gone from the list: closed after two cycles out of it, dated at
+    # the first (the same rule as a running desktop, its own count).
+    assert hv.apply_desktops(st, [], {}, owners, DT0 + 1500) == []
+    lines = hv.apply_desktops(st, [], {}, owners, DT0 + 1800)
+    assert lines == [{"at": hv.to_iso(DT0 + 1500), "issue": 356, "github_id": 7,
+                      "desktop": "closed", "why": "not checked (not ACTIVE or setup)"}]  # fmt: skip
+
+
+def test_a_flap_then_one_failed_check_writes_nothing():
+    st: dict = {}
+    inst = [{"id": SID, "issue": 356}]
+    hv.apply_desktops(st, inst, {SID: ("open", "web")}, {356: 7}, DT0)
+    assert hv.apply_desktops(st, [], {}, {}, DT0 + 300) == []  # REBOOT for one cycle
+    assert (
+        hv.apply_desktops(st, inst, {SID: ("unknown", None)}, {356: 7}, DT0 + 600) == []
+    )
+    assert st["desktops"]["356"]["result"] == "open"
+
+
+def test_a_desktop_that_leaves_the_list_closes_after_two_cycles():
+    st: dict = {}
+    inst = [{"id": SID, "issue": 356}]
+    hv.apply_desktops(st, inst, {SID: ("open", "web")}, {356: 7}, DT0)
+    assert hv.apply_desktops(st, [], {}, {}, DT0 + 300) == []
+    lines = hv.apply_desktops(st, [], {}, {}, DT0 + 600)
+    assert [(x["at"], x["desktop"]) for x in lines] == [
+        (hv.to_iso(DT0 + 300), "closed")
+    ]
+
+
+def test_a_short_status_flap_neither_closes_nor_reopens_a_desktop():
+    st: dict = {}
+    inst = [{"id": SID, "issue": 356}]
+    hv.apply_desktops(st, inst, {SID: ("open", "web")}, {356: 7}, DT0)
+    assert hv.apply_desktops(st, [], {}, {}, DT0 + 300) == []  # REBOOT for one cycle
+    assert (
+        hv.apply_desktops(st, inst, {SID: ("open", "web")}, {356: 7}, DT0 + 600) == []
+    )
+    assert st["desktops"]["356"]["since"] == hv.to_iso(DT0)
+
+
+def test_bounded_run_stops_reading_at_the_cap_and_kills():
+    code, out, _ = hv.bounded_run(
+        [sys.executable, "-c", "import sys\nwhile True: sys.stdout.write('x' * 65536)"],
+        20,
+        1000,
+    )
+    assert code is None
+    assert len(out) == 1000 + 1  # the cap plus the byte that shows it was passed
+    code, out, err = hv.bounded_run(
+        [sys.executable, "-c", "print('ok'); import sys; sys.stderr.write('e')"],
+        20,
+        1000,
+    )
+    assert (code, out, err) == (0, b"ok\n", b"e")
+    code, _, _ = hv.bounded_run(
+        [sys.executable, "-c", "import time; time.sleep(30)"], 1, 1000
+    )
+    assert code is None
+
+
+def test_online_is_the_portal_or_a_desktop_and_hours_count_overlap_once():
+    lines = [
+        {"at": hv.to_iso(DT0), "github_id": 7, "portal": "on"},
+        {
+            "at": hv.to_iso(DT0 + 600),
+            "issue": 356,
+            "github_id": 7,
+            "desktop": "open",
+            "kind": "web",
+        },
+        {
+            "at": hv.to_iso(DT0 + 900),
+            "github_id": 7,
+            "portal": "off",
+        },  # portal tab hidden
+        {
+            "at": hv.to_iso(DT0 + 3600),
+            "issue": 356,
+            "github_id": 7,
+            "desktop": "closed",
+        },
+        {
+            "at": hv.to_iso(DT0 + 100),
+            "issue": 400,
+            "github_id": 9,
+            "desktop": "open",
+            "kind": "turbovnc",
+        },
+        {
+            "at": hv.to_iso(DT0 + 1900),
+            "issue": 400,
+            "github_id": 9,
+            "desktop": "unknown",
+        },
+    ]
+    iv = hv.activity_intervals(lines, DT0 + 7200)
+    w = hv.window_activity(iv, DT0, DT0 + 7200)
+    assert (w["members_online"], w["members_desktop"]) == (2, 2)
+    assert w["hours_online"] == round(
+        (3600 + 1800) / 3600, 2
+    )  # 7: 0..3600 once; 9: 100..1900
+    assert w["hours_desktop"] == round((3000 + 1800) / 3600, 2)
+
+
+def _outcome(  # noqa: PLR0913 — one keyword per outcome field
+    created,
+    command,
+    result,
+    capacity=None,
+    wf="control-instance.yml",
+    sig=None,
+    flavor="g3.xl",
+):
+    return {"command": command, "result": result, "capacity": capacity, "signature": sig,
+            "instance": {"flavor": flavor},
+            "source": {"created_at": created, "workflow_file": wf}}  # fmt: skip
+
+
+def test_tallies_count_commands_by_day_and_keep_settled_days(tmp_path):
+    root = tmp_path / "store"
+    for day, rows in {
+        "2026/11/27": [_outcome("2026-11-27T20:00:00Z", "/create", "success"),
+                       _outcome("2026-11-27T21:00:00Z", "/create", "failure", {"cause": "no_host"})],
+        "2026/12/05": [_outcome("2026-12-05T09:00:00Z", "/delete_instance", "success"),
+                       _outcome("2026-12-05T09:30:00Z", "/shelve", "refused")],
+    }.items():  # fmt: skip
+        (root / "outcomes" / day).mkdir(parents=True)
+        (root / "outcomes" / day / "instances.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in rows)
+        )
+    now = hv.parse_ts("2026-12-05T12:00:00Z")
+    cache: dict = {}
+    t = hv.tallies_part(
+        root, "instances", {"portal": [], "desktop": []}, now, "2026-11-27", cache
+    )
+    start, today = t["windows"]["start"], t["windows"]["today"]
+    assert [start[k] for k in ("created", "deleted", "failed", "no_capacity")] == [
+        1,
+        1,
+        1,
+        1,
+    ]
+    assert [today[k] for k in ("created", "deleted")] == [0, 1]
+    assert "2026-11-27" in cache
+    assert "2026-12-05" not in cache  # today is never kept
+
+
+def test_problem_windows_count_failures_portal_journal_and_platform(tmp_path):
+    root = tmp_path / "store"
+    now = hv.parse_ts("2026-11-28T12:00:00Z")
+    outs = [_outcome("2026-11-28T11:00:00Z", "/unshelve", "failure", sig="unshelve.no_host"),
+            _outcome("2026-11-28T11:10:00Z", "/create", "failure", {"cause": "host_failed"}, wf="create-instance.yml"),
+            _outcome("2026-11-20T11:10:00Z", "/create", "failure")]  # fmt: skip
+    (root / "portal/2026/11").mkdir(parents=True)
+    (root / "portal/2026/11/28.jsonl").write_text(
+        "".join(json.dumps({"at": "2026-11-28T10:00:00Z", "action": a}) + "\n"
+                for a in ("failure-share", "reset-failed", "install-refused", "refused", "login")))  # fmt: skip
+    (root / "runner/2026/11/28/mc-portal").mkdir(parents=True)
+    (root / "runner/2026/11/28/mc-portal/journal.log").write_text(
+        "2026-11-28T09:00:00Z init.scope[1] p3: Failed to start motd-news.service\n"
+        "2026-11-28T09:00:01Z cron.service[2] p6: fine\n"
+        "# daily summary 2026-11-27: firewall blocks 3\n"
+    )
+    (root / "platform/2026/11").mkdir(parents=True)
+    (root / "platform/2026/11/28.jsonl").write_text(
+        json.dumps({"at": "2026-11-28T08:00:00Z", "vm": "x"}) + "\n"
+    )
+    w = hv.host_problems(
+        root, hv.problem_window(outs, now - 86400, now + 1), now - 86400, now + 1
+    )
+    assert w["failed_by_workflow"] == {
+        "control-instance.yml": 1,
+        "create-instance.yml": 1,
+    }
+    assert w["failed_by_signature"] == {"unshelve.no_host": 1, "unclassified": 1}
+    assert w["no_capacity"] == [{"cause": "host_failed", "flavor": "g3.xl", "count": 1}]
+    assert (w["portal_failures"], w["journal_errors"], w["vm_changes"]) == (
+        3,
+        {"mc-portal": 1},
+        1,
+    )
+
+
+# The portal's schema (MorphoCloudPortal app/admin_dashboard.py DOCUMENT): the
+# two must change together; this copy catches the harvester drifting from it.
+_C = ("map", "int")
+_TALLY = dict.fromkeys(("members_online", "members_desktop", "created", "shelved", "unshelved",
+                        "deleted", "failed", "no_capacity"), "int") | {"hours_online": "num", "hours_desktop": "num"}  # fmt: skip
+_PW = {"failed_by_workflow": _C, "failed_by_signature": _C, "refused": "int",
+       "no_capacity": ("list", {"cause": "name", "flavor": "name", "count": "int"}),
+       "portal_failures": "int", "journal_errors": _C, "vm_changes": "int", "incidents": "int"}  # fmt: skip
+PORTAL_DOCUMENT = {
+    "schema": "int", "at": "iso",
+    "collection": ("part", {"cycle_at": "iso", "steps": ("list", {"name": "name", "ok": "bool"})}),
+    "now": ("part", {"online": ("list", {"github_id": "int", "since": ("?", "iso"), "portal": "bool",
+                                         "desktops": ("list", {"issue": "int", "kind": "kind"})}),
+                     "unknown_desktops": "int", "instances": _C,
+                     "hosts_down": ("list", {"host": "name", "status": "name"})}),
+    "problems": ("part", {"windows": {"24h": _PW, "7d": _PW},
+                          "incidents_latest": ("list", {"id": "incident", "at": "iso"})}),
+    "tallies": ("part", {"start": "day", "windows": dict.fromkeys(("today", "7d", "30d", "start"), _TALLY)}),
+    "storage": ("part", {"day": "day", "used_bytes": "int", "size_bytes": "int", "quota_bytes": "int",
+                         "shares": "int", "median_bytes": ("?", "int"), "p90_bytes": ("?", "int"),
+                         "over_80": "int", "at_95": "int", "ending_14d": "int",
+                         "daily": ("list", {"day": "day", "used_bytes": "int"})}),
+    "series": ("part", {"hourly": ("list", {"at": "iso", "online": "int", "desktop": "int"}),
+                        "daily": ("list", {"day": "day", "failed": "int", "no_capacity": "int",
+                                           "storage_used_bytes": ("?", "int")})}),
+}  # fmt: skip
+
+
+def _schema(spec, v, path="doc"):  # noqa: PLR0912
+    if isinstance(spec, dict):
+        assert isinstance(v, dict), path
+        assert set(v) == set(spec), (path, sorted(set(v) ^ set(spec)))
+        for k, s in spec.items():
+            _schema(s, v[k], f"{path}.{k}")
+    elif spec[0] == "?":
+        if v is not None:
+            _schema(spec[1], v, path)
+    elif spec[0] == "list":
+        assert isinstance(v, list), path
+        for i, x in enumerate(v):
+            _schema(spec[1], x, f"{path}[{i}]")
+    elif spec[0] == "map":
+        assert isinstance(v, dict), path
+        for k, x in v.items():
+            assert hv.DASH_NAME_RE.fullmatch(k), (path, k)
+            _schema(spec[1], x, path)
+    elif spec[0] == "part":
+        if v.get("as_of") is None:
+            assert v == {"as_of": None, "ok": False}, path
+        else:
+            _schema({"as_of": "iso", "ok": "bool", **spec[1]}, v, path)
+    elif spec == "int":
+        assert type(v) is int, (path, v)
+        assert v >= 0, (path, v)
+    elif spec == "num":
+        assert type(v) in (int, float), (path, v)
+        assert v >= 0, (path, v)
+    elif spec == "bool":
+        assert isinstance(v, bool), path
+    else:
+        pat = {"iso": r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", "day": r"\d{4}-\d\d-\d\d",
+               "name": hv.DASH_NAME_RE.pattern, "incident": hv.DASH_INCIDENT_RE.pattern,
+               "kind": "web|turbovnc|other"}[spec]  # fmt: skip
+        assert isinstance(v, str), (path, v)
+        assert re.fullmatch(pat, v), (path, v)
+
+
+def _dash_h(tmp_path, cfg, monkeypatch, presence=None, servers=None):
+    h = _jh(tmp_path, cfg, [])
+    h.src = {
+        "short": "instances",
+        "activity": True,
+        "dashboard": True,
+        "dashboard_start": "2026-11-27",
+    }
+    h.prefix = "instance-"
+    h.short = "instances"
+    h.dry_run = False
+    h._issues = {356: {"user": {"id": 7}}}
+    h.gh = SimpleNamespace(get=lambda _u: None)
+    sent = []
+    presence_reply = presence or _pres(DT0, [(7, DT0 - 120, DT0 - 20)])
+
+    def call(command, _target_file=None, timeout=60, stdin=None):  # noqa: ARG001 — portal_call's shape
+        sent.append((command, stdin))
+        if command == ["presence"]:
+            return (
+                (json.dumps(presence_reply), None)
+                if presence_reply != "down"
+                else (None, "TimeoutExpired")
+            )
+        return "dashboard OK", None
+
+    monkeypatch.setattr(hv, "portal_call", call)
+    h._servers = (
+        servers
+        if servers is not None
+        else [
+            {
+                "Name": "instance-356",
+                "Status": "ACTIVE",
+                "ID": SID,
+                "Properties": {"mcSetup": "complete"},
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        hv, "check_desktops", lambda _inst, _budget=60: {SID: ("open", "web")}
+    )
+    monkeypatch.setattr(hv, "DASH_COPY", tmp_path / "copy" / "dashboard.json")
+    return h, sent
+
+
+def test_activity_writes_change_lines_and_the_dashboard_fits_the_portal_schema(
+    tmp_path, cfg, monkeypatch
+):
+    h, sent = _dash_h(tmp_path, cfg, monkeypatch)
+    assert h.activity(DT0) == "1 on the portal, 1 desktops open, 0 unknown"
+    lines = _store_lines(tmp_path, "activity/2026/11/28.jsonl")
+    assert {(x.get("portal"), x.get("desktop")) for x in lines} == {
+        ("on", None),
+        (None, "open"),
+    }
+    assert "login" not in json.dumps(lines)
+    assert "149.165" not in json.dumps(lines)
+    h.activity(DT0 + 300)  # nothing changed: no line, no state write
+    assert len(_store_lines(tmp_path, "activity/2026/11/28.jsonl")) == len(lines)
+    assert h.dashboard(
+        DT0 + 300, {"runs": True, "activity": True, "storage_usage": True}
+    ).startswith("sent")
+    doc = json.loads(sent[-1][1])
+    _schema(PORTAL_DOCUMENT, doc)
+    assert doc["now"]["online"] == [{"github_id": 7, "since": hv.to_iso(DT0 - 120), "portal": True,
+                                     "desktops": [{"issue": 356, "kind": "web"}]}]  # fmt: skip
+    assert doc["storage"] == {
+        "as_of": None,
+        "ok": False,
+    }  # no snapshot yet: unknown, not zero
+    assert (tmp_path / "copy" / "dashboard.json").exists()
+
+
+def test_a_failed_activity_step_marks_now_not_current_never_zero(
+    tmp_path, cfg, monkeypatch
+):
+    h, sent = _dash_h(tmp_path, cfg, monkeypatch)
+    h.activity(DT0)
+    h2, sent2 = _dash_h(tmp_path, cfg, monkeypatch, presence="down")
+    h2.local = h.local
+    with pytest.raises(RuntimeError, match="TimeoutExpired"):
+        h2.activity(DT0 + 300)
+    h2.dashboard(DT0 + 300, {"activity": False})
+    doc = json.loads(sent2[-1][1])
+    _schema(PORTAL_DOCUMENT, doc)
+    assert doc["now"]["ok"] is False
+    assert doc["now"]["as_of"] == hv.to_iso(DT0)
+
+
+def test_no_server_list_keeps_the_desktops_and_says_why(tmp_path, cfg, monkeypatch):
+    h, _ = _dash_h(tmp_path, cfg, monkeypatch)
+    h.activity(DT0)
+    h._servers = {"error": "Nova timed out"}
+    with pytest.raises(RuntimeError, match="no server list"):
+        h.activity(DT0 + 300)
+    st = h.store.read_json("state/activity.json")
+    assert st["desktops"]["356"]["result"] == "open"
+    assert st["desktops"]["356"]["misses"] == 0
+
+
+def test_a_portal_refusal_is_the_steps_error(tmp_path, cfg, monkeypatch):
+    h, _ = _dash_h(tmp_path, cfg, monkeypatch)
+    monkeypatch.setattr(
+        hv,
+        "portal_call",
+        lambda *_a, **_k: (None, "ssh exit 1 (details in the harvester log)"),
+    )
+    with pytest.raises(RuntimeError, match="portal dashboard: ssh exit 1"):
+        h.dashboard(DT0, {})
+
+
+def test_activity_and_dashboard_are_off_unless_a_source_turns_them_on(
+    tmp_path, cfg, monkeypatch
+):
+    h, sent = _dash_h(tmp_path, cfg, monkeypatch)
+    h.src = {"short": "instances"}
+    assert h.activity(DT0) is None
+    assert h.dashboard(DT0, {}) is None
+    assert sent == []
+    src = cfg.raw["sources"]["MorphoCloud/Instances"]
+    assert src["activity"] is True
+    assert src["dashboard"] is True
+    others = [s for r, s in cfg.raw["sources"].items() if r != "MorphoCloud/Instances"]
+    assert not any(s.get("activity") or s.get("dashboard") for s in others)
+
+
+def test_portal_call_sends_stdin_only_when_given(tmp_path, monkeypatch):
+    f = tmp_path / "portal_target"
+    f.write_text("mcrunner@10.9.8.7\n")
+    seen = []
+
+    def run(_cmd, **kw):
+        seen.append(kw)
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(hv.subprocess, "run", run)
+    hv.portal_call(["dashboard"], f, stdin="{}")
+    hv.portal_call(["presence"], f)
+    assert (seen[0]["input"], seen[0]["stdin"]) == ("{}", None)
+    assert seen[1]["input"] is None
+    assert seen[1]["stdin"] is hv.subprocess.DEVNULL
