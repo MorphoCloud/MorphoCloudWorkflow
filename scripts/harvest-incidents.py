@@ -1620,10 +1620,10 @@ def flavor_of(labels: list[str]) -> str | None:
 # --- the cycle ---------------------------------------------------------------------
 
 
-# --- storage usage (INCIDENT_STORE_PLAN.md "Storage usage (weekly snapshot)") ---
+# --- storage usage (INCIDENT_STORE_PLAN.md "Storage usage (daily snapshot, weekly report)") ---
 
 USAGE_SCHEMA = 1
-USAGE_DUE_HOUR = 13  # Monday 13:00 UTC: the first cycle after it takes the week
+USAGE_DUE_HOUR = 13  # 13:00 UTC: the first cycle after it takes the day
 USAGE_STALE = 24 * 3600
 USAGE_NEW_DAYS = 7
 USAGE_TIMEOUT = 60
@@ -1657,13 +1657,9 @@ AGE_BINS = ((0, 30), (31, 60), (61, 90), (91, 120), (121, None))
 SMALL_GROUP = 3  # fewer shares than this: counts only, no figures
 
 
-def usage_week(now: float) -> str | None:
-    """The ISO week whose snapshot is due at `now`: this week, once its Monday
-    13:00 UTC has passed; None before that."""
+def iso_week(now: float) -> str:
+    """The ISO week of `now` (UTC), as 2026-W48."""
     t = time.gmtime(now)
-    monday = calendar.timegm((*t[:3], 0, 0, 0)) - t.tm_wday * 86400
-    if now < monday + USAGE_DUE_HOUR * 3600:
-        return None
     year, week, _ = datetime.date(t.tm_year, t.tm_mon, t.tm_mday).isocalendar()
     return f"{year}-W{week:02d}"
 
@@ -1710,10 +1706,10 @@ def validate_usage(  # noqa: PLR0911 — one return per refusal reason
 ) -> tuple[dict | None, str | None]:
     """The portal's `usage` reply, or why it is refused. Anything but one
     complete document of the known schema is a failed attempt, never an
-    empty snapshot. An empty list after a week that had shares is refused
-    too: it would record every share as gone (`previous` = last week's count).
-    A large drop is accepted: shares created in one migration week end in one
-    week. A portal that really holds no share any more is refused every cycle
+    empty snapshot. An empty list after a snapshot that had shares is refused
+    too: it would record every share as gone (`previous` = the last
+    snapshot's count). A large drop is accepted: shares created on one day end
+    on one day. A portal that really holds no share any more is refused every cycle
     and named in last_error; taking such a week needs a deliberate change."""
     try:
         doc = json.loads(text)
@@ -1726,7 +1722,7 @@ def validate_usage(  # noqa: PLR0911 — one return per refusal reason
     if not isinstance(shares, list):
         return None, "no shares list"
     if not shares and previous:
-        return None, f"empty shares list after a week of {previous}"
+        return None, f"empty shares list after a snapshot of {previous}"
     for s in shares:
         if not _usage_row_ok(s):
             return None, f"bad row {str(s)[:120]}"
@@ -1737,7 +1733,10 @@ def validate_usage(  # noqa: PLR0911 — one return per refusal reason
 
 
 def portal_call(
-    command: list[str], target_file: Path | None = None, timeout: int = USAGE_TIMEOUT
+    command: list[str],
+    target_file: Path | None = None,
+    timeout: int = USAGE_TIMEOUT,
+    stdin: str | None = None,
 ) -> tuple[str | None, str | None]:
     """One command through the portal's forced-command gate, with the
     runner's own key (the account the workflows use): (stdout, None) or
@@ -1755,7 +1754,13 @@ def portal_call(
            target, *command]  # fmt: skip
     try:
         r = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            input=stdin,
+            stdin=None if stdin is not None else subprocess.DEVNULL,
         )
     except (subprocess.TimeoutExpired, OSError) as e:
         return None, type(e).__name__
@@ -1838,25 +1843,25 @@ def usage_rows(doc: dict, week: str, taken_at: str) -> list[dict]:
     return rows
 
 
-def usage_snapshots(root: Path) -> dict[str, list[dict]]:
-    """week -> its rows, the last snapshot of each ISO week only."""
-    by_week: dict[str, dict[str, list[dict]]] = {}
-    for f in sorted(root.glob("storage/[0-9][0-9][0-9][0-9]/*/*.jsonl")):
-        for line in f.read_text().splitlines():
-            try:
-                r = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(r, dict) and r.get("week") and r.get("taken_at"):
-                by_week.setdefault(r["week"], {}).setdefault(r["taken_at"], []).append(
-                    r
-                )
-    return {w: snaps[max(snaps)] for w, snaps in sorted(by_week.items())}
+def usage_snapshots(
+    root: Path, snaps: dict[str, list[dict]] | None = None
+) -> dict[str, list[dict]]:
+    """week -> its rows, the latest snapshot (by taken_at) of each ISO week
+    only: the weekly report's view of the daily snapshots."""
+    if snaps is None:
+        snaps = usage_all_snapshots(root)
+    by_week: dict[str, str] = {}
+    for at, rows in snaps.items():
+        week = (rows[0].get("week") if rows else None) or iso_week(parse_ts(at))
+        if at > by_week.get(week, ""):
+            by_week[week] = at
+    return {w: snaps[at] for w, at in sorted(by_week.items())}
 
 
 def usage_finals(snapshots: dict[str, list[dict]]) -> list[dict]:
     """Each share's last row before it left the data-holding states: in one
-    stored snapshot and missing from the next one. Only shares absent from the
+    stored snapshot and missing from the next one (snapshots in key order:
+    taken_at for every daily snapshot). Only shares absent from the
     latest snapshot count (one that comes back was not gone), and each share
     once, at its last departure. Derived from the snapshots on every run, so
     a crash between writes can neither lose nor repeat one."""
@@ -2043,6 +2048,799 @@ def usage_report(snapshots: dict[str, list[dict]], finals: list[dict], at: str) 
     return "\n".join(out)
 
 
+# --- admin dashboard (INCIDENT_STORE_PLAN.md "Admin dashboard (design note,
+# 2026-11-27)"): presence and desktops (the activity step), and the document
+# the portal's /admin shows (the dashboard step) -------------------------------
+
+ONLINE_WINDOW = 300  # seconds: a portal tab seen this recently is online
+PRESENCE_SCHEMA = 1
+PRESENCE_TIMEOUT = 60
+ACTIVITY_STATE = "state/activity.json"
+DESK_KNOWN_HOSTS = CFG_DIR / "desktop-known-hosts"
+DESK_WORKERS = 8
+DESK_BUDGET = 60  # seconds for the whole desktop check
+DESK_CONNECT = 10
+DESK_OUTPUT_MAX = 64 * 1024
+DESK_LINES_MAX = 50
+DESK_MISSES = 2  # cycles in a row without a result before `unknown`
+DESK_PORT = 5901
+# One fixed string, the same every time: nothing from Nova or the store is in
+# it. The login shell on the instance runs it; only stdout is read.
+DESK_COMMAND = (
+    "echo MC-DESK-BEGIN; "
+    "curl --silent --max-time 5 http://169.254.169.254/openstack/latest/meta_data.json"
+    ' | python3 -c \'import json,sys; print("uuid=" + json.load(sys.stdin)["uuid"])\'; '
+    "echo MC-DESK-SS; "
+    "ss -Htn state established '( sport = :5901 )'; "
+    "echo MC-DESK-END"
+)
+SERVER_ID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+# <recv-q> <send-q> <local>:5901 <peer>:<port>; an address is IPv4 or [IPv6],
+# with an optional %<interface> scope.
+SS_ADDR = r"(\d{1,3}(?:\.\d{1,3}){3}|\[[0-9A-Fa-f:.]+(?:%[A-Za-z0-9_.-]+)?\])"
+SS_LINE_RE = re.compile(
+    rf"\s*\d+\s+\d+\s+{SS_ADDR}:(\d{{1,5}})\s+{SS_ADDR}:(\d{{1,5}})\s*"
+)
+DESK_KINDS = ("web", "turbovnc", "other")
+DASH_SCHEMA = 1
+DASH_TIMEOUT = 60
+DASH_COPY = Path("~/.cache/morphocloud/dashboard.json")
+DASH_START = "2026-11-27"  # tallies' start date (design note, "Parameters")
+DASH_NAME_RE = re.compile(r"[A-Za-z0-9._:/ -]{1,80}")
+DASH_INCIDENT_RE = re.compile(r"[a-z][a-z0-9-]{0,40}[a-z0-9](-[0-9]+){1,3}")
+PORTAL_FAILURE_RE = re.compile(r"^failure-|-failed$|-refused$")
+JOURNAL_ERR_RE = re.compile(r"^(\S+) \S+ p[0-3]: ")
+HOUR = 3600
+DAY = 86400
+
+
+def validate_presence(text: str) -> tuple[dict | None, str | None]:
+    """The portal's `presence` reply: schema 1, a time, and rows of an int
+    GitHub id with two times. Anything else is a failed read."""
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        return None, "presence: not JSON"
+    if not isinstance(doc, dict) or doc.get("schema") != PRESENCE_SCHEMA:
+        return None, "presence: unknown schema"
+    rows = doc.get("rows")
+    if (
+        not _time_or_none(doc.get("at"))
+        or not doc.get("at")
+        or not isinstance(rows, list)
+    ):
+        return None, "presence: bad at or rows"
+    seen = set()
+    for r in rows:
+        gid = r.get("github_id") if isinstance(r, dict) else None
+        if (
+            isinstance(gid, bool)
+            or not isinstance(gid, int)
+            or gid <= 0
+            or gid in seen
+            or not r.get("since")
+            or not r.get("last_seen")
+            or not _time_or_none(r.get("since"))
+            or not _time_or_none(r.get("last_seen"))
+        ):
+            return None, "presence: a bad row"
+        seen.add(gid)
+    return doc, None
+
+
+def setup_finished(raw) -> bool:
+    """MorphoCloud's setup of an instance finished: the portal runner's rule
+    (mc_share_runner.setup_finished; MWF SETUP_FINISHED_SIGNAL_DESIGN.md):
+    mcSetup decides when present, else exoSetup's status."""
+    props: dict = {}
+    if isinstance(raw, dict):
+        props = {str(k): v for k, v in raw.items()}
+    else:
+        for m in re.finditer(r"(\w+)='([^']*)'", str(raw or "")):
+            props[m.group(1)] = m.group(2)
+    if "mcSetup" in props:
+        return str(props["mcSetup"]) == "complete"
+    exo = props.get("exoSetup")
+    if not isinstance(exo, dict):
+        try:
+            exo = json.loads(str(exo or ""))
+        except ValueError:
+            return False
+    return isinstance(exo, dict) and exo.get("status") == "complete"
+
+
+def desk_kind(peer: str) -> str:
+    """web: the guacd container on a Docker network (172.16.0.0/12);
+    turbovnc: the SSH tunnel on the instance itself (loopback); else other.
+    An IPv4-mapped IPv6 address is read as its IPv4 address."""
+    import ipaddress  # noqa: PLC0415 — only this check needs it
+
+    a = peer.strip("[]").split("%", 1)[0]
+    try:
+        ip = ipaddress.ip_address(a)
+    except ValueError:
+        return "other"
+    if ip.version == 6 and ip.ipv4_mapped:  # noqa: PLR2004
+        ip = ip.ipv4_mapped
+    if ip.is_loopback:
+        return "turbovnc"
+    if ip in ipaddress.ip_network("172.16.0.0/12"):
+        return "web"
+    return "other"
+
+
+def parse_desktop(out: str, server_id: str) -> tuple[str, str | None]:  # noqa: PLR0911 — one return per refusal reason
+    """(result, kind) from the instance's stdout. Untrusted: the member has
+    sudo there. Only the lines between the markers; one uuid line that must be
+    this server's id; ss lines of the fixed shape; anything else is unknown."""
+    if len(out) > DESK_OUTPUT_MAX:
+        return "unknown", None
+    lines = out.splitlines()
+    try:
+        begin = lines.index("MC-DESK-BEGIN")
+        mid = lines.index("MC-DESK-SS", begin)
+        end = lines.index("MC-DESK-END", mid)
+    except ValueError:
+        return "unknown", None
+    head = [x for x in lines[begin + 1 : mid] if x.strip()]
+    if len(head) != 1 or not head[0].startswith("uuid="):
+        return "unknown", None
+    uuid = head[0][len("uuid=") :]
+    if not SERVER_ID_RE.fullmatch(uuid) or uuid != server_id:
+        return "unknown", None
+    conns = [x for x in lines[mid + 1 : end] if x.strip()]
+    if len(conns) > DESK_LINES_MAX:
+        return "unknown", None
+    kinds = []
+    for line in conns:
+        m = SS_LINE_RE.fullmatch(line)
+        if not m or m.group(2) != str(DESK_PORT):
+            return "unknown", None
+        kinds.append(desk_kind(m.group(3)))
+    if not kinds:
+        return "closed", None
+    # One kind per instance: web, then TurboVNC, then other.
+    return "open", min(kinds, key=DESK_KINDS.index)
+
+
+def desk_ssh_argv(ip: str, server_id: str) -> list[str]:
+    return [
+        "ssh", "-T",
+        "-o", "BatchMode=yes",
+        "-o", f"ConnectTimeout={DESK_CONNECT}",
+        "-o", "ForwardAgent=no",
+        "-o", "ForwardX11=no",
+        "-o", "ClearAllForwardings=yes",
+        "-o", "LogLevel=ERROR",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", f"UserKnownHostsFile={DESK_KNOWN_HOSTS / server_id}",
+        f"exouser@{ip}",
+        DESK_COMMAND,
+    ]  # fmt: skip
+
+
+def server_address(server_id: str) -> str | None:
+    """The floating IP bound to the server's port, read from Neutron
+    (decision 29 of INSTANCE_DASHBOARD_PLAN.md), never Nova's cache."""
+    ports = ro_json("port", "list", "--server", server_id)
+    if not isinstance(ports, list):
+        return None
+    for p in ports:
+        pid = p.get("ID") if isinstance(p, dict) else None
+        if not pid:
+            continue
+        fips = ro_json("floating", "ip", "list", "--port", str(pid))
+        if isinstance(fips, list):
+            for f in fips:
+                addr = f.get("Floating IP Address") if isinstance(f, dict) else None
+                if isinstance(addr, str) and re.fullmatch(
+                    r"\d{1,3}(\.\d{1,3}){3}", addr
+                ):
+                    return addr
+    return None
+
+
+def check_desktop(server_id: str, deadline: float) -> tuple[str, str | None]:
+    """One instance: its address, one SSH call, the parsed result."""
+    if not SERVER_ID_RE.fullmatch(server_id):
+        return "unknown", None
+    ip = server_address(server_id)
+    left = deadline - time.time()
+    if not ip or left <= 1:
+        return "unknown", None
+    DESK_KNOWN_HOSTS.mkdir(parents=True, exist_ok=True)
+    try:
+        r = subprocess.run(
+            desk_ssh_argv(ip, server_id),
+            capture_output=True,
+            text=True,
+            timeout=min(left, DESK_CONNECT + 20),
+            check=False,
+            stdin=subprocess.DEVNULL,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return "unknown", None
+    if r.returncode != 0:
+        if (
+            "HOST IDENTIFICATION HAS CHANGED" in r.stderr
+            or "Host key verification failed" in r.stderr
+        ):
+            log(f"desktop check: host key changed for server {server_id}")
+        return "unknown", None
+    return parse_desktop(r.stdout[: DESK_OUTPUT_MAX + 1], server_id)
+
+
+def check_desktops(
+    servers: list[dict], budget: float = DESK_BUDGET
+) -> dict[str, tuple]:
+    """server id -> (result, kind); at most DESK_WORKERS at once, the whole
+    check within `budget` seconds; a server not reached in time is unknown."""
+    from concurrent.futures import ThreadPoolExecutor, wait  # noqa: PLC0415
+
+    deadline = time.time() + budget
+    out = {s["id"]: ("unknown", None) for s in servers}
+    pool = ThreadPoolExecutor(max_workers=DESK_WORKERS)
+    futures = {pool.submit(check_desktop, s["id"], deadline): s["id"] for s in servers}
+    done, _ = wait(futures, timeout=max(budget, 1))
+    for f in done:
+        try:
+            out[futures[f]] = f.result()
+        except Exception as e:
+            log(f"desktop check of {futures[f]}: {type(e).__name__}")
+    pool.shutdown(wait=False, cancel_futures=True)
+    return out
+
+
+def member_instances(servers: list, prefix: str) -> list[dict]:
+    """ACTIVE servers named <prefix><issue> whose setup has finished."""
+    name_re = re.compile(rf"{re.escape(prefix)}([0-9]{{1,9}})")
+    out = []
+    for s in servers if isinstance(servers, list) else []:
+        if not isinstance(s, dict):
+            continue
+        m = name_re.fullmatch(str(s.get("Name") or ""))
+        if (
+            not m
+            or s.get("Status") != "ACTIVE"
+            or not SERVER_ID_RE.fullmatch(str(s.get("ID") or ""))
+        ):
+            continue
+        if not setup_finished(s.get("Properties")):
+            continue
+        out.append({"id": s["ID"], "issue": int(m.group(1))})
+    return out
+
+
+def apply_presence(state: dict, doc: dict | None, now: float) -> list[dict]:
+    """The members' portal on/off lines for this cycle. A failed read writes
+    `presence: unknown` once (the replay ends every portal span there) and
+    turns everyone off in the state; when reads return, a member on again is
+    dated no earlier than the return, so unknown time is never online."""
+    lines: list[dict] = []
+    members = state.setdefault("members", {})
+    presence_state = state.setdefault("presence", {"ok": None})
+    at = to_iso(now)
+    if doc is None:
+        if presence_state.get("ok") is not False:
+            lines.append({"at": at, "presence": "unknown"})
+            for m in members.values():
+                if m.get("portal"):
+                    m.update(portal=False, off_at=at)
+        presence_state["ok"] = False
+        return lines
+    known_from = 0.0
+    if presence_state.get("ok") is False:
+        lines.append({"at": at, "presence": "ok"})
+        known_from = now
+    presence_state["ok"] = True
+    report_at = parse_ts(doc["at"])
+    rows = {r["github_id"]: r for r in doc["rows"]}
+    for gid, r in sorted(rows.items()):
+        m = members.setdefault(str(gid), {"portal": False})
+        on = report_at - parse_ts(r["last_seen"]) <= ONLINE_WINDOW
+        m["last_seen"] = r["last_seen"]
+        if on and not m["portal"]:
+            since = max(parse_ts(r["since"]), known_from, parse_ts(m.get("off_at")))
+            m.update(portal=True, since=to_iso(since))
+            lines.append({"at": to_iso(since), "github_id": gid, "portal": "on"})
+        elif not on and m["portal"]:
+            m.update(portal=False, off_at=r["last_seen"])
+            lines.append({"at": r["last_seen"], "github_id": gid, "portal": "off"})
+    for gid in sorted(members, key=int):
+        m = members[gid]
+        if int(gid) not in rows:
+            if m.get("portal"):
+                lines.append(
+                    {
+                        "at": m.get("last_seen") or at,
+                        "github_id": int(gid),
+                        "portal": "off",
+                    }
+                )
+            del members[gid]  # not seen for 24 hours: nothing to keep
+    return lines
+
+
+def apply_desktops(
+    state: dict,
+    servers: list[dict],
+    results: dict,
+    owners: dict[int, int | None],
+    now: float,
+) -> list[dict]:
+    """Desktop open/closed/unknown lines. `unknown` only after DESK_MISSES
+    cycles in a row without a result, dated at the first miss; a single miss
+    writes nothing. A server that left the checked list is closed."""
+    lines: list[dict] = []
+    desks = state.setdefault("desktops", {})
+    at = to_iso(now)
+    checked = {str(s["issue"]): s for s in servers}
+    for issue, s in checked.items():
+        d = desks.setdefault(issue, {"result": None, "kind": None, "misses": 0})
+        d.update(server_id=s["id"], github_id=owners.get(s["issue"]))
+        result, kind = results.get(s["id"], ("unknown", None))
+        base = {"issue": int(issue), "github_id": d["github_id"]}
+        if result == "unknown":
+            if not d["misses"]:
+                d["first_miss"] = at
+            d["misses"] += 1
+            if d["misses"] >= DESK_MISSES and d["result"] != "unknown":
+                d["result"], d["kind"] = "unknown", None
+                lines.append({"at": d["first_miss"], **base, "desktop": "unknown"})
+            continue
+        d["misses"] = 0
+        d.pop("first_miss", None)
+        if (result, kind) != (d["result"], d["kind"]):
+            d["result"], d["kind"] = result, kind
+            d["since"] = at
+            line = {"at": at, **base, "desktop": result}
+            if kind:
+                line["kind"] = kind
+            lines.append(line)
+    for issue in [i for i in desks if i not in checked]:
+        d = desks.pop(issue)
+        if d.get("result") == "open" or d.get("result") == "unknown":
+            lines.append({"at": at, "issue": int(issue), "github_id": d.get("github_id"),
+                          "desktop": "closed", "why": "not checked (not ACTIVE or setup)"})  # fmt: skip
+    return lines
+
+
+def activity_lines(root: Path, start: str) -> list[dict]:
+    """Every activity line from the start day on, in the order written."""
+    out = []
+    for f in sorted(root.glob("activity/[0-9][0-9][0-9][0-9]/*/*.jsonl")):
+        if f"{f.parent.parent.name}-{f.parent.name}-{f.stem}" < start:
+            continue
+        for line in f.read_text().splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(r, dict) and r.get("at"):
+                out.append(r)
+    return out
+
+
+def activity_intervals(lines: list[dict], now: float) -> dict[str, list]:
+    """Per kind, [github id, start, end] intervals: `portal` (a visible portal
+    tab) and `desktop` (a desktop open; end at the next line for that
+    instance). Open intervals end at `now`. Unknown time is in neither."""
+    portal: list = []
+    desktop: list = []
+    p_on: dict[int, float] = {}
+    d_on: dict[int, tuple] = {}
+    for r in lines:
+        t = parse_ts(r["at"])
+        if r.get("presence") == "unknown":
+            for gid, s in p_on.items():
+                portal.append([gid, s, t])
+            p_on.clear()
+        elif "portal" in r and isinstance(r.get("github_id"), int):
+            gid = r["github_id"]
+            if r["portal"] == "on":
+                p_on.setdefault(gid, t)
+            elif gid in p_on:
+                portal.append([gid, p_on.pop(gid), t])
+        elif "desktop" in r and isinstance(r.get("issue"), int):
+            issue = r["issue"]
+            if issue in d_on:
+                gid, s = d_on.pop(issue)
+                if gid is not None:
+                    desktop.append([gid, s, t])
+            if r["desktop"] == "open":
+                d_on[issue] = (r.get("github_id"), t)
+    portal += [[g, s, now] for g, s in p_on.items()]
+    desktop += [[g, s, now] for g, s in d_on.values() if g is not None]
+    return {"portal": portal, "desktop": desktop}
+
+
+def _union_seconds(spans: list[tuple[float, float]]) -> float:
+    total, cur_s, cur_e = 0.0, None, None
+    for s, e in sorted(spans):
+        if cur_e is None or s > cur_e:
+            if cur_e is not None:
+                total += cur_e - cur_s
+            cur_s, cur_e = s, e
+        else:
+            cur_e = max(cur_e, e)
+    if cur_e is not None:
+        total += cur_e - cur_s
+    return total
+
+
+def window_activity(iv: dict, lo: float, hi: float) -> dict:
+    """Members online (portal or desktop), members with a desktop open, and
+    the hours of each (per member, overlapping spans counted once)."""
+    online: dict[int, list] = {}
+    desk: dict[int, list] = {}
+    for kind, target in (("portal", online), ("desktop", desk)):
+        for gid, s, e in iv[kind]:
+            s2, e2 = max(s, lo), min(e, hi)
+            if e2 > s2:
+                target.setdefault(gid, []).append((s2, e2))
+                if kind == "desktop":
+                    online.setdefault(gid, []).append((s2, e2))
+    return {
+        "members_online": len(online),
+        "members_desktop": len(desk),
+        "hours_online": round(
+            sum(_union_seconds(v) for v in online.values()) / HOUR, 2
+        ),
+        "hours_desktop": round(sum(_union_seconds(v) for v in desk.values()) / HOUR, 2),
+    }
+
+
+def _day_start(now: float) -> float:
+    return float(calendar.timegm((*time.gmtime(now)[:3], 0, 0, 0)))
+
+
+def _jsonl(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    out = []
+    for line in path.read_text("utf-8", "replace").splitlines():
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(r, dict):
+            out.append(r)
+    return out
+
+
+def _days_back(now: float, n: int) -> list[str]:
+    """day_path of today and the n-1 days before it, oldest first."""
+    return [day_path(to_iso(now - i * DAY)) for i in range(n - 1, -1, -1)]
+
+
+def _name(v, fallback: str = "unknown") -> str:
+    s = str(v) if v is not None else fallback
+    return s if DASH_NAME_RE.fullmatch(s) else fallback
+
+
+def dash_outcomes(root: Path, short: str, now: float, days: int = 8) -> list[dict]:
+    out = []
+    for day in _days_back(now, days):
+        out += _jsonl(root / "outcomes" / day / f"{short}.jsonl")
+    return out
+
+
+def problem_window(outcomes: list[dict], lo: float, hi: float) -> dict:
+    """Failed and refused commands and no-capacity events in [lo, hi), from
+    the outcome lines; the host counts are added by host_problems."""
+    w = {
+        "failed_by_workflow": {}, "failed_by_signature": {}, "refused": 0,
+        "no_capacity": [], "portal_failures": 0, "journal_errors": {},
+        "vm_changes": 0, "incidents": 0,
+    }  # fmt: skip
+    caps: dict[tuple, int] = {}
+    for o in outcomes:
+        src = o.get("source") or {}
+        if not lo <= parse_ts(src.get("created_at")) < hi:
+            continue
+        result = o.get("result")
+        if result == "failure":
+            wf = _name(src.get("workflow_file"))
+            w["failed_by_workflow"][wf] = w["failed_by_workflow"].get(wf, 0) + 1
+            sig = _name(o.get("signature"), "unclassified")
+            w["failed_by_signature"][sig] = w["failed_by_signature"].get(sig, 0) + 1
+        elif result == "refused":
+            w["refused"] += 1
+        cap = o.get("capacity")
+        if isinstance(cap, dict):
+            key = (
+                _name(cap.get("cause")),
+                _name((o.get("instance") or {}).get("flavor")),
+            )
+            caps[key] = caps.get(key, 0) + 1
+    w["no_capacity"] = [
+        {"cause": c, "flavor": f, "count": n} for (c, f), n in sorted(caps.items())
+    ][:200]
+    return w
+
+
+def _journal_errors(path: Path, lo: float, hi: float) -> int:
+    n = 0
+    for line in path.read_text("utf-8", "replace").splitlines():
+        m = JOURNAL_ERR_RE.match(line)
+        if m and lo <= parse_ts(m.group(1)) < hi:
+            n += 1
+    return n
+
+
+def host_problems(root: Path, w: dict, lo: float, hi: float) -> dict:
+    """Portal failure events (failure-*, *-failed, *-refused), journal error
+    lines (priority 0-3) by host, and VM state changes in [lo, hi)."""
+    days = sorted(
+        {day_path(to_iso(t)) for t in (lo, hi - 1, *range(int(lo), int(hi), DAY))}
+    )
+    for day in days:
+        w["portal_failures"] += sum(
+            1 for r in _jsonl(root / "portal" / f"{day}.jsonl")
+            if lo <= parse_ts(r.get("at")) < hi and PORTAL_FAILURE_RE.search(str(r.get("action") or ""))
+        )  # fmt: skip
+        w["vm_changes"] += sum(
+            1
+            for r in _jsonl(root / "platform" / f"{day}.jsonl")
+            if lo <= parse_ts(r.get("at")) < hi
+        )
+        hosts = root / "runner" / day
+        for h in sorted(hosts.iterdir()) if hosts.is_dir() else []:
+            n = (
+                _journal_errors(h / "journal.log", lo, hi)
+                if (h / "journal.log").is_file()
+                else 0
+            )
+            if n:
+                key = _name(h.name)
+                w["journal_errors"][key] = w["journal_errors"].get(key, 0) + n
+    return w
+
+
+def latest_incidents(root: Path, now: float, lo: float) -> tuple[int, int, list[dict]]:
+    """(incidents in the last 24 h, in the last 7 days, the latest 20)."""
+    found = []
+    for month in sorted({month_path(to_iso(t)) for t in (lo, now)}):
+        d = root / "incidents" / month
+        if not d.is_dir():
+            continue
+        for inc in d.iterdir():
+            if not DASH_INCIDENT_RE.fullmatch(inc.name):
+                continue
+            data = {}
+            try:
+                data = json.loads((inc / "incident.json").read_text("utf-8"))
+            except (OSError, ValueError):
+                continue
+            t = parse_ts((data.get("source") or {}).get("created_at"))
+            if t >= lo:
+                found.append((t, inc.name))
+    found.sort(reverse=True)
+    day = sum(1 for t, _ in found if t >= now - DAY)
+    return day, len(found), [{"id": i, "at": to_iso(t)} for t, i in found[:20]]
+
+
+def storage_part(root: Path, now: float) -> dict | None:
+    """From the daily usage snapshots: the latest, and the daily totals."""
+    snaps = usage_all_snapshots(root)
+    if not snaps:
+        return None
+    latest_at = max(snaps)
+    rows = snaps[latest_at]
+    used = [r["used_bytes"] for r in rows if isinstance(r.get("used_bytes"), int)]
+    measured = [
+        r for r in rows
+        if isinstance(r.get("used_bytes"), int) and isinstance(r.get("size_bytes"), int)
+        and r["size_bytes"] > 0 and not r.get("stale")
+    ]  # fmt: skip
+    vals = sorted(r["used_bytes"] for r in measured)
+    soon = day_path(to_iso(now + 14 * DAY)).replace("/", "-")
+    today = day_path(to_iso(now)).replace("/", "-")
+    by_day: dict[str, int] = {}
+    for at, rs in sorted(snaps.items()):
+        by_day[at[:10]] = sum(
+            r["used_bytes"] for r in rs if isinstance(r.get("used_bytes"), int)
+        )
+    days = [d.replace("/", "-") for d in _days_back(now, 31)]
+    return {
+        "day": latest_at[:10],
+        "used_bytes": sum(used),
+        "size_bytes": sum(
+            r["size_bytes"] for r in rows if isinstance(r.get("size_bytes"), int)
+        ),
+        "quota_bytes": ALLOCATION_GB * GIB,
+        "shares": len(rows),
+        "median_bytes": vals[(len(vals) - 1) // 2]
+        if len(vals) >= SMALL_GROUP
+        else None,
+        "p90_bytes": _nearest_rank(vals, 0.9) if len(vals) >= SMALL_GROUP else None,
+        "over_80": sum(1 for r in measured if r["used_bytes"] > 0.8 * r["size_bytes"]),
+        "at_95": sum(1 for r in measured if r["used_bytes"] >= 0.95 * r["size_bytes"]),
+        "ending_14d": sum(
+            1 for r in rows if r.get("end_date") and today <= r["end_date"] <= soon
+        ),
+        "daily": [{"day": d, "used_bytes": by_day[d]} for d in days if d in by_day],
+    }
+
+
+def hourly_series(iv: dict, now: float) -> list[dict]:
+    top = float(int(now // HOUR) * HOUR)
+    out = []
+    for i in range(167, -1, -1):
+        lo = top - i * HOUR
+        w = window_activity(iv, lo, lo + HOUR)
+        out.append(
+            {
+                "at": to_iso(lo),
+                "online": w["members_online"],
+                "desktop": w["members_desktop"],
+            }
+        )
+    return out
+
+
+def daily_series(
+    root: Path, short: str, storage_daily: dict[str, int], now: float, cache: dict
+) -> list[dict]:
+    out = []
+    for d in _days_back(now, 30):
+        day = d.replace("/", "-")
+        c = day_counts(root, short, day, cache, now)
+        out.append({"day": day, "failed": c["failed"], "no_capacity": c["no_capacity"],
+                    "storage_used_bytes": storage_daily.get(day)})  # fmt: skip
+    return out
+
+
+TALLY_COMMANDS = {
+    "/create": "created", "/shelve": "shelved", "/unshelve": "unshelved",
+    "/delete_instance": "deleted", "/delete": "deleted", "/delete_all": "deleted",
+}  # fmt: skip
+TALLY_SETTLED = 3  # days: older outcome files are complete (lookback is 48 h)
+
+
+def outcome_counts(outcomes: list[dict]) -> dict:
+    c = {
+        "created": 0,
+        "shelved": 0,
+        "unshelved": 0,
+        "deleted": 0,
+        "failed": 0,
+        "no_capacity": 0,
+    }
+    for o in outcomes:
+        if o.get("result") == "success" and o.get("command") in TALLY_COMMANDS:
+            c[TALLY_COMMANDS[o["command"]]] += 1
+        if o.get("result") == "failure":
+            c["failed"] += 1
+        if isinstance(o.get("capacity"), dict):
+            c["no_capacity"] += 1
+    return c
+
+
+def day_counts(root: Path, short: str, day: str, cache: dict, now: float) -> dict:
+    """Outcome counts of one UTC day (YYYY-MM-DD, by run creation). A day
+    older than TALLY_SETTLED days is read once and kept in `cache`."""
+    if day in cache:
+        return cache[day]
+    rows = [
+        o for o in _jsonl(root / "outcomes" / day.replace("-", "/") / f"{short}.jsonl")
+        if to_iso(parse_ts((o.get("source") or {}).get("created_at")))[:10] == day
+    ]  # fmt: skip
+    c = outcome_counts(rows)
+    if parse_ts(day + "T00:00:00") < _day_start(now) - TALLY_SETTLED * DAY:
+        cache[day] = c
+    return c
+
+
+def tallies_part(  # noqa: PLR0913 — the inputs of one part, all from dashboard_doc
+    root: Path, short: str, iv: dict, now: float, start: str, cache: dict
+) -> dict:
+    today = _day_start(now)
+    first = parse_ts(start + "T00:00:00")
+    windows = {
+        "today": today,
+        "7d": today - 6 * DAY,
+        "30d": today - 29 * DAY,
+        "start": first,
+    }
+    out = {}
+    for name, window_lo in windows.items():
+        lo = max(window_lo, first)
+        counts = {
+            "created": 0,
+            "shelved": 0,
+            "unshelved": 0,
+            "deleted": 0,
+            "failed": 0,
+            "no_capacity": 0,
+        }
+        t = lo
+        while t <= now:
+            for k, v in day_counts(root, short, to_iso(t)[:10], cache, now).items():
+                counts[k] += v
+            t += DAY
+        out[name] = {**window_activity(iv, lo, now), **counts}
+    return {"start": start, "windows": out}
+
+
+def now_part(state: dict, servers, prefix: str, platform: dict) -> dict:
+    members = state.get("members") or {}
+    desks = state.get("desktops") or {}
+    online: dict[int, dict] = {}
+    for gid, m in members.items():
+        if m.get("portal"):
+            online[int(gid)] = {
+                "github_id": int(gid),
+                "since": m.get("since"),
+                "portal": True,
+                "desktops": [],
+            }
+    for issue, d in sorted(desks.items(), key=lambda kv: int(kv[0])):
+        gid = d.get("github_id")
+        if d.get("result") != "open" or not isinstance(gid, int) or gid <= 0:
+            continue
+        m = online.setdefault(
+            gid,
+            {
+                "github_id": gid,
+                "since": d.get("since"),
+                "portal": False,
+                "desktops": [],
+            },
+        )
+        if d.get("since") and (not m["since"] or d["since"] < m["since"]):
+            m["since"] = d["since"]
+        m["desktops"].append({"issue": int(issue), "kind": d.get("kind") or "other"})
+    statuses: dict[str, int] = {}
+    name_re = re.compile(rf"{re.escape(prefix)}[0-9]{{1,9}}")
+    for s in servers if isinstance(servers, list) else []:
+        if isinstance(s, dict) and name_re.fullmatch(str(s.get("Name") or "")):
+            st = _name(s.get("Status"))
+            statuses[st] = statuses.get(st, 0) + 1
+    down = [
+        {
+            "host": _name(v.get("host") or k),
+            "status": _name((v.get("state") or {}).get("status")),
+        }
+        for k, v in sorted(platform.items())
+        if isinstance(v, dict) and (v.get("state") or {}).get("status") != "ACTIVE"
+    ][:50]
+    return {
+        "online": sorted(online.values(), key=lambda m: m["github_id"])[:2000],
+        "unknown_desktops": sum(
+            1 for d in desks.values() if d.get("result") == "unknown"
+        ),
+        "instances": statuses,
+        "hosts_down": down,
+    }
+
+
+def _part(as_of: str | None, ok: bool, body: dict | None) -> dict:
+    if not as_of or body is None:
+        return {"as_of": None, "ok": False}
+    return {"as_of": as_of, "ok": ok, **body}
+
+
+def usage_due_day(now: float) -> str | None:
+    """The UTC day whose snapshot is due at `now`: today, once 13:00 UTC has
+    passed; None before that (the 2026-11-27 amendment: daily, was weekly)."""
+    if now < _day_start(now) + USAGE_DUE_HOUR * HOUR:
+        return None
+    return to_iso(now)[:10]
+
+
+def usage_all_snapshots(root: Path) -> dict[str, list[dict]]:
+    """taken_at -> its rows, every snapshot (daily and the weekly build's)."""
+    snaps: dict[str, list[dict]] = {}
+    for f in sorted(root.glob("storage/[0-9][0-9][0-9][0-9]/*/*.jsonl")):
+        for r in _jsonl(f):
+            if r.get("taken_at") and isinstance(r.get("github_id"), int):
+                snaps.setdefault(r["taken_at"], []).append(r)
+    return dict(sorted(snaps.items()))
+
+
 class Harvester:
     def __init__(  # noqa: PLR0913 — one collaborator per argument, built in main()
         self,
@@ -2081,6 +2879,9 @@ class Harvester:
             )
         )
         self._issues: dict[int, dict | None] = {}
+        self._servers = (
+            None  # `server list --long`, once per cycle (platform, activity)
+        )
         self.runs_recorded = 0
         self.incidents_recorded = 0
         self.errors: list[str] = []
@@ -2854,7 +3655,7 @@ class Harvester:
             return "no hosts"
         if not os.environ.get("OS_CLOUD"):
             return "OS_CLOUD not set"
-        data = ro_json("server", "list", "--long")
+        data = self.server_list(refresh=True)
         if not isinstance(data, list):
             return f"unavailable: {str((data or {}).get('error'))[:160]}"
         seen = {d.get("Name"): d for d in data}
@@ -2890,54 +3691,74 @@ class Harvester:
         return "ok"
 
     # -- storage usage: the weekly snapshot of the portal's shares ----------
+    def server_list(self, refresh: bool = False):
+        """`server list --long` through the read-only wrapper: read fresh by
+        platform (first in the cycle) and reused by activity and dashboard."""
+        if refresh or getattr(self, "_servers", None) is None:
+            self._servers = (
+                ro_json("server", "list", "--long")
+                if os.environ.get("OS_CLOUD")
+                else {"error": "OS_CLOUD not set"}
+            )
+        return self._servers
+
     def storage_usage(self, now: float) -> str | None:
-        """INCIDENT_STORE_PLAN.md "Storage usage (weekly snapshot)": once an
-        ISO week, after Monday 13:00 UTC, the portal's `usage` reply as one line
-        per share; the last row of each share gone since last week in
-        final.jsonl; the report rewritten. Only a source with storage_usage."""
+        """INCIDENT_STORE_PLAN.md "Storage usage (daily snapshot, weekly
+        report)": once a UTC day, after 13:00 UTC, the portal's `usage` reply
+        as one line per share; final.jsonl (every share gone since the
+        snapshot before) and the weekly report rewritten. Only a source with
+        storage_usage."""
         if not self.src.get("storage_usage"):
             return None
-        week = usage_week(now)
-        if week is None:
+        day = usage_due_day(now)
+        if day is None:
             return "not due"
         state = self.store.read_json(USAGE_STATE) or {}
-        if state.get("week") == week:
-            return f"taken {week}"
-        snapshots = usage_snapshots(self.store.root)
-        if week in snapshots:  # written, but the state was not
-            taken_at = (
-                snapshots[week][0]["taken_at"] if snapshots[week] else to_iso(now)
-            )
-            self.usage_outputs(snapshots, week, taken_at)
-            return f"taken {week}"
-        earlier = [w for w in snapshots if w < week]
-        previous = len(snapshots[max(earlier)]) if earlier else 0
+        if state.get("day") == day:
+            return f"taken {day}"
+        snaps = usage_all_snapshots(self.store.root)
+        today = [
+            at
+            for at in snaps
+            if at[:10] == day
+            and parse_ts(at) >= parse_ts(day + "T00:00:00") + USAGE_DUE_HOUR * 3600
+        ]
+        if today:  # written, but the state was not
+            self.usage_outputs(snaps, day, max(today))
+            return f"taken {day}"
+        previous = len(snaps[max(snaps)]) if snaps else 0
         doc, err = portal_usage(previous=previous)
         if err:
             msg = f"portal usage: {err}"
             raise RuntimeError(msg)
         taken_at = to_iso(now)
-        rows = usage_rows(doc, week, taken_at)
+        rows = usage_rows(doc, iso_week(now), taken_at)
+        for r in rows:
+            r["day"] = day
         # one write: a snapshot is in the store whole or not at all
         self.store.append_text(
             f"storage/{day_path(taken_at)}.jsonl",
             "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows),
         )
-        snapshots[week] = rows
-        gone = self.usage_outputs(snapshots, week, taken_at)
-        return f"took {week}: {len(rows)} shares, {gone} gone"
+        snaps[taken_at] = rows
+        gone = self.usage_outputs(snaps, day, taken_at)
+        return f"took {day}: {len(rows)} shares, {gone} gone"
 
-    def usage_outputs(
-        self, snapshots: dict[str, list[dict]], week: str, at: str
-    ) -> int:
-        """final.jsonl and report.md, both derived from the snapshots, then
-        the state; returns how many shares left since the week before."""
-        finals = usage_finals(snapshots)
+    def usage_outputs(self, snaps: dict[str, list[dict]], day: str, at: str) -> int:
+        """final.jsonl (from every snapshot) and the weekly report.md (the
+        latest snapshot of each ISO week), both derived, then the state;
+        returns how many shares left since the snapshot before."""
+        finals = usage_finals(snaps)
         self.store.write_text(
             USAGE_FINAL, "".join(json.dumps(r, sort_keys=True) + "\n" for r in finals)
         )
-        self.store.write_text(USAGE_REPORT, usage_report(snapshots, finals, at))
-        self.store.write_json(USAGE_STATE, {"week": week, "taken_at": at})
+        self.store.write_text(
+            USAGE_REPORT,
+            usage_report(usage_snapshots(self.store.root, snaps), finals, at),
+        )
+        self.store.write_json(
+            USAGE_STATE, {"day": day, "week": iso_week(parse_ts(at)), "taken_at": at}
+        )
         return sum(1 for r in finals if r["gone_by"] == at)
 
     # -- portal events: what members did and saw on the portal --------------
@@ -3013,6 +3834,146 @@ class Harvester:
         return f"db {gen}: {len(rows)} rows to {last['id']} (top {doc['max']})"
 
     # -- the end of a cycle ---------------------------------------------------
+    # -- admin dashboard: who is on the portal or a desktop, and the page --
+    def issue_owner(self, number: int) -> int | None:
+        """The GitHub id of the request issue's author (the instance's owner)."""
+        iss = self.issue(number)
+        uid = ((iss or {}).get("user") or {}).get("id")
+        return uid if isinstance(uid, int) and not isinstance(uid, bool) else None
+
+    def prune_known_hosts(self, alive: set[str]) -> None:
+        """Remove the desktop check's known-hosts files of servers that no
+        longer exist (a recreate makes a new server id)."""
+        if self.dry_run or not DESK_KNOWN_HOSTS.is_dir():
+            return
+        for f in DESK_KNOWN_HOSTS.iterdir():
+            if SERVER_ID_RE.fullmatch(f.name) and f.name not in alive:
+                f.unlink(missing_ok=True)
+
+    def activity(self, now: float) -> str | None:
+        """INCIDENT_STORE_PLAN.md "Admin dashboard", the activity step:
+        presence through the gate, a desktop check on each finished ACTIVE
+        instance, a line in activity/<day>.jsonl on every change."""
+        if not self.src.get("activity"):
+            return None
+        state = self.store.read_json(ACTIVITY_STATE) or {}
+        before = json.dumps(state, sort_keys=True)
+        out, err = portal_call(["presence"], timeout=PRESENCE_TIMEOUT)
+        doc = None
+        if not err:
+            doc, err = validate_presence(out)
+        lines = apply_presence(state, doc, now)
+        if doc is not None:
+            self.local.data["presence_as_of"] = doc["at"]
+        servers = self.server_list()
+        desk_err = None
+        if isinstance(servers, list):
+            inst = member_instances(servers, self.prefix)
+            results = check_desktops(inst)
+            owners = {s["issue"]: self.issue_owner(s["issue"]) for s in inst}
+            lines += apply_desktops(state, inst, results, owners, now)
+            self.local.data["desktops_as_of"] = to_iso(now)
+            self.prune_known_hosts(
+                {str(x.get("ID")) for x in servers if isinstance(x, dict)}
+            )
+        else:
+            desk_err = "no server list (platform)"
+        for line in lines:
+            self.store.append_jsonl(f"activity/{day_path(to_iso(now))}.jsonl", line)
+        if json.dumps(state, sort_keys=True) != before:
+            self.store.write_json(ACTIVITY_STATE, state)
+        errs = [e for e in (err, desk_err) if e]
+        if errs:
+            raise RuntimeError("; ".join(errs))
+        desks = state.get("desktops") or {}
+        return (
+            f"{sum(1 for m in (state.get('members') or {}).values() if m.get('portal'))} on the portal, "
+            f"{sum(1 for d in desks.values() if d.get('result') == 'open')} desktops open, "
+            f"{sum(1 for d in desks.values() if d.get('result') == 'unknown')} unknown"
+        )
+
+    def dashboard_doc(self, now: float, ok: dict[str, bool]) -> dict:
+        """The document for the portal's /admin (schema 1; the portal's
+        app/admin_dashboard.py checks it). Numbers, times, ids and names
+        from the harvester's own lists only."""
+        root = self.store.root
+        at = to_iso(now)
+        start = str(self.src.get("dashboard_start") or DASH_START)
+        cache = self.local.data.setdefault("dash_days", {})
+        state = self.store.read_json(ACTIVITY_STATE) or {}
+        iv = activity_intervals(activity_lines(root, start), now)
+        outcomes = dash_outcomes(root, self.short, now)
+        w24 = host_problems(
+            root, problem_window(outcomes, now - DAY, now + 1), now - DAY, now + 1
+        )
+        w7 = host_problems(
+            root,
+            problem_window(outcomes, now - 7 * DAY, now + 1),
+            now - 7 * DAY,
+            now + 1,
+        )
+        n24, n7, latest = latest_incidents(root, now, now - 7 * DAY)
+        w24["incidents"], w7["incidents"] = n24, n7
+        storage = storage_part(root, now)
+        snaps = usage_all_snapshots(root)
+        storage_daily = {}
+        for t, rows in snaps.items():
+            storage_daily[t[:10]] = sum(
+                r["used_bytes"] for r in rows if isinstance(r.get("used_bytes"), int)
+            )
+        now_as_of = (
+            min(
+                (
+                    self.local.data.get(k) or ""
+                    for k in ("presence_as_of", "desktops_as_of")
+                ),
+                default="",
+            )
+            or None
+        )
+        return {
+            "schema": DASH_SCHEMA,
+            "at": at,
+            "collection": _part(at, True, {
+                "cycle_at": at,
+                "steps": [{"name": _name(k), "ok": bool(v)} for k, v in ok.items()][:40],
+            }),
+            "now": _part(now_as_of, bool(ok.get("activity")), now_part(
+                state, self.server_list(), self.prefix, self.store.read_json("state/platform.json") or {}
+            )),
+            "problems": _part(at, bool(ok.get("runs", True)), {
+                "windows": {"24h": w24, "7d": w7},
+                "incidents_latest": latest,
+            }),
+            "tallies": _part(at, bool(ok.get("activity")), tallies_part(root, self.short, iv, now, start, cache)),
+            "storage": _part(
+                max(snaps) if snaps else None, bool(ok.get("storage_usage", True)), storage
+            ),
+            "series": _part(at, True, {
+                "hourly": hourly_series(iv, now),
+                "daily": daily_series(root, self.short, storage_daily, now, cache),
+            }),
+        }  # fmt: skip
+
+    def dashboard(self, now: float, ok: dict[str, bool]) -> str | None:
+        """Build the document, keep a copy on the runner, send it to the
+        portal through the gate's `dashboard` (stdin)."""
+        if not self.src.get("dashboard"):
+            return None
+        doc = self.dashboard_doc(now, ok)
+        body = json.dumps(doc, separators=(",", ":"))
+        if not self.dry_run:
+            copy = DASH_COPY.expanduser()
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_text(body)
+        if self.dry_run:
+            return f"would send {len(body)} bytes"
+        _, err = portal_call(["dashboard"], timeout=DASH_TIMEOUT, stdin=body)
+        if err:
+            msg = f"portal dashboard: {err}"
+            raise RuntimeError(msg)
+        return f"sent {len(body)} bytes"
+
     def finish(
         self, now: float, started: float, error: str | None, extra: dict
     ) -> None:
@@ -3101,14 +4062,20 @@ class Harvester:
         errors: list[str] = []
         extra: dict = {}
 
+        ok: dict[str, bool] = {}
+        self._servers = None
+
         def step(name: str, fn):
             try:
-                return fn()
+                result = fn()
             except Exception as e:
                 errors.append(f"{name}: {type(e).__name__}: {str(e)[:240]}")
                 log(f"cycle step {name} failed: {errors[-1]}")
                 traceback.print_exc()
+                ok[name] = False
                 return None
+            ok[name] = True
+            return result
 
         step("runs", lambda: (self.new_runs(now), self.watch(), self.lookback(now)))
         step("followups", lambda: self.followups(now))
@@ -3126,6 +4093,13 @@ class Harvester:
         events = step("portal_events", lambda: self.portal_events(now))
         if events:
             extra["portal_events"] = events
+        act = step("activity", lambda: self.activity(now))
+        if act:
+            extra["activity"] = act
+        # Last: the dashboard reports which steps failed this cycle.
+        dash = step("dashboard", lambda: self.dashboard(now, dict(ok)))
+        if dash:
+            extra["dashboard"] = dash
         error = "; ".join(errors) or None
         self.finish(now, started, error, extra)
         return 1 if error else 0

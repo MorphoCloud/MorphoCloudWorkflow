@@ -1306,7 +1306,7 @@ derived, so it is not committed to the store. A copy is kept on the runner
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | **Collection** | time of this cycle; each step's last result and `last_error`                                                                                                                                                                                                                                    | `harvester.json`                                                        |
 | **Now**        | online ids with `since`; desktop ids with kind and instance; count of `unknown` desktops; member instances by Nova status; listed hosts not `ACTIVE`                                                                                                                                            | `state/activity.json`, `state/platform.json`, this cycle                |
-| **Problems**   | for the last 24 hours and 7 days: failed and refused commands by workflow and signature; no-capacity events by cause and flavor; portal failure events; journal `ERR` lines by host; VM state changes; incidents waiting for a verdict (count, and the latest 20 with id and time)              | `outcomes/`, `rollups/`, `incidents/`, `portal/`, journals, `platform/` |
+| **Problems**   | for the last 24 hours and 7 days: failed and refused commands by workflow and signature; no-capacity events by cause and flavor; portal failure events; journal `ERR` lines by host; VM state changes; incidents recorded (count, and the latest 20 with id and time; as built, see below)      | `outcomes/`, `rollups/`, `incidents/`, `portal/`, journals, `platform/` |
 | **Tallies**    | for today (UTC), 7 days, 30 days and since the start date: distinct members online; distinct members on a desktop; hours online and on a desktop (summed from the change lines); instances created, shelved, unshelved and deleted (command outcomes `ok`); failed commands; no-capacity events | `activity/`, `outcomes/`, `incidents/`                                  |
 | **Storage**    | from the latest daily snapshot: total used, total size, against the allocation's 10,000 GB; number of shares; median and 90th percentile of GB used; counts above 80% and at 95% or more; shares whose end date is within 14 days; the daily total for the last 30 days                         | `storage/`                                                              |
 | **Series**     | per hour for 7 days: members online and on a desktop; per day for 30 days: failed commands, no-capacity events, storage total                                                                                                                                                                   | the same files                                                          |
@@ -1362,8 +1362,7 @@ document carry GitHub ids only.
   is written here when the test has run.
 - **Tiles:** online (portal only / on a desktop); on a desktop (web / TurboVNC);
   member instances running / shelved; failed commands in 24 hours; no-capacity
-  events in 24 hours; incidents waiting for a verdict; storage used of 10,000
-  GB.
+  events in 24 hours; incidents recorded in 24 hours; storage used of 10,000 GB.
 - **Needs attention:** listed hosts not `ACTIVE`, step errors, storage ending
   within 14 days, extension requests waiting (the last one from the portal's own
   table, as today).
@@ -1455,6 +1454,48 @@ The identity mismatch (a recycled address) is tested with fixtures only.
 What members do on their desktop or in Slicer; whether someone at an open
 desktop is at the keyboard; page views other than the member dashboard; course
 repositories (their own allocations and runners); Test-Instances.
+
+#### As built (2026-11-27)
+
+Built in MorphoCloudPortal (`app/admin_dashboard.py`, gate `presence` and
+`dashboard`, `/admin`) and in `scripts/harvest-incidents.py` (steps `activity`
+and `dashboard`, `storage_usage` daily). Where the build differs from the text
+above, this list is the record:
+
+1. **Incidents, not verdicts.** The harvester opens no verdict issues (no
+   `needs-verdict` issue exists in the store), so "incidents waiting for a
+   verdict" would always read 0. The problems part counts **incidents recorded**
+   in 24 hours and 7 days (`incidents/<month>/<id>/incident.json` by the run's
+   creation time) and lists the latest 20. The page links each to its folder in
+   the store (`incidents/YYYY/MM/<id>`), built by the portal from the checked id
+   and the time.
+2. **Setup finished** is the portal runner's rule (`mcSetup` when present, else
+   `exoSetup`'s status; MWF SETUP_FINISHED_SIGNAL_DESIGN.md), not `exoSetup`
+   alone.
+3. **A single miss** (one cycle without a result, then a result) writes nothing.
+   The tallies count that cycle as the state before it, which is within the
+   stated one-cycle accuracy of desktop times. Two misses in a row write
+   `unknown` dated at the first miss, as above.
+4. **Tallies.** The activity lines are replayed from the start date every cycle
+   (built from the production store on 2026-11-27: 0.08 s). Outcome counts per
+   UTC day are read once a day is settled (3 days, past the 48-hour lookback)
+   and kept in the runner's `harvest-local.json` (`dash_days`). There is no
+   `activity-days.json`. Activity lines go into the file of the day they are
+   written; a line's `at` can be a few minutes earlier (a visit's `since`, a
+   last sight), and the replay takes each member's and each instance's lines in
+   order.
+5. **State.** `state/activity.json` holds the members' portal state, each
+   instance's result, kind, `since` and miss count, and is written only when one
+   of those changes. The times of the last good reads (`presence_as_of`,
+   `desktops_as_of`) are in the runner's `harvest-local.json`, so a quiet cycle
+   does not commit.
+6. **One kind per instance.** When an instance has several desktop connections,
+   the kind is web, then TurboVNC, then other.
+7. **The server list** is read once per cycle by `platform` and reused by
+   `activity` and `dashboard`.
+8. **Checked on real data.** A document built from a clone of the production
+   store (2026-11-27) passed the portal's `check()`: 15 KB; problems, tallies
+   and storage filled; `now` empty (`as_of` null) until the first presence read.
 
 ### Reconcile with production after the migration (design note, 2026-11-24)
 

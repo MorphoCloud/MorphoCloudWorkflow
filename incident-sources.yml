@@ -10,13 +10,20 @@ sources:
   MorphoCloud/Instances:
     short: instances # the store's per-repository file name and incident-id prefix
     instance_prefix: "instance-" # production servers are instance-<issue>
-    # The weekly storage-usage snapshot (INCIDENT_STORE_PLAN.md "Storage usage
-    # (weekly snapshot)"): the portal's `usage` reply through
+    # The daily storage-usage snapshot (INCIDENT_STORE_PLAN.md "Storage usage
+    # (daily snapshot, weekly report)"): the portal's `usage` reply through
     # ~/mc-data/portal_target.
     storage_usage: true
     # Portal events (INCIDENT_STORE_PHASE1_DESIGN.md "PR C"): the portal's audit
     # rows after a cursor, every cycle, through the same gate (`export-events`).
     portal_events: true
+    # Admin dashboard (INCIDENT_STORE_PLAN.md "Admin dashboard (design note,
+    # 2026-11-27)"): `activity` reads presence through the gate (`presence`) and
+    # checks each finished ACTIVE instance's desktop over SSH; `dashboard` sends
+    # the portal's /admin its document (`dashboard`). Both off unless set here.
+    activity: true
+    dashboard: true
+    dashboard_start: "2026-11-27" # the tallies' start date
     # Coverage amendment, class K: other repositories harvested with this
     # source, by explicit list (maintainer, 2026-11-10): the join health
     # monitor only. Course repositories are their own thing and their failure
