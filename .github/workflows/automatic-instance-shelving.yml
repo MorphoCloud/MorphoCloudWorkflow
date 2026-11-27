@@ -141,7 +141,7 @@ jobs:
           jq -r '.[] | [.Name, .Status,
                         (.Properties
                          | if type == "object" then (.mcSetup // "none" | tostring)
-                           elif type == "string" and test("\\bmcSetup='"'"'pending'"'"'") then "pending"
+                           elif type == "string" and test("\\bmcSetup=\u0027pending\u0027") then "pending"
                            else "none" end
                          | if . == "" then "none" else . end),
                         ."OS-EXT-STS:task_state"] | @tsv' | \
