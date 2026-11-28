@@ -100,7 +100,7 @@ jobs:
         id: portal_note
         # Course repositories pass their own table and never set PORTAL_ONLY.
         if: ${{ vars.MORPHOCLOUD_PORTAL_ONLY == 'true' }}
-        uses: chuhlomin/render-template@a7c644e341797d050d1cb24332d83791b9a46dae # v1
+        uses: chuhlomin/render-template@c7bbd9cfdcdfe6ad595c5185286862c6f22567b4 # v1.13
         with:
           template: .github/issue-commands-portal.md
           vars: |
