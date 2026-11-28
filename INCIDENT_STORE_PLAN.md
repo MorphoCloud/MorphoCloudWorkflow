@@ -1509,7 +1509,25 @@ above, this list is the record:
     an SSH tunnel. The rule is: 172.16.0.0/12 = web; a public (global) address
     or loopback = TurboVNC; anything else = other. The design's "TurboVNC
     through an SSH tunnel" was wrong for MorphoCloud's portal.
-11. **Checked on real data.** A document built from a clone of the production
+11. **Schema 2 (maintainer, 2026-11-27, after seeing the first page).** The line
+    charts were unreadable (no axes, no dates, no values). The page now shows
+    one row per day with the date, a bar and the count: people online per day
+    and people with a desktop open per day (distinct members that day, from the
+    tallies' start date), failed commands per day and no-capacity events per day
+    (30 days). Storage is one line ("762 GB used of 10,000 GB (7.6%), 44
+    members, on Nov 27; Nov 24: 758 GB"). New card and table: **members active
+    in the last 7 days**, meaning at least one successful `/create` or
+    `/unshelve` that the member ran themselves (the run's actor is the issue's
+    author: typed, or through the portal, which acts as the member). Automatic
+    retries and admin recreations have another actor and do not count; an
+    admin's own issues count for the admin (muratmaga's 59 migration
+    recreations, read from the store on 2026-11-27). The document carries GitHub
+    ids (`tallies.active_7d`: `github_id`, `created`, `unshelved`, `last`) and
+    the portal turns them into handles from its own tables. Issue authors are
+    read from GitHub once per issue and kept in the runner's
+    `harvest-local.json` (`issue_owners`). `series.daily` gains `online` and
+    `desktop`. The portal accepts schema 1 and 2, so it is deployed first.
+12. **Checked on real data.** A document built from a clone of the production
     store (2026-11-27) passed the portal's `check()`: 15 KB; problems, tallies
     and storage filled; `now` empty (`as_of` null) until the first presence
     read.

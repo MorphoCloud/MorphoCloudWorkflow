@@ -3727,13 +3727,16 @@ PORTAL_DOCUMENT = {
                      "hosts_down": ("list", {"host": "name", "status": "name"})}),
     "problems": ("part", {"windows": {"24h": _PW, "7d": _PW},
                           "incidents_latest": ("list", {"id": "incident", "at": "iso"})}),
-    "tallies": ("part", {"start": "day", "windows": dict.fromkeys(("today", "7d", "30d", "start"), _TALLY)}),
+    "tallies": ("part", {"start": "day", "windows": dict.fromkeys(("today", "7d", "30d", "start"), _TALLY),
+                         "active_7d": ("list", {"github_id": "int", "created": "int", "unshelved": "int",
+                                                "last": "iso"})}),
     "storage": ("part", {"day": "day", "used_bytes": "int", "size_bytes": "int", "quota_bytes": "int",
                          "shares": "int", "median_bytes": ("?", "int"), "p90_bytes": ("?", "int"),
                          "over_80": "int", "at_95": "int", "ending_14d": "int",
                          "daily": ("list", {"day": "day", "used_bytes": "int"})}),
     "series": ("part", {"hourly": ("list", {"at": "iso", "online": "int", "desktop": "int"}),
-                        "daily": ("list", {"day": "day", "failed": "int", "no_capacity": "int",
+                        "daily": ("list", {"day": "day", "online": "int", "desktop": "int",
+                                           "failed": "int", "no_capacity": "int",
                                            "storage_used_bytes": ("?", "int")})}),
 }  # fmt: skip
 
@@ -3919,3 +3922,56 @@ def test_portal_call_sends_stdin_only_when_given(tmp_path, monkeypatch):
     assert (seen[0]["input"], seen[0]["stdin"]) == ("{}", None)
     assert seen[1]["input"] is None
     assert seen[1]["stdin"] is hv.subprocess.DEVNULL
+
+
+def _act(created, command, author, actor, issue=356, result="success"):  # noqa: PLR0913
+    return {"command": command, "result": result, "issue_author": author, "issue_number": issue,
+            "source": {"created_at": created, "actor": actor}}  # fmt: skip
+
+
+def test_active_members_are_the_ones_who_created_or_unshelved_themselves():
+    lo = hv.parse_ts("2026-11-21T00:00:00Z")
+    outs = [
+        _act("2026-11-27T10:00:00Z", "/unshelve", "amm554", "amm554"),
+        _act("2026-11-27T11:00:00Z", "/unshelve", "amm554", "amm554"),
+        _act("2026-11-26T09:00:00Z", "/create", "amm554", "amm554"),
+        _act(
+            "2026-11-27T12:00:00Z",
+            "/create",
+            "bob",
+            "morphocloud-workflow-app[bot]",
+            issue=400,
+        ),  # admin recreation
+        _act(
+            "2026-11-27T12:00:00Z",
+            "/unshelve",
+            "carol",
+            "carol",
+            issue=401,
+            result="failure",
+        ),
+        _act("2026-11-27T12:00:00Z", "/shelve", "dave", "dave", issue=402),
+        _act(
+            "2026-11-10T12:00:00Z", "/create", "erin", "erin", issue=403
+        ),  # older than 7 days
+        _act(
+            "2026-11-27T12:00:00Z", "/create", "frank", "frank", issue=404
+        ),  # author id unknown
+    ]
+    owners = {356: 7, 400: 8, 401: 9, 402: 10, 403: 11}
+    assert hv.active_members(outs, owners, lo) == [
+        {"github_id": 7, "created": 1, "unshelved": 2, "last": "2026-11-27T11:00:00Z"}
+    ]
+
+
+def test_people_per_day_count_distinct_members_each_day():
+    # 7: on the portal from 23:00 the day before until 10:10; 9: one minute.
+    iv = {
+        "portal": [[7, DT0 - 11 * 3600, DT0 + 600], [9, DT0, DT0 + 60]],
+        "desktop": [[7, DT0, DT0 + 300]],
+    }
+    rows = hv.daily_series(Path("/nonexistent"), "instances", {}, DT0 + 3600, {}, iv)
+    today = rows[-1]
+    assert (today["day"], today["online"], today["desktop"]) == ("2026-11-28", 2, 1)
+    yesterday = rows[-2]  # 7 was on before midnight too
+    assert (yesterday["online"], yesterday["desktop"]) == (1, 0)

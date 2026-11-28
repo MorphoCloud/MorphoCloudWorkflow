@@ -2084,7 +2084,7 @@ SS_LINE_RE = re.compile(
     rf"\s*\d+\s+\d+\s+{SS_ADDR}:(\d{{1,5}})\s+{SS_ADDR}:(\d{{1,5}})\s*"
 )
 DESK_KINDS = ("web", "turbovnc", "other")
-DASH_SCHEMA = 1
+DASH_SCHEMA = 2  # 2: people per day and the active members (2026-11-27)
 DASH_TIMEOUT = 60
 DASH_COPY = Path("~/.cache/morphocloud/dashboard.json")
 DASH_START = "2026-11-27"  # tallies' start date (design note, "Parameters")
@@ -2738,16 +2738,58 @@ def hourly_series(iv: dict, now: float) -> list[dict]:
     return out
 
 
-def daily_series(
-    root: Path, short: str, storage_daily: dict[str, int], now: float, cache: dict
+def daily_series(  # noqa: PLR0913 — the inputs of one part, all from dashboard_doc
+    root: Path,
+    short: str,
+    storage_daily: dict[str, int],
+    now: float,
+    cache: dict,
+    iv: dict,
 ) -> list[dict]:
+    """Per UTC day, the last 30: people online and with a desktop open
+    (distinct members that day), failed commands, no-capacity events and the
+    storage total."""
     out = []
     for d in _days_back(now, 30):
         day = d.replace("/", "-")
         c = day_counts(root, short, day, cache, now)
-        out.append({"day": day, "failed": c["failed"], "no_capacity": c["no_capacity"],
+        lo = parse_ts(day + "T00:00:00")
+        people = window_activity(iv, lo, min(lo + DAY, now))
+        out.append({"day": day, "online": people["members_online"], "desktop": people["members_desktop"],
+                    "failed": c["failed"], "no_capacity": c["no_capacity"],
                     "storage_used_bytes": storage_daily.get(day)})  # fmt: skip
     return out
+
+
+ACTIVE_COMMANDS = {"/create": "created", "/unshelve": "unshelved"}
+
+
+def active_members(
+    outcomes: list[dict], owners: dict[int, int | None], lo: float
+) -> list[dict]:
+    """Members who ran at least one successful /create or /unshelve
+    themselves since `lo`: the run's actor is the issue's author (typed, or
+    through the portal, which acts as the member). Automatic retries and
+    admin recreations have another actor and do not count. By GitHub id
+    (`owners`: issue number -> the author's id); no login leaves here."""
+    by_id: dict[int, dict] = {}
+    for o in outcomes:
+        src = o.get("source") or {}
+        t = parse_ts(src.get("created_at"))
+        kind = ACTIVE_COMMANDS.get(o.get("command"))
+        if t < lo or not kind or o.get("result") != "success":
+            continue
+        if not o.get("issue_author") or src.get("actor") != o.get("issue_author"):
+            continue
+        gid = owners.get(o.get("issue_number"))
+        if not isinstance(gid, int) or gid <= 0:
+            continue
+        a = by_id.setdefault(
+            gid, {"github_id": gid, "created": 0, "unshelved": 0, "last": to_iso(t)}
+        )
+        a[kind] += 1
+        a["last"] = max(a["last"], to_iso(t))
+    return sorted(by_id.values(), key=lambda a: a["github_id"])[:500]
 
 
 TALLY_COMMANDS = {
@@ -3898,6 +3940,28 @@ class Harvester:
         uid = ((iss or {}).get("user") or {}).get("id")
         return uid if isinstance(uid, int) and not isinstance(uid, bool) else None
 
+    def issue_owners(self, outcomes: list[dict]) -> dict[int, int | None]:
+        """Issue number -> its author's GitHub id, for the active list. Kept
+        in the runner's local state (an issue's author never changes), so
+        each issue is read from GitHub once."""
+        cache = self.local.data.setdefault("issue_owners", {})
+        out: dict[int, int | None] = {}
+        for o in outcomes:
+            n = o.get("issue_number")
+            if (
+                not isinstance(n, int)
+                or isinstance(n, bool)
+                or o.get("command") not in ACTIVE_COMMANDS
+            ):
+                continue
+            if str(n) not in cache:
+                gid = self.issue_owner(n)
+                if gid is None:  # not readable now: try again next cycle
+                    continue
+                cache[str(n)] = gid
+            out[n] = cache[str(n)]
+        return out
+
     def prune_known_hosts(self, alive: set[str]) -> None:
         """Remove the desktop check's known-hosts files of servers that no
         longer exist (a recreate makes a new server id)."""
@@ -4002,13 +4066,16 @@ class Harvester:
                 "windows": {"24h": w24, "7d": w7},
                 "incidents_latest": latest,
             }),
-            "tallies": _part(at, bool(ok.get("activity")), tallies_part(root, self.short, iv, now, start, cache)),
+            "tallies": _part(at, bool(ok.get("activity")), {
+                **tallies_part(root, self.short, iv, now, start, cache),
+                "active_7d": active_members(outcomes, self.issue_owners(outcomes), now - 7 * DAY),
+            }),
             "storage": _part(
                 max(snaps) if snaps else None, bool(ok.get("storage_usage", True)), storage
             ),
             "series": _part(at, True, {
                 "hourly": hourly_series(iv, now),
-                "daily": daily_series(root, self.short, storage_daily, now, cache),
+                "daily": daily_series(root, self.short, storage_daily, now, cache, iv),
             }),
         }  # fmt: skip
 
