@@ -41,7 +41,7 @@ jobs:
     if: ${{ vars.MORPHOCLOUD_SHARE_TERM_DAYS != '' }}
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Dispatches the instance deletes (control-instance-from-workflow.yml),
       # as the instance sweep does.

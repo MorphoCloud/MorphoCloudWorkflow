@@ -32,7 +32,7 @@ jobs:
   follow-through:
     runs-on: ${{ vars.MORPHOCLOUD_CONTROL_RUNNER || 'self-hosted' }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # App token: `gh workflow run` needs it (the same way
       # automatic-instance-shelving dispatches its shelves).
