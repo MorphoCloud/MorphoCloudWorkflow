@@ -2762,6 +2762,7 @@ def daily_series(  # noqa: PLR0913 — the inputs of one part, all from dashboar
 
 
 ACTIVE_COMMANDS = {"/create": "created", "/unshelve": "unshelved"}
+OWNER_RETRY = 6 * 3600  # an issue whose author could not be read: next try after this
 
 
 def active_members(
@@ -2779,7 +2780,8 @@ def active_members(
         kind = ACTIVE_COMMANDS.get(o.get("command"))
         if t < lo or not kind or o.get("result") != "success":
             continue
-        if not o.get("issue_author") or src.get("actor") != o.get("issue_author"):
+        author = str(o.get("issue_author") or "")
+        if not author or str(src.get("actor") or "").lower() != author.lower():
             continue
         gid = owners.get(o.get("issue_number"))
         if not isinstance(gid, int) or gid <= 0:
@@ -3940,12 +3942,20 @@ class Harvester:
         uid = ((iss or {}).get("user") or {}).get("id")
         return uid if isinstance(uid, int) and not isinstance(uid, bool) else None
 
-    def issue_owners(self, outcomes: list[dict]) -> dict[int, int | None]:
+    def issue_owners(
+        self, outcomes: list[dict], now: float | None = None
+    ) -> dict[int, int | None]:
         """Issue number -> its author's GitHub id, for the active list. Kept
         in the runner's local state (an issue's author never changes), so
-        each issue is read from GitHub once."""
+        each issue is read from GitHub once. An issue that cannot be read
+        (deleted, transferred, or GitHub down) is tried again after
+        OWNER_RETRY, not every cycle. Entries for issues no longer in the
+        outcome window are dropped."""
+        now = time.time() if now is None else now
         cache = self.local.data.setdefault("issue_owners", {})
+        misses = self.local.data.setdefault("issue_owner_misses", {})
         out: dict[int, int | None] = {}
+        seen: set[str] = set()
         for o in outcomes:
             n = o.get("issue_number")
             if (
@@ -3954,12 +3964,21 @@ class Harvester:
                 or o.get("command") not in ACTIVE_COMMANDS
             ):
                 continue
-            if str(n) not in cache:
-                gid = self.issue_owner(n)
-                if gid is None:  # not readable now: try again next cycle
+            key = str(n)
+            seen.add(key)
+            if key not in cache:
+                if now - float(misses.get(key, 0)) < OWNER_RETRY:
                     continue
-                cache[str(n)] = gid
-            out[n] = cache[str(n)]
+                gid = self.issue_owner(n)
+                if gid is None:
+                    misses[key] = now
+                    continue
+                cache[key] = gid
+                misses.pop(key, None)
+            out[n] = cache[key]
+        for d in (cache, misses):
+            for key in [k for k in d if k not in seen]:
+                del d[key]
         return out
 
     def prune_known_hosts(self, alive: set[str]) -> None:
@@ -4068,7 +4087,7 @@ class Harvester:
             }),
             "tallies": _part(at, bool(ok.get("activity")), {
                 **tallies_part(root, self.short, iv, now, start, cache),
-                "active_7d": active_members(outcomes, self.issue_owners(outcomes), now - 7 * DAY),
+                "active_7d": active_members(outcomes, self.issue_owners(outcomes, now), now - 7 * DAY),
             }),
             "storage": _part(
                 max(snaps) if snaps else None, bool(ok.get("storage_usage", True)), storage

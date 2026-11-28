@@ -3975,3 +3975,27 @@ def test_people_per_day_count_distinct_members_each_day():
     assert (today["day"], today["online"], today["desktop"]) == ("2026-11-28", 2, 1)
     yesterday = rows[-2]  # 7 was on before midnight too
     assert (yesterday["online"], yesterday["desktop"]) == (1, 0)
+
+
+def test_issue_owners_are_read_once_retried_after_a_miss_and_pruned(
+    tmp_path, cfg, monkeypatch
+):
+    h, _ = _dash_h(tmp_path, cfg, monkeypatch)
+    asked = []
+    answers = {356: 7, 400: None}
+    h.issue_owner = lambda n: asked.append(n) or answers[n]
+    outs = [_act("2026-11-27T10:00:00Z", "/create", "a", "a", issue=356),
+            _act("2026-11-27T10:00:00Z", "/unshelve", "b", "b", issue=400)]  # fmt: skip
+    assert h.issue_owners(outs, DT0) == {356: 7}
+    assert h.issue_owners(outs, DT0 + 300) == {356: 7}  # cached; the miss waits
+    assert asked == [356, 400]
+    answers[400] = 9
+    assert h.issue_owners(outs, DT0 + hv.OWNER_RETRY) == {356: 7, 400: 9}
+    assert h.issue_owners(outs[:1], DT0 + hv.OWNER_RETRY) == {356: 7}
+    assert set(h.local.data["issue_owners"]) == {"356"}  # 400 left the window: dropped
+
+
+def test_the_actor_and_author_match_without_case():
+    lo = hv.parse_ts("2026-11-21T00:00:00Z")
+    outs = [_act("2026-11-27T10:00:00Z", "/unshelve", "HanaChung7", "hanachung7")]
+    assert hv.active_members(outs, {356: 7}, lo)[0]["unshelved"] == 1
